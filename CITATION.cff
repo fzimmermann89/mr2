@@ -1,5 +1,5 @@
 abstract:
-    <p>MRpro is a MR image reconstruction and processing framework specifically
+    <p>mrtwo is a MR image reconstruction and processing framework specifically
     developed to work well with PyTorch. The data classes utilize torch tensors for
     storing data such as MR raw data or reconstructed image data. Where possible batch
     parallelisation of PyTorch is utilized to speed up image reconstruction.</p>
@@ -49,7 +49,7 @@ cff-version: 1.2.0
 date-released: "2024-12-17"
 doi: 10.5281/zenodo.14509598
 license: Apache-2.0
-repository-code: https://github.com/PTB-MR/mrpro/
-title: MRpro - PyTorch-based MR image reconstruction and processing package
+repository-code: https://github.com/fzimmermann89/mr2/
+title: mrtwo - PyTorch-based MR image reconstruction and processing package
 type: software
 url: https://doi.org/10.5281/zenodo.14509598
