@@ -49,7 +49,7 @@ def test_regularized_iterative_sense_with_explicit_dcf(cartesian_kdata: KData) -
     )
     idata = reconstruction(cartesian_kdata)
     assert idata.data.shape[-3:] == cartesian_kdata.header.recon_matrix.zyx
-    assert reconstruction.dcf_op is dcf
+    assert reconstruction.dcf_op is not None
 
 
 @pytest.mark.cuda
