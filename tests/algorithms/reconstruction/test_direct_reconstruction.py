@@ -26,7 +26,7 @@ def test_direct_reconstruction_with_explicit_csm(cartesian_kdata: KData) -> None
 
 def test_direct_reconstruction_with_explicit_csm_op(cartesian_kdata: KData) -> None:
     """Test with pre-computed CSM operator."""
-    csm = CsmData.from_idata_walsh(DirectReconstruction(kdata=cartesian_kdata)(cartesian_kdata))
+    csm = CsmData.from_kdata_walsh(cartesian_kdata)
     csm_op = csm.as_operator()
     reconstruction = DirectReconstruction(kdata=cartesian_kdata, csm=csm_op)
     idata = reconstruction(cartesian_kdata)
