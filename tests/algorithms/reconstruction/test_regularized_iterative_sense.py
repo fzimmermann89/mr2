@@ -1,9 +1,9 @@
 """Tests for RegularizedIterativeSENSEReconstruction."""
 
 import pytest
-from mrpro.algorithms.reconstruction import RegularizedIterativeSENSEReconstruction
-from mrpro.data import CsmData, DcfData, KData
-from mrpro.operators import FourierOp
+from mr2.algorithms.reconstruction import RegularizedIterativeSENSEReconstruction
+from mr2.data import CsmData, DcfData, KData
+from mr2.operators import FourierOp
 
 
 def test_regularized_iterative_sense_automatic(cartesian_kdata: KData) -> None:
