@@ -78,7 +78,6 @@ tests = [
     "pre-commit",
     "pytest",
     "pytest-cov",
-    "pytest-xdist",
 ]
 docs = [
     "mrtwo[notebooks]",
