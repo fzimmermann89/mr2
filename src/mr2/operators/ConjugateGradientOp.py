@@ -205,7 +205,7 @@ class ConjugateGradientOp(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch
         -------
             The solution of the linear system.
         """
-        return super().__call__(*parameters, initial_value=initial_value)
+        return super(Operator, self).__call__(*parameters, initial_value=initial_value)
 
     def forward(
         self,

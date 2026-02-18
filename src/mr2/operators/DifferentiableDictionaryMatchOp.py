@@ -162,7 +162,7 @@ class DifferentiableDictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]
             that best matched the input signal(s). Each tensor in the tuple corresponds
             to a parameter, and their shapes will match the batch dimensions of `input_signal`.
         """
-        return super().__call__(input_signal, prior=prior, prior_weight=prior_weight)
+        return super(Operator, self).__call__(input_signal, prior=prior, prior_weight=prior_weight)
 
     def forward(
         self,
@@ -189,7 +189,7 @@ class DifferentiableDictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]
             n_x = len(self.x)
             scaling_position = None
 
-        if prior is not None and (not all(isinstance(p, torch.Tensor) for p in prior) or len(prior) != len(self.x)):
+        if prior is not None and (not all(isinstance(p, torch.Tensor) for p in prior) or len(prior) != n_x):
             raise ValueError('Prior must be a tuple of tensors matching the number of parameters.')
 
         norm_y = self.norm_y
