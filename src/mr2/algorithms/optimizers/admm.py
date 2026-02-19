@@ -12,8 +12,8 @@ from dataclasses import dataclass
 
 import torch
 
-from mr2.algorithms.optimizers.OptimizerStatus import OptimizerStatus
 from mr2.algorithms.optimizers.cg import cg, vdot
+from mr2.algorithms.optimizers.OptimizerStatus import OptimizerStatus
 from mr2.operators import (
     IdentityOp,
     LinearOperator,
@@ -27,6 +27,7 @@ from mr2.utils.to_tuple import to_tuple
 def _norm_squared(values: Sequence[torch.Tensor]) -> torch.Tensor:
     """Squared L2 norm of a sequence of tensors."""
     return vdot(values, values).real
+
 
 @dataclass
 class ADMMLinearStatus(OptimizerStatus):
