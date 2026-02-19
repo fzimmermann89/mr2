@@ -1,4 +1,9 @@
-"""Alternating Direction Method of Multipliers variants."""
+"""Alternating Direction Method of Multipliers variants.
+
+This module provides ADMM-based optimizers for convex composite problems using
+`~mr2.operators.ProximableFunctional` objects and `~mr2.operators.LinearOperator`
+or `~mr2.operators.LinearOperatorMatrix` objects.
+"""
 
 from __future__ import annotations
 
@@ -25,7 +30,26 @@ def _norm_squared(values: Sequence[torch.Tensor]) -> torch.Tensor:
 
 @dataclass
 class ADMMLinearStatus(OptimizerStatus):
-    """Status of linearized ADMM."""
+    """Status of linearized ADMM.
+
+    Attributes
+    ----------
+    solution
+        Current estimate of the primal variable(s).
+    iteration_number
+        Current iteration count.
+    objective
+        Callable returning the objective value :math:`f(x) + g(Ax)` for given
+        primal variables.
+    tau
+        ADMM penalty parameter used for the z-update.
+    mu
+        Proximal/linearization parameter used for the x-update.
+    z
+        Current auxiliary split variable(s).
+    u
+        Current scaled dual variable(s).
+    """
 
     objective: Callable[[*tuple[torch.Tensor, ...]], torch.Tensor]
     tau: float | torch.Tensor
@@ -36,7 +60,24 @@ class ADMMLinearStatus(OptimizerStatus):
 
 @dataclass
 class ADMML2Status(OptimizerStatus):
-    """Status of ADMM with L2 data term."""
+    r"""Status of ADMM with L2 data term.
+
+    Attributes
+    ----------
+    solution
+        Current estimate of the primal variable(s).
+    iteration_number
+        Current iteration count.
+    objective
+        Callable returning the objective value
+        :math:`\frac{1}{2}\|Op\,x-b\|_2^2 + g(Ax)`.
+    tau
+        ADMM penalty parameter.
+    z
+        Current auxiliary split variable(s).
+    u
+        Current scaled dual variable(s).
+    """
 
     objective: Callable[[*tuple[torch.Tensor, ...]], torch.Tensor]
     tau: float | torch.Tensor
@@ -58,7 +99,69 @@ def admm_linear(
     initial_u: Sequence[torch.Tensor] | torch.Tensor | None = None,
     callback: Callable[[ADMMLinearStatus], bool | None] | None = None,
 ) -> tuple[torch.Tensor, ...]:
-    r"""Linearized ADMM for :math:`\min_x f(x) + g(Ax)`."""
+    r"""Linearized ADMM for :math:`\min_x f(x) + g(Ax)`.
+
+    This routine solves convex composite problems of the form
+
+        :math:`\min_x f(x) + g(Ax)`,
+
+    where :math:`f` and :math:`g` are proximable and :math:`A` is linear.
+    It supports single-variable as well as block-variable formulations by
+    operating on tuples of tensors and `LinearOperatorMatrix`.
+
+    The algorithm applies the following updates:
+
+    .. math::
+
+        x_{k+1} = \mathrm{prox}_{\mu f}\left(x_k - \frac{\mu}{\tau} A^H(Ax_k-z_k+u_k)\right)\\
+        z_{k+1} = \mathrm{prox}_{\tau g}(Ax_{k+1} + u_k)\\
+        u_{k+1} = u_k + Ax_{k+1} - z_{k+1}
+
+    with scaled dual variable :math:`u`.
+
+    Parameters
+    ----------
+    f
+        Proximable functional :math:`f`. Can be a single functional or a
+        `~mr2.operators.ProximableFunctionalSeparableSum`.
+    g
+        Proximable functional :math:`g`. Can be a single functional or a
+        `~mr2.operators.ProximableFunctionalSeparableSum`.
+    operator
+        Linear operator :math:`A`. If `None`, an identity operator matrix is
+        used (requiring matching number of components in `f` and `g`).
+    initial_values
+        Initial primal variable(s). Single tensor or tuple of tensors.
+    tau
+        Positive ADMM penalty parameter for the z-update.
+    mu
+        Positive linearization/proximal parameter for the x-update.
+    max_iterations
+        Maximum number of iterations.
+    tolerance
+        Relative stopping tolerance on the primal update
+        :math:`\|x_{k+1}-x_k\|_2 / \|x_{k+1}\|_2`.
+        If zero, no tolerance-based early stopping is applied.
+    initial_z
+        Optional initial split variable(s). If `None`, initialized as
+        :math:`z_0 = A x_0`.
+    initial_u
+        Optional initial scaled dual variable(s). If `None`, initialized to
+        zero with shape matching `z`.
+    callback
+        Optional callback called after each iteration with `ADMMLinearStatus`.
+        If it returns `False`, iterations stop early.
+
+    Returns
+    -------
+        Tuple of tensors representing the final primal variable(s).
+
+    Raises
+    ------
+    ValueError
+        If parameters are inconsistent (non-positive `tau`/`mu`, mismatched
+        operator/functional dimensions, or incompatible initial variables).
+    """
     tau_ = torch.as_tensor(tau)
     mu_ = torch.as_tensor(mu)
     if (tau_ <= 0).any() or tau_.dtype.is_complex:
@@ -153,7 +256,77 @@ def admm_l2(
     cg_tolerance: float = 1e-6,
     callback: Callable[[ADMML2Status], bool | None] | None = None,
 ) -> tuple[torch.Tensor, ...]:
-    r"""ADMM for :math:`\min_x \frac{1}{2}\|Op\,x-b\|_2^2 + g(Ax)`."""
+    r"""ADMM for :math:`\min_x \frac{1}{2}\|Op\,x-b\|_2^2 + g(Ax)`.
+
+    This routine targets inverse problems with quadratic data fidelity and
+    proximable regularization in transformed coordinates:
+
+        :math:`\min_x \frac{1}{2}\|Op\,x-b\|_2^2 + g(Ax)`.
+
+    Introducing :math:`z = Ax`, ADMM uses:
+
+    .. math::
+
+        x_{k+1} = \arg\min_x \frac{1}{2}\|Op\,x-b\|_2^2 +
+        \frac{1}{2\tau}\|Ax-z_k+u_k\|_2^2\\
+        z_{k+1} = \mathrm{prox}_{\tau g}(Ax_{k+1}+u_k)\\
+        u_{k+1} = u_k + Ax_{k+1} - z_{k+1}
+
+    The x-update is solved with
+    `~mr2.algorithms.optimizers.cg.cg` on the normal equations:
+
+    .. math::
+
+        (Op^H Op + \tau^{-1} A^H A)x =
+        Op^H b + \tau^{-1}A^H(z-u).
+
+    Parameters
+    ----------
+    g
+        Proximable regularizer. Can be a single functional or a
+        `~mr2.operators.ProximableFunctionalSeparableSum`.
+    op
+        Forward operator :math:`Op` in the data term.
+    b
+        Data tensor(s). Single tensor or tuple of tensors, matching rows of
+        `op`.
+    a
+        Linear operator :math:`A` used for splitting in :math:`g(Ax)`.
+    initial_values
+        Initial primal variable(s). Single tensor or tuple of tensors.
+    tau
+        Positive ADMM penalty parameter.
+    max_iterations
+        Maximum number of ADMM iterations.
+    tolerance
+        Relative stopping tolerance on the primal update
+        :math:`\|x_{k+1}-x_k\|_2 / \|x_{k+1}\|_2`.
+        If zero, no tolerance-based early stopping is applied.
+    initial_z
+        Optional initial split variable(s). If `None`, initialized as
+        :math:`z_0 = A x_0`.
+    initial_u
+        Optional initial scaled dual variable(s). If `None`, initialized to
+        zero with shape matching `z`.
+    cg_max_iterations
+        Maximum CG iterations used inside each ADMM x-update.
+    cg_tolerance
+        Residual tolerance used by CG for each x-update.
+    callback
+        Optional callback called after each iteration with `ADMML2Status`.
+        If it returns `False`, iterations stop early.
+
+    Returns
+    -------
+        Tuple of tensors representing the final primal variable(s).
+
+    Raises
+    ------
+    ValueError
+        If parameters are inconsistent (non-positive `tau`, incompatible
+        operator dimensions, mismatched number of regularizers, or invalid
+        initial values).
+    """
     tau_ = torch.as_tensor(tau)
     if (tau_ <= 0).any() or tau_.dtype.is_complex:
         raise ValueError('tau must be real and positive')
