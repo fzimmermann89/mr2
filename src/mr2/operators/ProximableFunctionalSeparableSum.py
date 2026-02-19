@@ -2,21 +2,18 @@
 
 from __future__ import annotations
 
-import operator
-from collections.abc import Iterator
-from functools import reduce
 from typing import cast
 
 import torch
 from typing_extensions import TypeVarTuple, Unpack, overload
 
 from mr2.operators.Functional import ProximableFunctional
-from mr2.operators.Operator import Operator
+from mr2.operators.FunctionalSeparableSum import FunctionalSeparableSum
 
 T = TypeVarTuple('T')
 
 
-class ProximableFunctionalSeparableSum(Operator[Unpack[T], tuple[torch.Tensor]]):
+class ProximableFunctionalSeparableSum(FunctionalSeparableSum[Unpack[T]]):
     r"""Separable Sum of Proximable Functionals.
 
     This is a separable sum of the functionals. The forward method returns the sum of the functionals
@@ -89,37 +86,7 @@ class ProximableFunctionalSeparableSum(Operator[Unpack[T], tuple[torch.Tensor]])
         functionals
             The proximable functionals to be summed.
         """
-        super().__init__()
-        self.functionals = functionals
-
-    def __call__(self, *x: Unpack[T]) -> tuple[torch.Tensor]:
-        """Evaluate the sum of separable functionals.
-
-        Parameters
-        ----------
-        *x
-            Input tensors. The number of input tensors must match the number
-            of functionals in the sum.
-
-        Returns
-        -------
-            Sum of the functionals applied to their respective inputs.
-        """
-        return super().__call__(*x)
-
-    def forward(self, *x: Unpack[T]) -> tuple[torch.Tensor]:
-        """Apply forward of ProximableFunctionalSeparableSum.
-
-        .. note::
-            Prefer calling the instance of the ProximableFunctionalSeparableSum operator as ``operator(x)`` over
-            directly calling this method. See this PyTorch `discussion <https://discuss.pytorch.org/t/is-model-forward-x-the-same-as-model-call-x/33460/3>`_.
-        """
-        if len(x) != len(self.functionals):
-            raise ValueError('The number of inputs must match the number of functionals.')
-        result = reduce(
-            operator.add, (f(xi)[0] for f, xi in zip(self.functionals, cast(tuple[torch.Tensor, ...], x), strict=True))
-        )
-        return (result,)
+        super().__init__(*functionals)
 
     def prox(self, *x: Unpack[T], sigma: float | torch.Tensor = 1) -> tuple[Unpack[T]]:
         """Apply the proximal operators of the functionals to the inputs.
@@ -222,11 +189,3 @@ class ProximableFunctionalSeparableSum(Operator[Unpack[T], tuple[torch.Tensor]])
             )
         else:
             return NotImplemented
-
-    def __iter__(self) -> Iterator[ProximableFunctional]:
-        """Iterate over the functionals."""
-        return iter(self.functionals)
-
-    def __len__(self) -> int:
-        """Return the number of functionals."""
-        return len(self.functionals)

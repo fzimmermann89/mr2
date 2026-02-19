@@ -1,6 +1,7 @@
 import pytest
 import torch
-from mr2.operators import ProximableFunctional, ProximableFunctionalSeparableSum
+from mr2.operators import FunctionalSeparableSum, Operator, ProximableFunctional, ProximableFunctionalSeparableSum
+from mr2.operators.functionals import L1Norm
 from mr2.utils import RandomGenerator
 
 
@@ -23,6 +24,13 @@ class Dummy(ProximableFunctional):
         """This is not a real proximal operator, just a dummy function."""
 
         return (-self.prox_scale * x * sigma,)
+
+
+class DummyFunctional(Operator[torch.Tensor, tuple[torch.Tensor]]):
+    """Only for testing purposes."""
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor]:
+        return (2.0 * x.mean(),)
 
 
 def test_separablesum_forward():
@@ -102,3 +110,25 @@ def test_summedfunctionls_len():
     b = Dummy()
     assert len(a | b) == 2
     assert len(b | b | b) == 3
+
+
+def test_general_functional_separable_sum():
+    f1 = DummyFunctional()
+    f2 = DummyFunctional()
+    rng = RandomGenerator(123)
+    x1 = rng.float32_tensor(3)
+    x2 = rng.float32_tensor(3)
+    summed = f1 | f2
+    assert isinstance(summed, FunctionalSeparableSum)
+    torch.testing.assert_close(summed(x1, x2)[0], f1(x1)[0] + f2(x2)[0])
+
+
+def test_mixed_proximable_and_general_separable_sum():
+    prox = L1Norm()
+    general = L1Norm() @ DummyFunctional()
+    rng = RandomGenerator(123)
+    x1 = rng.float32_tensor(3)
+    x2 = rng.float32_tensor(3)
+    summed = prox | general
+    assert isinstance(summed, FunctionalSeparableSum)
+    torch.testing.assert_close(summed(x1, x2)[0], prox(x1)[0] + general(x2)[0])

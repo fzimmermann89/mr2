@@ -3,6 +3,7 @@
 from mr2.operators.Operator import Operator
 from mr2.operators.LinearOperator import LinearOperator
 from mr2.operators.Functional import FunctionalType, ProximableFunctional, ElementaryFunctional, ElementaryProximableFunctional, ScaledProximableFunctional
+from mr2.operators.FunctionalSeparableSum import FunctionalSeparableSum
 from mr2.operators import functionals, models
 from mr2.operators.AveragingOp import AveragingOp
 from mr2.operators.CartesianSamplingOp import CartesianSamplingOp, CartesianMaskingOp
@@ -50,6 +51,7 @@ __all__ = [
     "FiniteDifferenceOp",
     "FourierOp",
     "FunctionalType",
+    "FunctionalSeparableSum",
     "GridSamplingOp",
     "IdentityOp",
     "Jacobian",
