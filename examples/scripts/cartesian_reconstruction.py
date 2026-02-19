@@ -1,7 +1,7 @@
 # %% [markdown]
 # # Basics of MRtwo and Cartesian reconstructions
-# Here, we are going to have a look at a few basics of MRpro/MRtwo and reconstruct data acquired with a Cartesian sampling
-# pattern.
+# Here, we are going to have a look at a few basics of MRpro/MRtwo and reconstruct data acquired with
+# a Cartesian sampling pattern.
 
 # %% [markdown]
 # ## Overview
