@@ -7,9 +7,10 @@ from functools import reduce
 from typing import cast
 
 import torch
-from typing_extensions import Self, Unpack
+from typing_extensions import Unpack
 
 from mr2.operators.Operator import Operator
+
 
 class OperatorMatrix(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]]):
     r"""Matrix of (possibly non-linear) operators.
@@ -25,7 +26,9 @@ class OperatorMatrix(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tens
 
     _operators: list[list[Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]]]]
 
-    def __init__(self, operators: Sequence[Sequence[Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]]]]):
+    def __init__(
+        self, operators: Sequence[Sequence[Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]]]]
+    ):
         """Initialize operator matrix from rows."""
         if not all(isinstance(op, Operator) for row in operators for op in row):
             raise ValueError('All elements should be Operators.')
@@ -74,7 +77,8 @@ class OperatorMatrix(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tens
         if isinstance(other, OperatorMatrix):
             if (rows_self := self.shape[0]) != (rows_other := other.shape[0]):
                 raise ValueError(
-                    f'Shape mismatch in horizontal stacking: cannot stack matrices with {rows_self} and {rows_other} rows.'
+                    'Shape mismatch in horizontal stacking: '
+                    f'cannot stack matrices with {rows_self} and {rows_other} rows.'
                 )
             return OperatorMatrix([[*self_row, *other_row] for self_row, other_row in zip(self, other, strict=True)])
         elif isinstance(other, Operator) and not isinstance(other, OperatorMatrix):
@@ -94,7 +98,8 @@ class OperatorMatrix(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tens
         if isinstance(other, OperatorMatrix):
             if (cols_self := self.shape[1]) != (cols_other := other.shape[1]):
                 raise ValueError(
-                    f'Shape mismatch in vertical stacking: cannot stack matrices with {cols_self} and {cols_other} columns.'
+                    'Shape mismatch in vertical stacking: '
+                    f'cannot stack matrices with {cols_self} and {cols_other} columns.'
                 )
             return OperatorMatrix([*self._operators, *other._operators])
         elif isinstance(other, Operator) and not isinstance(other, OperatorMatrix):
