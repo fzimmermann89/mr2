@@ -278,7 +278,7 @@ class DataModule(pl.LightningDataModule):
             'sagittal',
         ),
         orientation_val: Sequence[Literal['axial', 'coronal', 'sagittal']] = ('axial',),
-        batch_size: int = 16,
+        batch_size: int = 32,
         num_workers: int = 4,
     ):
         """Initialize the data module."""
@@ -322,6 +322,7 @@ class DataModule(pl.LightningDataModule):
             persistent_workers=self.num_workers > 0,
             collate_fn=collate_fn,
             worker_init_fn=lambda *_: torch.set_num_threads(1),
+            drop_last=True,
         )
 
     def val_dataloader(self):
@@ -333,6 +334,7 @@ class DataModule(pl.LightningDataModule):
             pin_memory=False,
             persistent_workers=self.num_workers > 0,
             collate_fn=collate_fn,
+            drop_last=True,
         )
 
 
@@ -419,8 +421,8 @@ class PinqiModule(pl.LightningModule):
         mask = batch['mask']
         batch_size = len(batch['mask'])
         (ssim_t1,) = mr2.operators.functionals.SSIM(target_t1, mask)(pred_t1)
-        (l1_t1,) = mr2.operators.functionals.L1Norm(target_t1, mask)(pred_t1)
-        (l1_m0,) = mr2.operators.functionals.L1Norm(target_m0, mask)(pred_m0)
+        (l1_t1,) = mr2.operators.functionals.L1Norm(target_t1, mask, divide_by_n=True)(pred_t1)
+        (l1_m0,) = mr2.operators.functionals.L1Norm(target_m0, mask, divide_by_n=True)(pred_m0)
         self.log('val/ssim_t1', ssim_t1, on_epoch=True, sync_dist=True, batch_size=batch_size)
         self.log('val/l1_t1', l1_t1, on_epoch=True, sync_dist=True, batch_size=batch_size)
         self.log('val/l1_m0', l1_m0, on_epoch=True, sync_dist=True, batch_size=batch_size)
@@ -627,7 +629,7 @@ if __name__ == '__main__':
     torch._dynamo.config.cache_size_limit = 256
     torch._functorch.config.activation_memory_budget = 0.5
 
-    data_folder = Path(' /echo/zimmer08/brainweb')
+    data_folder = mr2.phantoms.brainweb.CACHE_DIR_BRAINWEB
     if not data_folder.exists():
         data_folder.mkdir(parents=True, exist_ok=True)
         mr2.phantoms.brainweb.download_brainweb(output_directory=data_folder, workers=2, progress=True)
@@ -646,8 +648,8 @@ if __name__ == '__main__':
         folder=data_folder,
         signalmodel=signalmodel,
         n_images=n_images,
-        batch_size=8,
-        num_workers=8,
+        batch_size=16,
+        num_workers=16,
         size=192,
         acceleration=6,
         n_coils=1,
@@ -676,11 +678,11 @@ if __name__ == '__main__':
         save_last=True,
     )
 
-    strategy = 'auto'  # DDPStrategy(find_unused_parameters=False)
+    strategy = 'ddp'
     trainer = pl.Trainer(
         max_epochs=100,
         accelerator='gpu',
-        devices=1,
+        devices=4,
         strategy=strategy,
         logger=neptune_logger,
         callbacks=[
@@ -693,6 +695,6 @@ if __name__ == '__main__':
         gradient_clip_val=5.0,
     )
 
-    # trainer.fit(model, datamodule=dm)
+    trainer.fit(model, datamodule=dm)
 
 # %%
