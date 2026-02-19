@@ -40,7 +40,6 @@ import torch
 # mr2.phantoms.brainweb.download_brainweb(workers=2, progress=True)
 
 
-# %%
 class BatchType(TypedDict):
     """Typehint for a batch of data."""
 
@@ -309,9 +308,11 @@ def baseline_solution(
     kdata: mr2.data.KData,
     csm: mr2.data.CsmData,
 ) -> tuple[torch.Tensor, ...]:
-    """Compute a baseline solution using SENSE + Regression."""
-    sense = mr2.algorithms.reconstruction.IterativeSENSEReconstruction(kdata, csm=csm)
-    images = sense(kdata)
+    """Compute a baseline solution using TV + Regression."""
+    tv = mr2.algorithms.reconstruction.TotalVariationRegularizedReconstruction(
+        kdata, csm=csm, regularization_weight=0.01, regularization_dim=(-2, -1), max_iterations=200
+    )
+    images = tv(kdata)
     objective = mr2.operators.functionals.L2NormSquared(images.data) @ signalmodel @ constraints_op
     initial_values = tuple(
         torch.zeros(
@@ -326,9 +327,7 @@ def baseline_solution(
 
 
 # %%
-data_folder = Path('/home/zimmer08/.cache/mr2/brainweb')
-
-signalmodel = mr2.operators.models.SaturationRecovery((0.5, 1.0, 1.5, 2.0, 8.0))
+signalmodel = mr2.operators.models.SaturationRecovery((0.2, 0.8, 4.0))
 constraints_op = mr2.operators.ConstraintsOp(
     bounds=(
         (-2, 2),  # M0 in [-2, 2]
@@ -341,13 +340,13 @@ parameter_is_complex = [True, False]
 
 dataset = torch.utils.data.Subset(
     Dataset(
-        folder=data_folder,
+        folder=mr2.phantoms.brainweb.CACHE_DIR_BRAINWEB,
         signalmodel=signalmodel,
         n_images=n_images,
         size=192,
         acceleration=8,
-        n_coils=8,
-        max_noise=0.05,
+        n_coils=1,
+        max_noise=0.2,
         orientation=('axial',),
         random=False,
     ),
@@ -367,6 +366,7 @@ pinqi = PINQI(
     n_features_parameter_net=hyper_parameters['n_features_parameter_net'],
     n_features_image_net=hyper_parameters['n_features_image_net'],
 )
+# Lets only keep the PINQI weights of the inner, compiled module.
 state_dict = {
     k.replace('pinqi.', '').replace('_orig_mod.', ''): v
     for k, v in checkpoint['state_dict'].items()
@@ -377,11 +377,12 @@ pinqi.load_state_dict(state_dict)
 batch = dataset[40]
 csm, kdata = batch['csm'], batch['kdata']
 
-if torch.cuda.is_available():
+if torch.cuda.is_available() and False:
     pinqi, csm, kdata = pinqi.cuda(), csm.cuda(), kdata.cuda()
 parameters = pinqi(kdata[None], csm[None])
 with torch.no_grad():
     predicted_m0, predicted_t1 = (p.cpu().detach().squeeze() for p in parameters)
+# %%
 baseline_m0, baseline_t1 = baseline_solution(signalmodel, constraints_op, parameter_is_complex, kdata, csm)
 # %%
 (ssim_t1,) = mr2.operators.functionals.SSIM(batch['t1'][None], batch['mask'][None])(predicted_t1[None])
@@ -403,20 +404,12 @@ print(f'SSIM: {ssim_baseline.item():.4f}, NRMSE: {nrmse_baseline.item():.4f}')
 print(f'SSIM: {ssim_t1.item():.4f}, NRMSE: {nrmse_t1.item():.4f}')
 
 
-fig, ax = plt.subplots(
-    1,
-    5,
-    gridspec_kw={
-        'width_ratios': [1, 1, 1, 0.28, 0.075],
-        'wspace': -0.25,
-    },
-    figsize=(6.5, 2.5),
-)
+fig, ax = plt.subplots(1, 5, gridspec_kw={'width_ratios': [1, 1, 1, 0.28, 0.075], 'wspace': -0.25}, figsize=(6.5, 2.5))
 baseline_t1 = baseline_t1.squeeze()
 baseline_t1[~batch['mask']] = torch.nan
 ax[0].imshow(baseline_t1, vmin=0, vmax=2, cmap=cmap)
 ax[0].axis('off')
-ax[0].set_title('SENSE + NLS')
+ax[0].set_title('TV + NLS')
 ax[0].text(
     0.5,
     -0.00,
@@ -458,3 +451,5 @@ fig.savefig(
     bbox_inches='tight',
     pad_inches=0,
 )
+plt.show()
+# %%
