@@ -10,52 +10,76 @@ from mr2.utils.filters import filter_separable
 
 
 class FiniteDifferenceOp(LinearOperator):
-    """Finite Difference Operator."""
+    r"""Finite-difference operator.
+
+    Computes directional discrete derivatives along the axes in ``dim`` (for
+    example ``dim=(-2, -1)`` for spatial ``(y, x)`` gradients). One directional
+    derivative is computed per axis and stacked along a new leading dimension.
+
+    Each output channel ``i`` computes finite differences along axis
+    ``dim[i]``. For ``mode='forward'``, values follow
+
+    .. math::
+        y_i[k] = x[k + e_i] - x[k],
+
+    where :math:`e_i` is a one-step shift along axis ``dim[i]``. ``'central'``
+    and ``'backward'`` use the stencils :math:`\\tfrac{1}{2}(-1,0,1)` and
+    :math:`(-1,1,0)`.
+
+    For input ``x`` with shape ``S``, ``op(x)`` returns a tensor with shape
+    ``(len(dim), *S)`` where channel ``i`` corresponds to axis ``dim[i]``.
+    Supported schemes are ``'forward'``, ``'backward'``, and ``'central'``.
+    Boundary handling is controlled by ``pad_mode`` (``'zeros'`` or
+    ``'circular'``).
+    """
 
     @staticmethod
     def finite_difference_kernel(mode: Literal['central', 'forward', 'backward']) -> torch.Tensor:
-        """Finite difference kernel.
+        """Return the 1D finite-difference kernel for a given mode.
 
         Parameters
         ----------
         mode
-            String specifying kernel type
+            Difference scheme: `'forward'`, `'backward'`, or `'central'`.
 
         Returns
         -------
-            Finite difference kernel
+            1D kernel tensor of length 3.
 
         Raises
         ------
         `ValueError`
-            If mode is not central, forward, backward or doublecentral
+            If `mode` is not one of `'central'`, `'forward'`, or `'backward'`.
         """
-        if mode == 'central':
-            kernel = torch.tensor((-1, 0, 1)) / 2
-        elif mode == 'forward':
-            kernel = torch.tensor((0, -1, 1))
-        elif mode == 'backward':
-            kernel = torch.tensor((-1, 1, 0))
-        else:
-            raise ValueError(f'mode should be one of (central, forward, backward), not {mode}')
+        match mode:
+            case 'forward':
+                kernel = torch.tensor((0, -1, 1))
+            case 'backward':
+                kernel = torch.tensor((-1, 1, 0))
+            case 'central':
+                kernel = torch.tensor((-1, 0, 1)) / 2
+            case _:
+                raise ValueError(f'mode should be one of (central, forward, backward), not {mode}')
         return kernel
 
     def __init__(
         self,
         dim: Sequence[int],
-        mode: Literal['central', 'forward', 'backward'] = 'central',
+        mode: Literal['central', 'forward', 'backward'] = 'forward',
         pad_mode: Literal['zeros', 'circular'] = 'zeros',
     ) -> None:
-        """Finite difference operator.
+        """Initialize a finite-difference operator.
 
         Parameters
         ----------
         dim
-            Dimension along which finite differences are calculated.
+            Axes along which finite differences are computed.
+            The order defines the order of directional channels in the output.
         mode
-            Type of finite difference operator
+            Finite-difference scheme used to construct the 1D kernel.
         pad_mode
-            Padding to ensure output has the same size as the input
+            Boundary handling used during filtering.
+            `'zeros'` maps to constant-zero padding, `'circular'` to periodic padding.
         """
         super().__init__()
         self.dim = dim
@@ -63,21 +87,20 @@ class FiniteDifferenceOp(LinearOperator):
         self.kernel = self.finite_difference_kernel(mode)
 
     def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor,]:
-        """Apply forward finite difference operation.
+        """Apply directional finite differences.
 
-        Calculates finite differences of the input tensor `x` along the dimensions
-        specified during initialization. The results for each dimension are stacked
-        along the first dimension of the output tensor.
+        Computes one directional derivative per axis in `dim` and stacks the
+        results along a new leading dimension.
 
         Parameters
         ----------
         x
-            Input tensor.
+            Input tensor from the operator domain.
 
         Returns
         -------
-            Tensor containing the finite differences of `x` along the specified
-            dimensions, stacked along the first dimension.
+            Single tensor of shape `(len(dim), *x.shape)` containing directional
+            finite differences in the same order as `dim`.
         """
         return super().__call__(x)
 
@@ -98,32 +121,29 @@ class FiniteDifferenceOp(LinearOperator):
         )
 
     def adjoint(self, y: torch.Tensor) -> tuple[torch.Tensor,]:
-        """Apply adjoint finite difference operation.
+        """Apply the adjoint of the finite-difference operator.
 
-        This operation is the adjoint of the forward finite difference calculation.
-        It takes a tensor `y` (which is assumed to be the output of the forward pass,
-        i.e., finite differences stacked along the first dimension) and computes
-        the sum of the adjoints of the individual directional finite difference operations.
+        Expects stacked directional components (as returned by `forward`), applies
+        the per-direction adjoint filter (kernel flipped in 1D), and sums across
+        directions.
 
         Parameters
         ----------
         y
-            Input tensor, representing finite differences stacked along the first dimension.
-            The size of the first dimension must match the number of dimensions
-            specified for the operator.
+            Directional components stacked along the leading axis.
+            `y.shape[0]` must equal `len(dim)`.
 
         Returns
         -------
-            Result of the adjoint finite difference operation.
+            Tensor in the original domain shape.
 
         Raises
         ------
         ValueError
-            If the first dimension of `y` does not match the number of
-            dimensions along which finite differences were calculated.
+            If the leading dimension of `y` does not match `len(dim)`.
         """
         if y.shape[0] != len(self.dim):
-            raise ValueError('Fist dimension of input tensor has to match the number of finite difference directions.')
+            raise ValueError('First dimension of input tensor has to match the number of finite difference directions.')
         return (
             torch.sum(
                 torch.stack(
