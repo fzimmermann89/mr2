@@ -34,6 +34,7 @@ from mr2.operators.SymmetrizedGradientOp import SymmetrizedGradientOp
 from mr2.operators.WaveletOp import WaveletOp
 from mr2.operators.ZeroPadOp import ZeroPadOp
 from mr2.operators.ZeroOp import ZeroOp
+from mr2.operators.B0InformedFourierOp import ConjugatePhaseFourierOp, TimeSegmentedFourierOp, MultiFrequencyFourierOp
 
 
 __all__ = [
@@ -41,6 +42,7 @@ __all__ = [
     "CartesianMaskingOp",
     "CartesianSamplingOp",
     "ConjugateGradientOp",
+    "ConjugatePhaseFourierOp",
     "ConstraintsOp",
     "DensityCompensationOp",
     "DictionaryMatchOp",
@@ -57,6 +59,7 @@ __all__ = [
     "LinearOperator",
     "LinearOperatorMatrix",
     "MagnitudeOp",
+    "MultiFrequencyFourierOp",
     "MultiIdentityOp",
     "NonUniformFastFourierOp",
     "Operator",
@@ -72,6 +75,7 @@ __all__ = [
     "SignalModel",
     "SliceProjectionOp",
     "SymmetrizedGradientOp",
+    "TimeSegmentedFourierOp",
     "WaveletOp",
     "ZeroOp",
     "ZeroPadOp",
