@@ -45,6 +45,25 @@ class Operator(Generic[Unpack[Tin], Tout], ABC, TensorAttributeMixin, torch.nn.M
         """
         return OperatorComposition(self, cast(Operator[Unpack[Tin2], tuple[Unpack[Tin]]], other))
 
+    def __or__(
+        self: Operator[torch.Tensor, tuple[torch.Tensor]], other: Operator[torch.Tensor, tuple[torch.Tensor]]
+    ) -> mr2.operators.FunctionalSeparableSum:
+        """Separable sum of functionals.
+
+        ``f | g`` yields a separable sum with ``(f | g)(x, y) == f(x) + g(y)``.
+        """
+        if isinstance(other, mr2.operators.FunctionalSeparableSum):
+            return other.__class__(self, *other.functionals)
+        return mr2.operators.FunctionalSeparableSum(self, other)
+
+    def __ror__(
+        self: Operator[torch.Tensor, tuple[torch.Tensor]], other: Operator[torch.Tensor, tuple[torch.Tensor]]
+    ) -> mr2.operators.FunctionalSeparableSum:
+        """Separable sum of functionals."""
+        if isinstance(other, mr2.operators.FunctionalSeparableSum):
+            return other.__class__(*other.functionals, self)
+        return mr2.operators.FunctionalSeparableSum(other, self)
+
     def __radd__(
         self: Operator[Unpack[Tin], tuple[Unpack[Tin]]], other: torch.Tensor | complex
     ) -> Operator[Unpack[Tin], tuple[Unpack[Tin]]]:
