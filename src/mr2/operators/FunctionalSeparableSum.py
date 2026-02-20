@@ -25,8 +25,9 @@ class FunctionalSeparableSum(Operator[Unpack[T], tuple[torch.Tensor]]):
     functionals: tuple[Operator[torch.Tensor, tuple[torch.Tensor]], ...]
 
     @overload
-    def __init__(self: FunctionalSeparableSum[torch.Tensor], f1: Operator[torch.Tensor, tuple[torch.Tensor]], /) -> None:
-        ...
+    def __init__(
+        self: FunctionalSeparableSum[torch.Tensor], f1: Operator[torch.Tensor, tuple[torch.Tensor]], /
+    ) -> None: ...
 
     @overload
     def __init__(
