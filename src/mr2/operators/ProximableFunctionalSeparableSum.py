@@ -9,6 +9,7 @@ from typing_extensions import TypeVarTuple, Unpack, overload
 
 from mr2.operators.Functional import ProximableFunctional
 from mr2.operators.FunctionalSeparableSum import FunctionalSeparableSum
+from mr2.operators.Operator import Operator
 
 T = TypeVarTuple('T')
 
@@ -36,57 +37,16 @@ class ProximableFunctionalSeparableSum(FunctionalSeparableSum[Unpack[T]]):
 
     @overload
     def __init__(
-        self: ProximableFunctionalSeparableSum[torch.Tensor, torch.Tensor, torch.Tensor],
+        self: ProximableFunctionalSeparableSum[torch.Tensor, torch.Tensor, Unpack[tuple[torch.Tensor, ...]]],
         f1: ProximableFunctional,
         f2: ProximableFunctional,
-        f3: ProximableFunctional,
-        /,
-    ) -> None: ...
-
-    @overload
-    def __init__(
-        self: ProximableFunctionalSeparableSum[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
-        f1: ProximableFunctional,
-        f2: ProximableFunctional,
-        f3: ProximableFunctional,
-        f4: ProximableFunctional,
-        /,
-    ) -> None: ...
-
-    @overload
-    def __init__(
-        self: ProximableFunctionalSeparableSum[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
-        f1: ProximableFunctional,
-        f2: ProximableFunctional,
-        f3: ProximableFunctional,
-        f4: ProximableFunctional,
-        f5: ProximableFunctional,
-        /,
-    ) -> None: ...
-
-    @overload
-    def __init__(
-        self: ProximableFunctionalSeparableSum[
-            torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, Unpack[tuple[torch.Tensor, ...]]
-        ],
-        f1: ProximableFunctional,
-        f2: ProximableFunctional,
-        f3: ProximableFunctional,
-        f4: ProximableFunctional,
-        f5: ProximableFunctional,
         /,
         *f: ProximableFunctional,
     ) -> None: ...
 
     def __init__(self, *functionals: ProximableFunctional) -> None:
-        """Initialize the separable sum of proximable functionals.
-
-        Parameters
-        ----------
-        functionals
-            The proximable functionals to be summed.
-        """
-        super().__init__(*functionals)
+        """Initialize the separable sum of proximable functionals."""
+        super().__init__(*cast(tuple[Operator[torch.Tensor, tuple[torch.Tensor]], ...], functionals))  # type: ignore[misc]
 
     def prox(self, *x: Unpack[T], sigma: float | torch.Tensor = 1) -> tuple[Unpack[T]]:
         """Apply the proximal operators of the functionals to the inputs.
@@ -127,7 +87,7 @@ class ProximableFunctionalSeparableSum(FunctionalSeparableSum[Unpack[T]]):
         )
         return cast(tuple[Unpack[T]], prox_convex_conj_x)
 
-    @overload
+    @overload  # type: ignore[override]
     def __or__(
         self: ProximableFunctionalSeparableSum[Unpack[T]], other: ProximableFunctional
     ) -> ProximableFunctionalSeparableSum[Unpack[T], torch.Tensor]: ...
@@ -158,34 +118,50 @@ class ProximableFunctionalSeparableSum(FunctionalSeparableSum[Unpack[T]]):
     @overload
     def __or__(
         self: ProximableFunctionalSeparableSum[Unpack[T]],
-        other: ProximableFunctionalSeparableSum[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
-    ) -> ProximableFunctionalSeparableSum[
-        Unpack[T], torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor
-    ]: ...
+        other: Operator[torch.Tensor, tuple[torch.Tensor]],
+    ) -> FunctionalSeparableSum[Unpack[T], torch.Tensor]: ...
 
-    def __or__(
-        self: ProximableFunctionalSeparableSum,
-        other: ProximableFunctional | ProximableFunctionalSeparableSum,
-    ) -> ProximableFunctionalSeparableSum:
+    def __or__(  # type: ignore[misc]
+        self: ProximableFunctionalSeparableSum[Unpack[T]], other: Operator[torch.Tensor, tuple[torch.Tensor]]
+    ) -> FunctionalSeparableSum[Unpack[T], torch.Tensor]:
         """Separable sum of functionals.
 
         ``f | g`` is a ~mr2.operators.ProximableFunctionalSeparableSum,
         with ``(f|g)(x,y) == f(x) + g(y)``.
         """
         if isinstance(other, ProximableFunctionalSeparableSum):
-            return self.__class__(*self.functionals, *other.functionals)
+            return cast(
+                ProximableFunctionalSeparableSum[Unpack[T], torch.Tensor],
+                self.__class__(*self.functionals, *other.functionals),
+            )
         elif isinstance(other, ProximableFunctional):
-            return self.__class__(*self.functionals, other)
+            return cast(
+                ProximableFunctionalSeparableSum[Unpack[T], torch.Tensor], self.__class__(*self.functionals, other)
+            )
+        elif isinstance(other, FunctionalSeparableSum):
+            return cast(
+                FunctionalSeparableSum[Unpack[T], torch.Tensor],
+                FunctionalSeparableSum(*self.functionals, *other.functionals),
+            )
         else:
             return NotImplemented
 
     def __ror__(
-        self: ProximableFunctionalSeparableSum[Unpack[T]], other: ProximableFunctional
-    ) -> ProximableFunctionalSeparableSum[torch.Tensor, Unpack[T]]:
+        self: ProximableFunctionalSeparableSum[Unpack[T]], other: Operator[torch.Tensor, tuple[torch.Tensor]]
+    ) -> FunctionalSeparableSum[torch.Tensor, Unpack[T]]:
         """Separable sum of functionals."""
         if isinstance(other, ProximableFunctional):
             return cast(
                 ProximableFunctionalSeparableSum[torch.Tensor, Unpack[T]], self.__class__(other, *self.functionals)
+            )
+        elif isinstance(other, FunctionalSeparableSum):
+            return cast(
+                FunctionalSeparableSum[torch.Tensor, Unpack[T]],
+                FunctionalSeparableSum(*other.functionals, *self.functionals),
+            )
+        elif isinstance(other, Operator):
+            return cast(
+                FunctionalSeparableSum[torch.Tensor, Unpack[T]], FunctionalSeparableSum(other, *self.functionals)
             )
         else:
             return NotImplemented

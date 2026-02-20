@@ -105,47 +105,16 @@ class FunctionalSeparableSum(Operator[Unpack[T], tuple[torch.Tensor]]):
         )
         return (result,)
 
-    @overload
     def __or__(
         self: FunctionalSeparableSum[Unpack[T]], other: Operator[torch.Tensor, tuple[torch.Tensor]]
-    ) -> FunctionalSeparableSum[Unpack[T], torch.Tensor]: ...
-
-    @overload
-    def __or__(
-        self: FunctionalSeparableSum[Unpack[T]], other: FunctionalSeparableSum[torch.Tensor]
-    ) -> FunctionalSeparableSum[Unpack[T], torch.Tensor]: ...
-
-    @overload
-    def __or__(
-        self: FunctionalSeparableSum[Unpack[T]], other: FunctionalSeparableSum[torch.Tensor, torch.Tensor]
-    ) -> FunctionalSeparableSum[Unpack[T], torch.Tensor, torch.Tensor]: ...
-
-    @overload
-    def __or__(
-        self: FunctionalSeparableSum[Unpack[T]], other: FunctionalSeparableSum[torch.Tensor, torch.Tensor, torch.Tensor]
-    ) -> FunctionalSeparableSum[Unpack[T], torch.Tensor, torch.Tensor, torch.Tensor]: ...
-
-    @overload
-    def __or__(
-        self: FunctionalSeparableSum[Unpack[T]],
-        other: FunctionalSeparableSum[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
-    ) -> FunctionalSeparableSum[Unpack[T], torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: ...
-
-    @overload
-    def __or__(
-        self: FunctionalSeparableSum[Unpack[T]],
-        other: FunctionalSeparableSum[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
-    ) -> FunctionalSeparableSum[Unpack[T], torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: ...
-
-    def __or__(
-        self: FunctionalSeparableSum,
-        other: Operator[torch.Tensor, tuple[torch.Tensor]] | FunctionalSeparableSum,
-    ) -> FunctionalSeparableSum:
+    ) -> FunctionalSeparableSum[Unpack[T], torch.Tensor]:
         """Separable sum of functionals."""
         if isinstance(other, FunctionalSeparableSum):
-            return self.__class__(*self.functionals, *other.functionals)
+            return cast(
+                FunctionalSeparableSum[Unpack[T], torch.Tensor], self.__class__(*self.functionals, *other.functionals)
+            )
         elif isinstance(other, Operator):
-            return self.__class__(*self.functionals, other)
+            return cast(FunctionalSeparableSum[Unpack[T], torch.Tensor], self.__class__(*self.functionals, other))
         else:
             return NotImplemented
 
