@@ -217,6 +217,33 @@ def test_KTrajectoryCartesian_random(acceleration: int = 2, n_k: int = 64) -> No
         assert center_idx in lines1
 
 
+def test_KTrajectoryCartesian_random_xy(acceleration_y: int = 4, acceleration_x: int = 2, n_k: int = 64) -> None:
+    """Test 2D gaussian variable density undersampling in x and y."""
+    traj = KTrajectoryCartesian.gaussian_variable_density_nd(
+        encoding_matrix=SpatialDimension(1, n_k, n_k),
+        acceleration=SpatialDimension(1, acceleration_y, acceleration_x),
+        n_center=SpatialDimension(1, 8, 6),
+        n_other=(2, 3),
+        seed=123,
+    )
+
+    assert traj.kx.shape == (2, 3, 1, 1, 1, n_k // acceleration_x)
+    assert traj.ky.shape == (2, 3, 1, 1, n_k // acceleration_y, 1)
+
+    lines_y1 = traj.ky[0, 0].unique()
+    lines_y2 = traj.ky[0, 1].unique()
+    assert not torch.allclose(lines_y1, lines_y2)
+
+    lines_x1 = traj.kx[0, 0].unique()
+    lines_x2 = traj.kx[0, 1].unique()
+    assert not torch.allclose(lines_x1, lines_x2)
+
+    for center_idx in range(-4, 4):
+        assert center_idx in lines_y1
+    for center_idx in range(-3, 3):
+        assert center_idx in lines_x1
+
+
 def test_KTrajectoryCartesian_fullysampled() -> None:
     """Test the generation of a fully sampled Cartesian trajectory"""
     traj = KTrajectoryCartesian.fullysampled(SpatialDimension(10, 64, 64))
@@ -227,6 +254,19 @@ def test_KTrajectoryCartesian_fullysampled() -> None:
     assert len(traj.ky.unique()) == 64
     assert len(traj.kz.unique()) == 10
     assert traj.kx.diff().unique() == 1
+
+
+@pytest.mark.parametrize('acceleration', [1, 4])
+def test_KTrajectoryCartesian_uniform_undersampling(acceleration: int, n_k: int = 64) -> None:
+    """Test deterministic regularly undersampled Cartesian trajectory with ACS lines."""
+    traj = KTrajectoryCartesian.uniform_undersampling(n_k, acceleration=acceleration, n_center=8)
+
+    expected_regular = torch.arange(-n_k // 2, n_k // 2, acceleration)
+    expected_center = torch.arange(-4, 4)
+    expected = torch.cat([expected_regular, expected_center]).unique(sorted=True)
+
+    lines = traj.ky.unique().sort().values
+    torch.testing.assert_close(lines, expected.to(lines))
 
 
 @pytest.mark.parametrize('acceleration', [1, 16])
