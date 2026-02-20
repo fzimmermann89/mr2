@@ -5,10 +5,12 @@ from typing import TYPE_CHECKING, TypeVar
 
 import torch
 from torch.autograd.function import once_differentiable
+from typing_extensions import Unpack
 
 from mr2.algorithms.optimizers.cg import cg
 from mr2.operators.LinearOperator import LinearOperator
 from mr2.operators.LinearOperatorMatrix import LinearOperatorMatrix
+from mr2.operators.Operator import Operator
 
 LinearOperatorFactory = Callable[..., LinearOperator]
 LinearOperatorMatrixFactory = Callable[..., LinearOperatorMatrix]
@@ -109,7 +111,7 @@ class ConjugateGradientFunction(torch.autograd.Function):
         return (None, None, *grad_input)  # operator_factory, rhs_factory, *inputs
 
 
-class ConjugateGradientOp(torch.nn.Module):
+class ConjugateGradientOp(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]]):
     r"""Solves a linear positive semidefinite system with the conjugate gradient method.
 
     Solves :math:`A x = b` where :math:`A` is a linear operator or a matrix of linear operators ,
@@ -203,7 +205,7 @@ class ConjugateGradientOp(torch.nn.Module):
         -------
             The solution of the linear system.
         """
-        return super().__call__(*parameters, initial_value=initial_value)
+        return super(Operator, self).__call__(*parameters, initial_value=initial_value)
 
     def forward(
         self,

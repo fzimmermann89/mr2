@@ -34,7 +34,7 @@ from mr2.operators.SymmetrizedGradientOp import SymmetrizedGradientOp
 from mr2.operators.WaveletOp import WaveletOp
 from mr2.operators.ZeroPadOp import ZeroPadOp
 from mr2.operators.ZeroOp import ZeroOp
-
+from mr2.operators.DifferentiableDictionaryMatchOp import DifferentiableDictionaryMatchOp
 
 __all__ = [
     "AveragingOp",
@@ -44,6 +44,7 @@ __all__ = [
     "ConstraintsOp",
     "DensityCompensationOp",
     "DictionaryMatchOp",
+    "DifferentiableDictionaryMatchOp",
     "EinsumOp",
     "ElementaryFunctional",
     "ElementaryProximableFunctional",
