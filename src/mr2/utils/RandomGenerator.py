@@ -63,11 +63,13 @@ class RandomGenerator:
         Parameters
         ----------
         seed
-            Seed for the random generator. If `None`, default torch seeding is used.
+            Seed for the random generator. If `None`, use
+            default generator to get a random seed
         """
         self.generator = torch.Generator()
-        if seed is not None:
-            self.generator.manual_seed(seed)
+        if seed is None:
+            seed = torch.randint(0, 2**32, (1,)).item()
+        self.generator.manual_seed(seed)
 
     def _randint(
         self,
