@@ -140,14 +140,16 @@ class MultiFrequencyFourierOp(B0InformedFourierOp):
         self, b0_map_rad: torch.Tensor, readout_times: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
         with torch.no_grad():
-            quantile_steps = torch.linspace(0, 1, self.n_bins, device=b0_map_rad.device)
+            quantile_steps = torch.linspace(0, 1, self.n_bins, device=b0_map_rad.device, dtype=b0_map_rad.dtype)
             frequency_centers = torch.quantile(b0_map_rad.flatten(), quantile_steps)
             frequency_centers = torch.unique(frequency_centers)
 
-        temporal_basis = torch.exp(-1j * frequency_centers[:, None] * readout_times[None, :]).to(torch.complex64)
+        temporal_basis = torch.exp(-1j * frequency_centers[:, None] * readout_times[None, :]).to(
+            b0_map_rad.dtype.to_complex()
+        )
 
         if frequency_centers.numel() == 1:
-            spatial_basis = torch.ones((1, *b0_map_rad.shape), dtype=torch.complex64, device=b0_map_rad.device)
+            spatial_basis = torch.ones((1, *b0_map_rad.shape), dtype=b0_map_rad.dtype.to_complex(), device=b0_map_rad.device)
             return spatial_basis, temporal_basis
 
         n_centers = frequency_centers.numel()
@@ -160,11 +162,11 @@ class MultiFrequencyFourierOp(B0InformedFourierOp):
             right_freq = frequency_centers[idx_right]
             delta_freq = (right_freq - left_freq).clamp_min(1e-12)
 
-        spatial_basis = torch.zeros((n_centers, b0_map_flat.numel()), device=b0_map_rad.device)
+        spatial_basis = torch.zeros((n_centers, b0_map_flat.numel()), device=b0_map_rad.device, dtype=b0_map_rad.dtype)
         w = (b0_map_flat - left_freq) / delta_freq
         spatial_basis.scatter_add_(0, idx_left[None, :], (1 - w)[None, :])
         spatial_basis.scatter_add_(0, idx_right[None, :], w[None, :])
-        spatial_basis = spatial_basis.reshape(n_centers, *b0_map_rad.shape).to(torch.complex64)
+        spatial_basis = spatial_basis.reshape(n_centers, *b0_map_rad.shape).to(b0_map_rad.dtype.to_complex())
 
         return spatial_basis, temporal_basis
 
@@ -217,14 +219,20 @@ class TimeSegmentedFourierOp(B0InformedFourierOp):
         time_segments = torch.linspace(readout_times[0], readout_times[-1], self.n_segments, device=b0_map_rad.device)
 
         with torch.no_grad():
-            quantile_steps = torch.linspace(0, 1, self.n_design_frequencies, device=b0_map_rad.device)
+            quantile_steps = torch.linspace(
+                0, 1, self.n_design_frequencies, device=b0_map_rad.device, dtype=b0_map_rad.dtype
+            )
             design_frequencies = torch.unique(torch.quantile(b0_map_rad.flatten(), quantile_steps))
 
             segment_phases = torch.exp(-1j * design_frequencies[:, None] * time_segments[None, :])
             target_phases = torch.exp(-1j * design_frequencies[:, None] * readout_times[None, :])
-            temporal_basis = torch.linalg.lstsq(segment_phases, target_phases, rcond=1e-15).solution.to(torch.complex64)
+            temporal_basis = torch.linalg.lstsq(segment_phases, target_phases, rcond=1e-15).solution.to(
+                b0_map_rad.dtype.to_complex()
+            )
 
-        spatial_basis = torch.exp(-1j * einops.einsum(time_segments, b0_map_rad, 'l, ... -> l ...')).to(torch.complex64)
+        spatial_basis = torch.exp(-1j * einops.einsum(time_segments, b0_map_rad, 'l, ... -> l ...')).to(
+            b0_map_rad.dtype.to_complex()
+        )
 
         return spatial_basis, temporal_basis
 
@@ -244,6 +252,8 @@ class ConjugatePhaseFourierOp(B0InformedFourierOp):
     def _compute_basis(
         self, b0_map_rad: torch.Tensor, readout_times: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        spatial_basis = torch.exp(-1j * einops.einsum(readout_times, b0_map_rad, 'l, ... -> l ...')).to(torch.complex64)
-        temporal_basis = torch.eye(readout_times.numel(), dtype=torch.complex64, device=b0_map_rad.device)
+        spatial_basis = torch.exp(-1j * einops.einsum(readout_times, b0_map_rad, 'l, ... -> l ...')).to(
+            b0_map_rad.dtype.to_complex()
+        )
+        temporal_basis = torch.eye(readout_times.numel(), dtype=b0_map_rad.dtype.to_complex(), device=b0_map_rad.device)
         return spatial_basis, temporal_basis
