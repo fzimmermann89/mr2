@@ -66,10 +66,8 @@ class RandomGenerator:
             Seed for the random generator. If `None`, use
             default generator to get a random seed
         """
-        self.generator = torch.Generator()
-        if seed is None:
-            seed = torch.randint(0, 2**32, (1,)).item()
-        self.generator.manual_seed(seed)
+        seed_ = torch.randint(0, 2**32, (1,)).item() if seed is None else seed
+        self.generator = torch.Generator().manual_seed(seed_)
 
     def _randint(
         self,
