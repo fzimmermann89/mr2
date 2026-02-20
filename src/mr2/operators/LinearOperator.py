@@ -329,25 +329,43 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
         else:
             return NotImplemented
 
-    def __or__(self, other: LinearOperator) -> mr2.operators.LinearOperatorMatrix:
+    def __or__(
+        self,
+        other: Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]] | mr2.operators.OperatorMatrix,
+    ) -> mr2.operators.LinearOperatorMatrix:
         """Horizontal stacking of two LinearOperators.
 
         ``A|B`` is a `~mr2.operators.LinearOperatorMatrix` with two columns,
         with ``(A|B)(x1,x2) == A(x1) + B(x2)``.
         See `mr2.operators.LinearOperatorMatrix` for more information.
         """
+        if isinstance(other, mr2.operators.LinearOperatorMatrix):
+            if (rows := other.shape[0]) > 1:
+                raise ValueError(
+                    f'Shape mismatch in horizontal stacking: cannot stack LinearOperator and matrix with {rows} rows.'
+                )
+            return mr2.operators.LinearOperatorMatrix([[self, *other._operators[0]]])
         if not isinstance(other, LinearOperator):
             return NotImplemented
         operators = [[self, other]]
         return mr2.operators.LinearOperatorMatrix(operators)
 
-    def __mod__(self, other: LinearOperator) -> mr2.operators.LinearOperatorMatrix:
+    def __mod__(
+        self,
+        other: Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]] | mr2.operators.OperatorMatrix,
+    ) -> mr2.operators.LinearOperatorMatrix:
         """Vertical stacking of two LinearOperators.
 
         ``A%B`` is a `~mr2.operators.LinearOperatorMatrix` with two rows,
         with ``(A%B)(x) == (A(x), B(x))``.
         See `mr2.operators.LinearOperatorMatrix` for more information.
         """
+        if isinstance(other, mr2.operators.LinearOperatorMatrix):
+            if (cols := other.shape[1]) > 1:
+                raise ValueError(
+                    f'Shape mismatch in vertical stacking: cannot stack LinearOperator and matrix with {cols} columns.'
+                )
+            return mr2.operators.LinearOperatorMatrix([[self], *other._operators])
         if not isinstance(other, LinearOperator):
             return NotImplemented
         operators = [[self], [other]]

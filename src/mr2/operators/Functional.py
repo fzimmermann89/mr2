@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, TypeAlias
 
 import torch
-from typing_extensions import TypeVarTuple, Unpack
+from typing_extensions import TypeVarTuple, Unpack, overload
 
 import mr2.operators
 from mr2.operators.Operator import Operator
@@ -177,9 +177,28 @@ class ProximableFunctional(Operator[torch.Tensor, tuple[torch.Tensor]], ABC):
             return NotImplemented
         return ScaledProximableFunctional(self, scalar)
 
+    @overload
     def __or__(
         self, other: ProximableFunctional
-    ) -> mr2.operators.ProximableFunctionalSeparableSum[torch.Tensor, torch.Tensor]:
+    ) -> mr2.operators.ProximableFunctionalSeparableSum[torch.Tensor, torch.Tensor]: ...
+
+    @overload
+    def __or__(
+        self,
+        other: mr2.operators.ProximableFunctionalSeparableSum,
+    ) -> mr2.operators.ProximableFunctionalSeparableSum: ...
+
+    @overload
+    def __or__(
+        self, other: Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]] | mr2.operators.OperatorMatrix
+    ) -> Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]]: ...
+
+    def __or__(
+        self,
+        other: Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]]
+        | mr2.operators.OperatorMatrix
+        | mr2.operators.ProximableFunctionalSeparableSum,
+    ) -> Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]]:
         """Create a ProximableFunctionalSeparableSum from two proximable functionals.
 
         ``f | g`` is a separable sum with ``(f|g)(x,y) == f(x) + g(y)``.
@@ -193,9 +212,11 @@ class ProximableFunctional(Operator[torch.Tensor, tuple[torch.Tensor]], ABC):
         -------
             ProximableFunctionalSeparableSum object
         """
+        if isinstance(other, mr2.operators.ProximableFunctionalSeparableSum):
+            return mr2.operators.ProximableFunctionalSeparableSum(self, *other.functionals)
         if isinstance(other, ProximableFunctional):
             return mr2.operators.ProximableFunctionalSeparableSum(self, other)
-        return NotImplemented
+        return super().__or__(other)
 
 
 class ElementaryProximableFunctional(ElementaryFunctional, ProximableFunctional):
