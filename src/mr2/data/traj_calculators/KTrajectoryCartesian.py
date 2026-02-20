@@ -248,7 +248,7 @@ class KTrajectoryCartesian(KTrajectoryCalculator):
             raise ValueError(f'n_center must be in [0, {n_k1}], got {n_center}.')
 
         low = -n_k1 // 2
-        high = n_k1 // 2 + 1
+        high = n_k1 // 2
         uniform_lines = torch.arange(low, high, acceleration)
         center_lines = torch.arange(-n_center // 2, n_center // 2)
         k1_idx = torch.cat([uniform_lines, center_lines]).unique(sorted=True)
