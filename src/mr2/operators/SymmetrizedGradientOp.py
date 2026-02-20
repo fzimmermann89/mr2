@@ -105,5 +105,7 @@ class SymmetrizedGradientOp(LinearOperator):
             If the first two dimensions of ``w`` do not equal ``len(dim)``.
         """
         if w.shape[0] != self._n_dim or w.shape[1] != self._n_dim:
-            raise ValueError('First two dimensions of input tensor must match the number of finite difference directions.')
+            raise ValueError(
+                'First two dimensions of input tensor must match the number of finite difference directions.'
+            )
         return self._operator.adjoint(w)
