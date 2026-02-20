@@ -120,7 +120,7 @@ def test_b0_informed_fourier_op_gradcheck_wrt_b0_map(
     readout_times = torch.linspace(0, 3e-3, shape[-1], dtype=torch.float32)
     fourier_op = FastFourierOp(dim=(-2, -1), recon_matrix=shape[-2:], encoding_matrix=shape[-2:])
 
-    def forward_from_b0_map(b0_map: torch.Tensor) -> tuple[torch.Tensor]:
+    def forward_from_b0_map(b0_map: torch.Tensor) -> torch.Tensor:
         operator = operator_type(fourier_op=fourier_op, b0_map=b0_map, readout_times=readout_times)
         (kspace,) = operator(img)
         return kspace

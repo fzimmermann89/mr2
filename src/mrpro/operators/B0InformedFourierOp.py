@@ -20,7 +20,7 @@ class B0InformedFourierOp(LinearOperator, ABC):
 
     def __init__(
         self,
-        fourier_op: FourierOp,
+        fourier_op: LinearOperator,
         b0_map: torch.Tensor,
         readout_times: torch.Tensor,
     ) -> None:
@@ -113,7 +113,7 @@ class MultiFrequencyFourierOp(B0InformedFourierOp):
 
     def __init__(
         self,
-        fourier_op: FourierOp,
+        fourier_op: LinearOperator,
         b0_map: torch.Tensor,
         readout_times: torch.Tensor,
         n_bins: int = 32,
@@ -149,7 +149,9 @@ class MultiFrequencyFourierOp(B0InformedFourierOp):
         )
 
         if frequency_centers.numel() == 1:
-            spatial_basis = torch.ones((1, *b0_map_rad.shape), dtype=b0_map_rad.dtype.to_complex(), device=b0_map_rad.device)
+            spatial_basis = torch.ones(
+                (1, *b0_map_rad.shape), dtype=b0_map_rad.dtype.to_complex(), device=b0_map_rad.device
+            )
             return spatial_basis, temporal_basis
 
         n_centers = frequency_centers.numel()
@@ -186,7 +188,7 @@ class TimeSegmentedFourierOp(B0InformedFourierOp):
 
     def __init__(
         self,
-        fourier_op: FourierOp,
+        fourier_op: LinearOperator,
         b0_map: torch.Tensor,
         readout_times: torch.Tensor,
         n_segments: int = 32,
