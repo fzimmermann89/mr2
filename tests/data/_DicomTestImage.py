@@ -119,7 +119,7 @@ class DicomTestImage:
         dataset.PatientID = 'Ellipse001'
         dataset.PatientSex = 'O'
         dataset.Modality = 'MR'
-        dataset.StudyDescription = 'mrtwo'
+        dataset.StudyDescription = 'MRtwo'
         dataset.SeriesDate = dt.strftime('%Y%m%d')
         dataset.SeriesTime = dt.strftime('%H%M%S.%f')
         dataset.SeriesDescription = series_description
@@ -232,7 +232,7 @@ class DicomTestImage:
             dataset.RescaleIntercept = rescale_intercept
             dataset.RescaleType = 'US'
 
-        random = RandomGenerator()
+        random = RandomGenerator(1)
         noise = random.float32_tensor(size=(n_slices, matrix_size_x, matrix_size_y))
 
         # 'MONOCHROME2' means smallest value is black, largest value is white
