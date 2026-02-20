@@ -30,6 +30,7 @@ from mr2.operators.RearrangeOp import RearrangeOp
 from mr2.operators.SensitivityOp import SensitivityOp
 from mr2.operators.SignalModel import SignalModel
 from mr2.operators.SliceProjectionOp import SliceProjectionOp
+from mr2.operators.SymmetrizedGradientOp import SymmetrizedGradientOp
 from mr2.operators.WaveletOp import WaveletOp
 from mr2.operators.ZeroPadOp import ZeroPadOp
 from mr2.operators.ZeroOp import ZeroOp
@@ -74,6 +75,7 @@ __all__ = [
     "SignalModel",
     "SliceProjectionOp",
     "TimeSegmentedFourierOp",
+    "SymmetrizedGradientOp",
     "WaveletOp",
     "ZeroOp",
     "ZeroPadOp",
