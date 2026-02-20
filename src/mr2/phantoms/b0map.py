@@ -1,3 +1,5 @@
+"""Random B0 map generation."""
+
 import torch
 from scipy.special import sph_harm_y
 

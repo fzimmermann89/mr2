@@ -18,5 +18,5 @@ __all__ = [
     "brainweb",
     "coils",
     "mdcnn",
-    "b0map"
+    "random_b0map"
 ]
