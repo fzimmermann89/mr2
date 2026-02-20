@@ -38,7 +38,7 @@ class B0InformedFourierOp(LinearOperator, ABC):
         super().__init__()
         self._fourier_op = fourier_op
         b0_map_rad = 2 * torch.pi * b0_map
-        self._basis = self._compute_basis(b0_map_rad, readout_times)
+        self._spatial_basis, self._temporal_basis = self._compute_basis(b0_map_rad, readout_times)
 
     @abstractmethod
     def _compute_basis(
@@ -241,8 +241,9 @@ class ConjugatePhaseFourierOp(B0InformedFourierOp):
        time phase correction. IEEE Trans Med Imaging. 1988;7(1):26-31.
     """
 
-    def _compute_basis(self, b0_map: torch.Tensor, readout_times: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        b0_map_rad = 2 * torch.pi * b0_map
+    def _compute_basis(
+        self, b0_map_rad: torch.Tensor, readout_times: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         spatial_basis = torch.exp(-1j * einops.einsum(readout_times, b0_map_rad, 'l, ... -> l ...')).to(torch.complex64)
-        temporal_basis = torch.eye(readout_times.numel(), dtype=torch.complex64, device=b0_map.device)
+        temporal_basis = torch.eye(readout_times.numel(), dtype=torch.complex64, device=b0_map_rad.device)
         return spatial_basis, temporal_basis
