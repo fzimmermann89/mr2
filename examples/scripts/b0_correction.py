@@ -1,5 +1,6 @@
 # %%
-# Generate some field map
+
+# Generate some field map and a simple phantom
 import matplotlib.pyplot as plt
 import mr2
 import torch
@@ -25,7 +26,7 @@ b0_fourier_op = mr2.operators.ConjugatePhaseFourierOp(fourier_op=fourier_op, b0_
 
 (distorted_k,) = b0_fourier_op(img)
 (distorted_img,) = fourier_op.H(distorted_k)
-vmin, vmax = img.abs().min(), img.abs().max()
+vmin, vmax = img.abs().aminmax()
 fig, ax = plt.subplots(1, 2)
 ax[0].imshow(img.abs().squeeze(), cmap='gray', vmin=vmin, vmax=vmax)
 ax[0].set_title('Undistorted')
