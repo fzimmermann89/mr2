@@ -33,12 +33,16 @@ from mr2.operators.SliceProjectionOp import SliceProjectionOp
 from mr2.operators.WaveletOp import WaveletOp
 from mr2.operators.ZeroPadOp import ZeroPadOp
 from mr2.operators.ZeroOp import ZeroOp
+from mr2.operators.B0InformedFourierOp import ConjugatePhaseFourierOp, TimeSegmentedFourierOp, MultiFrequencyFourierOp
 
 
 __all__ = [
     "AveragingOp",
     "CartesianMaskingOp",
     "CartesianSamplingOp",
+    "ConjugatePhaseFourierOp",
+    "MultiFrequencyFourierOp",
+    "TimeSegmentedFourierOp",
     "ConjugateGradientOp",
     "ConstraintsOp",
     "DensityCompensationOp",

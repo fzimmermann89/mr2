@@ -7,6 +7,7 @@ from mr2.phantoms.m4raw import M4RawDataset
 from mr2.phantoms import mdcnn
 from mr2.phantoms.fastmri import FastMRIKDataDataset, FastMRIImageDataset
 from mr2.phantoms import coils
+from mr2.phantoms.b0map import random_b0map
 
 __all__ = [
     "EllipseParameters",
@@ -16,5 +17,6 @@ __all__ = [
     "M4RawDataset",
     "brainweb",
     "coils",
-    "mdcnn"
+    "mdcnn",
+    "b0map"
 ]
