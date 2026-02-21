@@ -139,7 +139,8 @@ class NCC(Operator[torch.Tensor, tuple[torch.Tensor]]):
             Target volume. At least 3D in the trailing dimensions.
         weight
             Optional positive weight (or boolean mask), broadcastable with target.
-            If ``window_size`` is not ``None``, the weight is masked to only include windows that are fully inside the mask.
+            If ``window_size`` is not ``None``, the weight is masked to only include windows
+            that are fully inside the mask.
         window_size
             If ``None``, compute global NCC over the last three dimensions.
             If integer, compute local NCC with rectangular sliding windows.

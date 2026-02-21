@@ -90,12 +90,12 @@ def test_ncc_local_masked_matches_bruteforce_reference() -> None:
     wz, wy, wx = tuple(window_size if s > 1 else 1 for s in (z, y, x))
     ncc_values = []
     win_weights = []
-    for iz in range(z - wz + 1):
+    for z_idx in range(z - wz + 1):
         for iy in range(y - wy + 1):
             for ix in range(x - wx + 1):
-                tw = target[0, iz : iz + wz, iy : iy + wy, ix : ix + wx]
-                pw = prediction[0, iz : iz + wz, iy : iy + wy, ix : ix + wx]
-                ww = weight[0, iz : iz + wz, iy : iy + wy, ix : ix + wx]
+                tw = target[0, z_idx : z_idx + wz, iy : iy + wy, ix : ix + wx]
+                pw = prediction[0, z_idx : z_idx + wz, iy : iy + wy, ix : ix + wx]
+                ww = weight[0, z_idx : z_idx + wz, iy : iy + wy, ix : ix + wx]
 
                 if torch.any(ww <= 0):
                     ncc_values.append(torch.tensor(0.0))
