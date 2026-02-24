@@ -58,12 +58,32 @@ class Operator(Generic[Unpack[Tin], Tout], ABC, TensorAttributeMixin, torch.nn.M
     def __add__(self, other: Operator[Unpack[Tin], Tout]) -> Operator[Unpack[Tin], Tout]: ...
     @overload
     def __add__(
+        self: Operator[Unpack[Tin], tuple[torch.Tensor]],
+        other: Operator[Unpack[Tin], tuple[torch.Tensor, ...]],
+    ) -> Operator[Unpack[Tin], tuple[torch.Tensor, ...]]: ...
+    @overload
+    def __add__(
+        self: Operator[Unpack[Tin], tuple[torch.Tensor]],
+        other: mr2.operators.ProximableFunctionalSeparableSum,
+    ) -> Operator[Unpack[Tin], tuple[torch.Tensor]]: ...
+    @overload
+    def __add__(
         self: Operator[Unpack[Tin], tuple[Unpack[Tin]]], other: torch.Tensor | complex
     ) -> Operator[Unpack[Tin], tuple[Unpack[Tin]]]: ...
 
     def __add__(
-        self, other: Operator[Unpack[Tin], Tout] | torch.Tensor | complex | mr2.operators.ZeroOp
-    ) -> Operator[Unpack[Tin], Tout] | Operator[Unpack[Tin], tuple[Unpack[Tin]]]:
+        self,
+        other: Operator[Unpack[Tin], Tout]
+        | Operator[Unpack[Tin], tuple[torch.Tensor, ...]]
+        | mr2.operators.ProximableFunctionalSeparableSum
+        | torch.Tensor
+        | complex
+        | mr2.operators.ZeroOp,
+    ) -> (
+        Operator[Unpack[Tin], Tout]
+        | Operator[Unpack[Tin], tuple[torch.Tensor, ...]]
+        | Operator[Unpack[Tin], tuple[Unpack[Tin]]]
+    ):
         """Operator addition.
 
         Returns ``lambda x: self(x) + other(x)`` if other is a operator,
@@ -124,10 +144,22 @@ class Operator(Generic[Unpack[Tin], Tout], ABC, TensorAttributeMixin, torch.nn.M
         """
         return (-1.0) * self + other
 
+    @overload
     def __or__(
-        self: Operator[torch.Tensor, tuple[torch.Tensor, ...]],
-        other: Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]] | mr2.operators.OperatorStack,
-    ) -> Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]]:
+        self: Operator[torch.Tensor, tuple[torch.Tensor]],
+        other: Operator[torch.Tensor, tuple[torch.Tensor]],
+    ) -> mr2.operators.OperatorStack: ...
+
+    @overload
+    def __or__(
+        self: Operator[torch.Tensor, tuple[torch.Tensor]],
+        other: mr2.operators.OperatorStack,
+    ) -> mr2.operators.OperatorStack: ...
+
+    def __or__(
+        self: Operator[torch.Tensor, tuple[torch.Tensor]],
+        other: Operator[torch.Tensor, tuple[torch.Tensor]] | mr2.operators.OperatorStack,
+    ) -> mr2.operators.OperatorStack:
         """Horizontal stacking of two single-input operators.
 
         ``A|B`` creates an `~mr2.operators.OperatorStack` with one row and two columns,
@@ -144,10 +176,22 @@ class Operator(Generic[Unpack[Tin], Tout], ABC, TensorAttributeMixin, torch.nn.M
         else:
             return NotImplemented
 
+    @overload
     def __mod__(
-        self: Operator[torch.Tensor, tuple[torch.Tensor, ...]],
-        other: Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]] | mr2.operators.OperatorStack,
-    ) -> Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]]:
+        self: Operator[torch.Tensor, tuple[torch.Tensor]],
+        other: Operator[torch.Tensor, tuple[torch.Tensor]],
+    ) -> mr2.operators.OperatorStack: ...
+
+    @overload
+    def __mod__(
+        self: Operator[torch.Tensor, tuple[torch.Tensor]],
+        other: mr2.operators.OperatorStack,
+    ) -> mr2.operators.OperatorStack: ...
+
+    def __mod__(
+        self: Operator[torch.Tensor, tuple[torch.Tensor]],
+        other: Operator[torch.Tensor, tuple[torch.Tensor]] | mr2.operators.OperatorStack,
+    ) -> mr2.operators.OperatorStack:
         """Vertical stacking of two single-input operators.
 
         ``A%B`` creates an `~mr2.operators.OperatorStack` with two rows and one column,

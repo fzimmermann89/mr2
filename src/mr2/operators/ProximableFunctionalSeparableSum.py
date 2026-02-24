@@ -1,23 +1,23 @@
 """Separable Sum of Proximable Functionals."""
+# mypy: disable-error-code=override
 
 from __future__ import annotations
 
-import operator
 from collections.abc import Iterator
-from functools import reduce
-from typing import cast
+from typing import Any, Generic, cast
 
 import torch
 from typing_extensions import TypeVarTuple, Unpack, overload
 
 import mr2.operators
 from mr2.operators.Functional import ProximableFunctional
-from mr2.operators.Operator import Operator
+from mr2.operators.Operator import Operator, Tin2
+from mr2.operators.OperatorStack import OperatorStack
 
 T = TypeVarTuple('T')
 
 
-class ProximableFunctionalSeparableSum(Operator[Unpack[T], tuple[torch.Tensor]]):
+class ProximableFunctionalSeparableSum(OperatorStack, Operator[Unpack[T], tuple[torch.Tensor]], Generic[Unpack[T]]):
     r"""Separable Sum of Proximable Functionals.
 
     This is a separable sum of the functionals. The forward method returns the sum of the functionals
@@ -90,7 +90,7 @@ class ProximableFunctionalSeparableSum(Operator[Unpack[T], tuple[torch.Tensor]])
         functionals
             The proximable functionals to be summed.
         """
-        super().__init__()
+        super().__init__([list(functionals)])
         self.functionals = functionals
 
     def __call__(self, *x: Unpack[T]) -> tuple[torch.Tensor]:
@@ -106,7 +106,7 @@ class ProximableFunctionalSeparableSum(Operator[Unpack[T], tuple[torch.Tensor]])
         -------
             Sum of the functionals applied to their respective inputs.
         """
-        return super().__call__(*x)
+        return cast(tuple[torch.Tensor], super().__call__(*cast(tuple[torch.Tensor, ...], x)))
 
     def forward(self, *x: Unpack[T]) -> tuple[torch.Tensor]:
         """Apply forward of ProximableFunctionalSeparableSum.
@@ -115,12 +115,7 @@ class ProximableFunctionalSeparableSum(Operator[Unpack[T], tuple[torch.Tensor]])
             Prefer calling the instance of the ProximableFunctionalSeparableSum operator as ``operator(x)`` over
             directly calling this method. See this PyTorch `discussion <https://discuss.pytorch.org/t/is-model-forward-x-the-same-as-model-call-x/33460/3>`_.
         """
-        if len(x) != len(self.functionals):
-            raise ValueError('The number of inputs must match the number of functionals.')
-        result = reduce(
-            operator.add, (f(xi)[0] for f, xi in zip(self.functionals, cast(tuple[torch.Tensor, ...], x), strict=True))
-        )
-        return (result,)
+        return cast(tuple[torch.Tensor], super().forward(*cast(tuple[torch.Tensor, ...], x)))
 
     def prox(self, *x: Unpack[T], sigma: float | torch.Tensor = 1) -> tuple[Unpack[T]]:
         """Apply the proximal operators of the functionals to the inputs.
@@ -174,16 +169,16 @@ class ProximableFunctionalSeparableSum(Operator[Unpack[T], tuple[torch.Tensor]])
     @overload
     def __or__(
         self: ProximableFunctionalSeparableSum,
-        other: Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]] | mr2.operators.OperatorStack,
-    ) -> Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]]: ...
+        other: Operator[torch.Tensor, tuple[torch.Tensor]] | mr2.operators.OperatorStack,
+    ) -> mr2.operators.OperatorStack: ...
 
     def __or__(
         self: ProximableFunctionalSeparableSum,
         other: ProximableFunctional
         | ProximableFunctionalSeparableSum
-        | Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]]
+        | Operator[torch.Tensor, tuple[torch.Tensor]]
         | mr2.operators.OperatorStack,
-    ) -> Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]]:
+    ) -> mr2.operators.OperatorStack:
         """Separable sum of functionals.
 
         ``f | g`` is a ~mr2.operators.ProximableFunctionalSeparableSum,
@@ -194,7 +189,14 @@ class ProximableFunctionalSeparableSum(Operator[Unpack[T], tuple[torch.Tensor]])
         elif isinstance(other, ProximableFunctional):
             return self.__class__(*self.functionals, other)
         else:
-            return NotImplemented
+            return super().__or__(other)
+
+    def __matmul__(
+        self,
+        other: Operator[Unpack[Tin2], tuple[Unpack[T]]] | Operator[Unpack[Tin2], tuple[torch.Tensor, ...]],
+    ) -> Operator[Unpack[Tin2], tuple[torch.Tensor]]:
+        """Composition preserving scalar-output typing for separable sums."""
+        return cast(Operator[Unpack[Tin2], tuple[torch.Tensor]], super().__matmul__(cast(Any, other)))
 
     def __iter__(self) -> Iterator[ProximableFunctional]:
         """Iterate over the functionals."""

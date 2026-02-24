@@ -337,12 +337,12 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
     @overload
     def __or__(
         self,
-        other: Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]] | mr2.operators.OperatorStack,
+        other: Operator[torch.Tensor, tuple[torch.Tensor]] | mr2.operators.OperatorStack,
     ) -> mr2.operators.OperatorStack: ...
 
     def __or__(
         self,
-        other: Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]]
+        other: Operator[torch.Tensor, tuple[torch.Tensor]]
         | mr2.operators.LinearOperatorMatrix
         | mr2.operators.OperatorStack,
     ) -> mr2.operators.LinearOperatorMatrix | mr2.operators.OperatorStack:
@@ -358,16 +358,18 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
                     f'Shape mismatch in horizontal stacking: cannot stack LinearOperator and matrix with {rows} rows.'
                 )
             return mr2.operators.LinearOperatorMatrix([[self, *other._operators[0]]])
-        if isinstance(other, LinearOperator):
+        elif isinstance(other, LinearOperator):
             return mr2.operators.LinearOperatorMatrix([[self, other]])
-        if isinstance(other, mr2.operators.OperatorStack):
+        elif isinstance(other, mr2.operators.OperatorStack):
             if (rows := other.shape[0]) > 1:
                 raise ValueError(
                     f'Shape mismatch in horizontal stacking: cannot stack LinearOperator and stack with {rows} rows.'
                 )
             return mr2.operators.OperatorStack([[self, *other._operators[0]]])
-        if isinstance(other, Operator):
-            return mr2.operators.OperatorStack([[self, other]])
+        elif isinstance(other, Operator):
+            return mr2.operators.OperatorStack(
+                [[self, cast(Operator[torch.Tensor, tuple[torch.Tensor]], other)]]
+            )
         return NotImplemented
 
     @overload
@@ -378,12 +380,12 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
     @overload
     def __mod__(
         self,
-        other: Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]] | mr2.operators.OperatorStack,
+        other: Operator[torch.Tensor, tuple[torch.Tensor]] | mr2.operators.OperatorStack,
     ) -> mr2.operators.OperatorStack: ...
 
     def __mod__(
         self,
-        other: Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]]
+        other: Operator[torch.Tensor, tuple[torch.Tensor]]
         | mr2.operators.LinearOperatorMatrix
         | mr2.operators.OperatorStack,
     ) -> mr2.operators.LinearOperatorMatrix | mr2.operators.OperatorStack:
@@ -399,16 +401,18 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
                     f'Shape mismatch in vertical stacking: cannot stack LinearOperator and matrix with {cols} columns.'
                 )
             return mr2.operators.LinearOperatorMatrix([[self], *other._operators])
-        if isinstance(other, LinearOperator):
+        elif isinstance(other, LinearOperator):
             return mr2.operators.LinearOperatorMatrix([[self], [other]])
-        if isinstance(other, mr2.operators.OperatorStack):
+        elif isinstance(other, mr2.operators.OperatorStack):
             if (cols := other.shape[1]) > 1:
                 raise ValueError(
                     f'Shape mismatch in vertical stacking: cannot stack LinearOperator and stack with {cols} columns.'
                 )
             return mr2.operators.OperatorStack([[self], *other._operators])
-        if isinstance(other, Operator):
-            return mr2.operators.OperatorStack([[self], [other]])
+        elif isinstance(other, Operator):
+            return mr2.operators.OperatorStack(
+                [[self], [cast(Operator[torch.Tensor, tuple[torch.Tensor]], other)]]
+            )
         return NotImplemented
 
     @property

@@ -99,30 +99,32 @@ def test_operatorstack_stacking_error():
 def test_operatorstack_linear_stacking_assert_type() -> None:
     lin1: LinearOperator = IdentityLinearOp()
     lin2: LinearOperator = IdentityLinearOp()
-    linear_matrix: LinearOperatorMatrix = lin1 | lin2
+    linear_row: LinearOperatorMatrix = lin1 | lin2
+    linear_col: LinearOperatorMatrix = lin1 % lin2
 
     assert_type(lin1 | lin2, LinearOperatorMatrix)
     assert_type(lin1 % lin2, LinearOperatorMatrix)
-    assert_type(lin1 | linear_matrix, LinearOperatorMatrix)
-    assert_type(lin1 % linear_matrix, LinearOperatorMatrix)
-    assert_type(linear_matrix | lin1, LinearOperatorMatrix)
-    assert_type(linear_matrix % lin1, LinearOperatorMatrix)
+    assert_type(lin1 | linear_row, LinearOperatorMatrix)
+    assert_type(lin1 % linear_col, LinearOperatorMatrix)
+    assert_type(linear_row | lin1, LinearOperatorMatrix)
+    assert_type(linear_col % lin1, LinearOperatorMatrix)
 
 
 def test_operatorstack_mixed_stacking_assert_type() -> None:
     lin: LinearOperator = IdentityLinearOp()
-    linear_matrix: LinearOperatorMatrix = lin | lin
+    linear_row: LinearOperatorMatrix = lin | lin
+    linear_col: LinearOperatorMatrix = lin % lin
 
     nonlinear = SingleInputOp()
     nonlinear_stack = OperatorStack([[nonlinear]])
 
     assert_type(lin | nonlinear, OperatorStack)
     assert_type(lin % nonlinear, OperatorStack)
-    assert_type(linear_matrix | nonlinear, OperatorStack)
-    assert_type(linear_matrix % nonlinear, OperatorStack)
+    assert_type(linear_row | nonlinear, OperatorStack)
+    assert_type(linear_col % nonlinear, OperatorStack)
     assert_type(lin | nonlinear_stack, OperatorStack)
     assert_type(lin % nonlinear_stack, OperatorStack)
-    assert_type(linear_matrix | nonlinear_stack, OperatorStack)
-    assert_type(linear_matrix % nonlinear_stack, OperatorStack)
-    assert_type(nonlinear | nonlinear, Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]])
-    assert_type(nonlinear % nonlinear, Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]])
+    assert_type(linear_row | nonlinear_stack, OperatorStack)
+    assert_type(linear_col % nonlinear_stack, OperatorStack)
+    assert_type(nonlinear | nonlinear, OperatorStack)
+    assert_type(nonlinear % nonlinear, OperatorStack)
