@@ -190,13 +190,13 @@ class ProximableFunctional(Operator[torch.Tensor, tuple[torch.Tensor]], ABC):
 
     @overload
     def __or__(
-        self, other: Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]] | mr2.operators.OperatorMatrix
+        self, other: Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]] | mr2.operators.OperatorStack
     ) -> Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]]: ...
 
     def __or__(
         self,
         other: Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]]
-        | mr2.operators.OperatorMatrix
+        | mr2.operators.OperatorStack
         | mr2.operators.ProximableFunctionalSeparableSum,
     ) -> Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]]:
         """Create a ProximableFunctionalSeparableSum from two proximable functionals.

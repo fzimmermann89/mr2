@@ -126,41 +126,41 @@ class Operator(Generic[Unpack[Tin], Tout], ABC, TensorAttributeMixin, torch.nn.M
 
     def __or__(
         self: Operator[torch.Tensor, tuple[torch.Tensor, ...]],
-        other: Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]] | mr2.operators.OperatorMatrix,
+        other: Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]] | mr2.operators.OperatorStack,
     ) -> Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]]:
         """Horizontal stacking of two single-input operators.
 
-        ``A|B`` creates an `~mr2.operators.OperatorMatrix` with one row and two columns,
+        ``A|B`` creates an `~mr2.operators.OperatorStack` with one row and two columns,
         such that ``(A|B)(x1, x2)`` equals ``A(x1) + B(x2)`` (tuple-wise).
         """
-        if isinstance(other, mr2.operators.OperatorMatrix):
+        if isinstance(other, mr2.operators.OperatorStack):
             if (rows := other.shape[0]) > 1:
                 raise ValueError(
-                    f'Shape mismatch in horizontal stacking: cannot stack Operator and matrix with {rows} rows.'
+                    f'Shape mismatch in horizontal stacking: cannot stack Operator and stack with {rows} rows.'
                 )
-            return mr2.operators.OperatorMatrix([[self, *other._operators[0]]])
-        elif isinstance(other, Operator) and not isinstance(other, mr2.operators.OperatorMatrix):
-            return mr2.operators.OperatorMatrix([[self, other]])
+            return mr2.operators.OperatorStack([[self, *other._operators[0]]])
+        elif isinstance(other, Operator) and not isinstance(other, mr2.operators.OperatorStack):
+            return mr2.operators.OperatorStack([[self, other]])
         else:
             return NotImplemented
 
     def __mod__(
         self: Operator[torch.Tensor, tuple[torch.Tensor, ...]],
-        other: Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]] | mr2.operators.OperatorMatrix,
+        other: Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]] | mr2.operators.OperatorStack,
     ) -> Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]]:
         """Vertical stacking of two single-input operators.
 
-        ``A%B`` creates an `~mr2.operators.OperatorMatrix` with two rows and one column,
+        ``A%B`` creates an `~mr2.operators.OperatorStack` with two rows and one column,
         such that ``(A%B)(x)`` equals ``(*A(x), *B(x))``.
         """
-        if isinstance(other, mr2.operators.OperatorMatrix):
+        if isinstance(other, mr2.operators.OperatorStack):
             if (cols := other.shape[1]) > 1:
                 raise ValueError(
-                    f'Shape mismatch in vertical stacking: cannot stack Operator and matrix with {cols} columns.'
+                    f'Shape mismatch in vertical stacking: cannot stack Operator and stack with {cols} columns.'
                 )
-            return mr2.operators.OperatorMatrix([[self], *other._operators])
-        elif isinstance(other, Operator) and not isinstance(other, mr2.operators.OperatorMatrix):
-            return mr2.operators.OperatorMatrix([[self], [other]])
+            return mr2.operators.OperatorStack([[self], *other._operators])
+        elif isinstance(other, Operator) and not isinstance(other, mr2.operators.OperatorStack):
+            return mr2.operators.OperatorStack([[self], [other]])
         else:
             return NotImplemented
 

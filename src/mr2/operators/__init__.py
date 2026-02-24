@@ -1,7 +1,7 @@
 """Linear operators (such as FourierOp), functionals/loss functions, and qMRI signal models."""
 
 from mr2.operators.Operator import Operator
-from mr2.operators.OperatorMatrix import OperatorMatrix
+from mr2.operators.OperatorStack import OperatorStack
 from mr2.operators.LinearOperator import LinearOperator
 from mr2.operators.Functional import FunctionalType, ProximableFunctional, ElementaryFunctional, ElementaryProximableFunctional, ScaledProximableFunctional
 from mr2.operators import functionals, models
@@ -60,7 +60,7 @@ __all__ = [
     "MultiIdentityOp",
     "NonUniformFastFourierOp",
     "Operator",
-    "OperatorMatrix",
+    "OperatorStack",
     "OptimizerOp",
     "PCACompressionOp",
     "PatchOp",

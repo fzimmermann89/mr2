@@ -174,7 +174,7 @@ class ProximableFunctionalSeparableSum(Operator[Unpack[T], tuple[torch.Tensor]])
     @overload
     def __or__(
         self: ProximableFunctionalSeparableSum,
-        other: Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]] | mr2.operators.OperatorMatrix,
+        other: Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]] | mr2.operators.OperatorStack,
     ) -> Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]]: ...
 
     def __or__(
@@ -182,7 +182,7 @@ class ProximableFunctionalSeparableSum(Operator[Unpack[T], tuple[torch.Tensor]])
         other: ProximableFunctional
         | ProximableFunctionalSeparableSum
         | Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]]
-        | mr2.operators.OperatorMatrix,
+        | mr2.operators.OperatorStack,
     ) -> Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]]:
         """Separable sum of functionals.
 
