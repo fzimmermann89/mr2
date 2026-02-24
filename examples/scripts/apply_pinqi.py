@@ -61,7 +61,7 @@ class Dataset(torch.utils.data.Dataset[BatchType]):
         size: int,
         acceleration: int,
         n_coils: int,
-        max_noise: float,
+        noise: tuple[float, float],
         orientation: Sequence[Literal['axial', 'coronal', 'sagittal']],
         random: bool = True,
     ):
@@ -79,6 +79,7 @@ class Dataset(torch.utils.data.Dataset[BatchType]):
             )
         self.phantom = mr2.phantoms.brainweb.BrainwebSlices(
             folder=folder,
+            parameters=mr2.phantoms.brainweb.VALUES_ULF_RANDOMIZED,
             what=('m0', 't1', 'mask'),
             seed='index' if not random else 'random',
             slice_preparation=augment,
@@ -90,7 +91,7 @@ class Dataset(torch.utils.data.Dataset[BatchType]):
         self.acceleration = acceleration
         self.n_coils = n_coils
         self._random = random
-        self.max_noise = max_noise
+        self.noise = noise
         self._n_images = n_images
 
     def __len__(self) -> int:
@@ -131,7 +132,9 @@ class Dataset(torch.utils.data.Dataset[BatchType]):
         csm = mr2.data.CsmData(csm_tensor, header)
         images = einops.rearrange(images, 't y x -> t 1 1 y x')
         (data,) = (fourier_op @ csm.as_operator())(images)
-        data = data + torch.randn_like(data) * torch.rand(1) * self.max_noise * data.std()
+        noise_rng = mr2.utils.RandomGenerator(seed)
+        noise = noise_rng.randn_like(data) * (noise_rng.float32(*self.noise) * data.std())
+        data = data + noise
         kdata = mr2.data.KData(header, data, traj)
         return {'kdata': kdata, 'csm': csm, **phantom}
 
@@ -304,34 +307,65 @@ class PINQI(torch.nn.Module):
 def baseline_solution(
     signalmodel: mr2.operators.SignalModel,
     constraints_op: mr2.operators.ConstraintsOp | mr2.operators.MultiIdentityOp,
-    parameter_is_complex: Sequence[bool],
     kdata: mr2.data.KData,
     csm: mr2.data.CsmData,
 ) -> tuple[torch.Tensor, ...]:
     """Compute a baseline solution using TV + Regression."""
+    fourier_op = mr2.operators.FourierOp.from_kdata(kdata)
+    csm_op = csm.as_operator()
     tv = mr2.algorithms.reconstruction.TotalVariationRegularizedReconstruction(
-        kdata, csm=csm, regularization_weight=0.01, regularization_dim=(-2, -1), max_iterations=200
+        fourier_op=fourier_op,
+        csm=csm_op,
+        regularization_weight=0.05,
+        regularization_dim=(-2, -1),
+        max_iterations=500,
     )
     images = tv(kdata)
-    objective = mr2.operators.functionals.L2NormSquared(images.data) @ signalmodel @ constraints_op
-    initial_values = tuple(
-        torch.zeros(
-            images.shape[1:],
-            device=images.device,
-            dtype=torch.complex64 if is_complex else torch.float32,
-        )
-        for is_complex in parameter_is_complex
+    dictionary_match_op = mr2.operators.DictionaryMatchOp(signalmodel, index_of_scaling_parameter=0)
+    dictionary_match_op.append(
+        torch.tensor(1.0 + 0j).to(kdata.device),
+        torch.arange(0.05, 1.0, 0.01, device=kdata.device),
     )
-    solution = constraints_op(*mr2.algorithms.optimizers.lbfgs(objective, initial_values))
+    initial_values = constraints_op.inverse(*dictionary_match_op(images.data))
+    operator = fourier_op @ csm_op @ signalmodel
+
+    # class diff_op(mr2.operators.Operator):
+    #     def __init__(self):
+    #         super().__init__()
+    #         self.op = mr2.operators.functionals.L1Norm() @ mr2.operators.FiniteDifferenceOp(dim=(-1, -2))
+
+    #     def forward(self, *x: torch.Tensor) -> torch.Tensor:
+    #         ret = sum(self.op(img)[0] for img in x)
+    #         print(ret)
+    #         return (ret,)
+
+    # t = mr2.operators.functionals.L1Norm() @ mr2.operators.FiniteDifferenceOp(dim=(-1, -2))
+    # # + 1e-2 * diff_op())
+    objective = mr2.operators.functionals.L2NormSquared(kdata.data) @ operator @ constraints_op
+
+    # initial_values = tuple(
+    #     torch.zeros(
+    #         images.shape[1:],
+    #         device=images.device,
+    #         dtype=torch.complex64 if is_complex else torch.float32,
+    #     )
+    #     for is_complex in parameter_is_complex
+    # )
+    solution = constraints_op(
+        *mr2.algorithms.optimizers.lbfgs(objective, initial_values, max_iterations=500, max_evaluations=500)
+    )
     return solution
 
+
+# %%
+# _ = baseline_solution(signalmodel, constraints_op, kdata, csm)
 
 # %%
 signalmodel = mr2.operators.models.SaturationRecovery((0.2, 0.8, 4.0))
 constraints_op = mr2.operators.ConstraintsOp(
     bounds=(
         (-2, 2),  # M0 in [-2, 2]
-        (0.01, 6.0),  # T1 is constrained between 10 ms and 6 s
+        (0.01, 4.0),  # T1 is constrained between 10 ms and 4 s
     )
 )
 n_images = len(signalmodel.saturation_time)
@@ -344,16 +378,16 @@ dataset = torch.utils.data.Subset(
         signalmodel=signalmodel,
         n_images=n_images,
         size=192,
-        acceleration=8,
+        acceleration=6,
         n_coils=1,
-        max_noise=0.2,
+        noise=(0.05, 0.05),
         orientation=('axial',),
         random=False,
     ),
     list(range(500)),
 )
 # %%
-checkpoint = torch.load('./examples/scripts/last.ckpt', map_location='cpu')
+checkpoint = torch.load('./examples/scripts/checkpoints/PINQI-109/last.ckpt', map_location='cpu')
 hyper_parameters = checkpoint['hyper_parameters']
 
 
@@ -374,16 +408,19 @@ state_dict = {
 }
 pinqi.load_state_dict(state_dict)
 # %%
-batch = dataset[40]
+batch = dataset[44]
 csm, kdata = batch['csm'], batch['kdata']
-
-if torch.cuda.is_available() and False:
+# %%
+if torch.cuda.is_available():
     pinqi, csm, kdata = pinqi.cuda(), csm.cuda(), kdata.cuda()
 parameters = pinqi(kdata[None], csm[None])
 with torch.no_grad():
     predicted_m0, predicted_t1 = (p.cpu().detach().squeeze() for p in parameters)
 # %%
-baseline_m0, baseline_t1 = baseline_solution(signalmodel, constraints_op, parameter_is_complex, kdata, csm)
+baseline = baseline_solution(signalmodel, constraints_op, kdata, csm)
+with torch.no_grad():
+    baseline_m0, baseline_t1 = (p.cpu().detach().squeeze() for p in baseline)
+
 # %%
 (ssim_t1,) = mr2.operators.functionals.SSIM(batch['t1'][None], batch['mask'][None])(predicted_t1[None])
 (mse_t1,) = mr2.operators.functionals.MSE(batch['t1'], batch['mask'])(predicted_t1)
@@ -395,6 +432,7 @@ nrmse_baseline = torch.sqrt(mse_baseline) / batch['t1'][batch['mask']].max()
 
 
 # %%
+%matplotlib inline
 import matplotlib.pyplot as plt
 from cmap import Colormap
 
@@ -407,9 +445,9 @@ print(f'SSIM: {ssim_t1.item():.4f}, NRMSE: {nrmse_t1.item():.4f}')
 fig, ax = plt.subplots(1, 5, gridspec_kw={'width_ratios': [1, 1, 1, 0.28, 0.075], 'wspace': -0.25}, figsize=(6.5, 2.5))
 baseline_t1 = baseline_t1.squeeze()
 baseline_t1[~batch['mask']] = torch.nan
-ax[0].imshow(baseline_t1, vmin=0, vmax=2, cmap=cmap)
+ax[0].imshow(baseline_t1, vmin=0.0, vmax=0.7, cmap=cmap)
 ax[0].axis('off')
-ax[0].set_title('TV + NLS')
+ax[0].set_title('TV+NLS')
 ax[0].text(
     0.5,
     -0.00,
@@ -422,7 +460,7 @@ ax[0].text(
 )
 predicted_t1 = predicted_t1.squeeze()
 predicted_t1[~batch['mask']] = torch.nan
-ax[1].imshow(predicted_t1, vmin=0, vmax=2, cmap=cmap)
+ax[1].imshow(predicted_t1, vmin=0.0, vmax=0.7, cmap=cmap)
 ax[1].axis('off')
 ax[1].set_title('PINQI')
 ax[1].text(
@@ -438,7 +476,7 @@ ax[1].text(
 
 target_t1 = batch['t1'].squeeze()
 target_t1[~batch['mask']] = torch.nan
-im = ax[2].imshow(target_t1, vmin=0, vmax=2, cmap=cmap)
+im = ax[2].imshow(target_t1, vmin=0.0, vmax=0.7, cmap=cmap)
 ax[2].axis('off')
 ax[2].set_title(
     'Ground Truth',

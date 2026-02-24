@@ -134,9 +134,10 @@ class TotalVariationRegularizedReconstruction(DirectReconstruction):
         acquisition_operator = self.fourier_op @ self.csm_op if self.csm_op is not None else self.fourier_op
         l2_norm_squared = L2NormSquared(target=kdata.data)
 
-        # TV regularization
         nabla_operator = FiniteDifferenceOp(dim=regularization_dim, mode='forward')
-        l1_norm = L1NormViewAsReal(weight=unsqueeze_right(self.regularization_weight, kdata.data.ndim))
+        l1_norm = L1NormViewAsReal(
+            weight=unsqueeze_right(self.regularization_weight, kdata.data.ndim).to(kdata.data.device)
+        )
         operator = LinearOperatorMatrix(((acquisition_operator,), (nabla_operator,)))
 
         initial_value = acquisition_operator.H(self.dcf_op(kdata.data)[0] if self.dcf_op is not None else kdata.data)[0]

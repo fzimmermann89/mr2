@@ -58,6 +58,7 @@ class Dataset(torch.utils.data.Dataset):
             what=('m0', 't1', 'mask'),
             seed='index' if not random else 'random',
             slice_preparation=augment,
+            parameters=mr2.phantoms.brainweb.VALUES_ULF_RANDOMIZED,
             orientation=orientation,
         )
         self.signalmodel = signalmodel
@@ -634,11 +635,11 @@ if __name__ == '__main__':
         data_folder.mkdir(parents=True, exist_ok=True)
         mr2.phantoms.brainweb.download_brainweb(output_directory=data_folder, workers=2, progress=True)
 
-    signalmodel = mr2.operators.models.SaturationRecovery((0.2, 0.8, 4.0))
+    signalmodel = mr2.operators.models.SaturationRecovery((0.2, 0.5, 0.9, 4.0))
     constraints_op = mr2.operators.ConstraintsOp(
         bounds=(
             (-2, 2),  # M0 in [-2, 2]
-            (0.01, 6.0),  # T1 is constrained between 10 ms and 6 s
+            (0.01, 4.0),  # T1 is constrained between 10 ms and 4 s
         )
     )
     n_images = len(signalmodel.saturation_time)
