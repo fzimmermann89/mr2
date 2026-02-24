@@ -361,7 +361,7 @@ def baseline_solution(
 # _ = baseline_solution(signalmodel, constraints_op, kdata, csm)
 
 # %%
-signalmodel = mr2.operators.models.SaturationRecovery((0.2, 0.8, 4.0))
+signalmodel = mr2.operators.models.SaturationRecovery((0.2, 0.5, 0.9, 4.0))
 constraints_op = mr2.operators.ConstraintsOp(
     bounds=(
         (-2, 2),  # M0 in [-2, 2]
@@ -408,7 +408,7 @@ state_dict = {
 }
 pinqi.load_state_dict(state_dict)
 # %%
-batch = dataset[44]
+batch = dataset[60]
 csm, kdata = batch['csm'], batch['kdata']
 # %%
 if torch.cuda.is_available():

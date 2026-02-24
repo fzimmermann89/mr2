@@ -1,5 +1,6 @@
 # %%
 # ruff: noqa: D102, ANN201
+import gc
 from collections.abc import Sequence
 from copy import deepcopy
 from pathlib import Path
@@ -279,7 +280,7 @@ class DataModule(pl.LightningDataModule):
             'sagittal',
         ),
         orientation_val: Sequence[Literal['axial', 'coronal', 'sagittal']] = ('axial',),
-        batch_size: int = 32,
+        batch_size: int = 8,
         num_workers: int = 4,
     ):
         """Initialize the data module."""
@@ -396,11 +397,13 @@ class PinqiModule(pl.LightningModule):
 
     def training_step(self, batch: BatchType, _batch_idx: int) -> torch.Tensor:
         """Training step."""
+        gc.collect()
+
         _images, parameters = self(batch['kdata'], batch['csm'])
         loss = self.loss(parameters, batch)
         self.log(
             'train/loss',
-            loss,
+            loss.item(),
             on_step=True,
             on_epoch=True,
             prog_bar=True,
@@ -578,11 +581,9 @@ class Baseline(torch.nn.Module):
 
     def forward(self, kdata: mr2.data.KData, csm: mr2.data.CsmData) -> tuple[torch.Tensor, ...]:
         """Compute the baseline solution."""
-        sense = mr2.algorithms.reconstruction.RegularizedIterativeSENSEReconstruction(
+        images = mr2.algorithms.reconstruction.RegularizedIterativeSENSEReconstruction(
             kdata, csm=csm, regularization_weight=0.01, n_iterations=3
-        )
-        images = sense(kdata).rearrange('batch time ...-> time batch ...')
-
+        )(kdata).rearrange('batch time ...-> time batch ...')
         objective = mr2.operators.functionals.L2NormSquared(images.data) @ self.signalmodel @ self.constraints_op
         initial_values = tuple(
             torch.zeros(
@@ -593,6 +594,7 @@ class Baseline(torch.nn.Module):
             for is_complex in self.parameter_is_complex
         )
         solution = self.constraints_op(*mr2.algorithms.optimizers.lbfgs(objective, initial_values))
+        gc.collect()
         return solution
 
 
@@ -628,7 +630,7 @@ if __name__ == '__main__':
     torch._inductor.config.worker_start_method = 'fork'
     torch._dynamo.config.capture_scalar_outputs = True
     torch._dynamo.config.cache_size_limit = 256
-    torch._functorch.config.activation_memory_budget = 0.5
+    torch._functorch.config.activation_memory_budget = 0.4
 
     data_folder = mr2.phantoms.brainweb.CACHE_DIR_BRAINWEB
     if not data_folder.exists():
