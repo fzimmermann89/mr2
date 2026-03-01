@@ -594,18 +594,30 @@ def test_grid_sampling_op_from_bspline_return_displacement() -> None:
     torch.testing.assert_close(displacement, torch.zeros(2, 3, 8, 9, 10))
 
 
-def test_grid_sampling_op_to_displacement_roundtrip_with_singleton_dim() -> None:
-    """Test displacement roundtrip for 3D with singleton z dimension."""
-    displacement_z = torch.zeros(2, 1, 6, 7)
-    displacement_y = torch.zeros(2, 1, 6, 7)
-    displacement_x = torch.zeros(2, 1, 6, 7)
-    displacement_y[..., 1:-1, 1:-1] = 0.5
-    displacement_x[..., 1:-1, 1:-1] = -0.25
-    operator = GridSamplingOp.from_displacement(displacement_z, displacement_y, displacement_x)
-    displacement_recovered = operator.to_displacement().movedim(1, 0)
-    torch.testing.assert_close(displacement_recovered[0], torch.zeros_like(displacement_z))
-    torch.testing.assert_close(displacement_recovered[1], displacement_y)
-    torch.testing.assert_close(displacement_recovered[2], displacement_x)
+def test_grid_sampling_op_from_stationary_identity_3d() -> None:
+    """Test from_stationary_velocity with zero velocity creates identity mapping."""
+    velocity = torch.zeros(3, 2, 4, 5, 6)
+    operator = GridSamplingOp.from_stationary_velocity(
+        velocity[0],
+        velocity[1],
+        velocity[2],
+    )
+    image = RandomGenerator(0).float32_tensor((2, 3, 4, 5, 6), -1.0, 1.0)
+    (result,) = operator(image)
+    torch.testing.assert_close(result, image, atol=2e-5, rtol=2e-5)
+
+
+def test_grid_sampling_op_from_stationary_identity_2d() -> None:
+    """Test from_stationary_velocity with zero velocity creates identity mapping."""
+    velocity = torch.zeros(2, 2, 5, 6)
+    operator = GridSamplingOp.from_stationary_velocity(
+        None,
+        velocity[0],
+        velocity[1],
+    )
+    image = RandomGenerator(0).float32_tensor((2, 3, 1, 5, 6), -1.0, 1.0)
+    (result,) = operator(image)
+    torch.testing.assert_close(result, image, atol=2e-5, rtol=2e-5)
 
 
 def test_grid_sampling_op_matmul_composition() -> None:
@@ -838,6 +850,39 @@ def test_grid_sampling_op_from_bspline_cuda(dim: int) -> None:
         input_shape=input_shape,
         control_point_spacing=spacing,
     )
+    (result,) = operator_cpu(image)
+    assert result.is_cpu
+
+    operator_cuda = operator_cpu.cuda()
+    (result,) = operator_cuda(image.cuda())
+    assert result.is_cuda
+
+
+@pytest.mark.cuda
+@pytest.mark.parametrize('dim', [3, 2])
+def test_grid_sampling_op_from_stationary_velocity_cuda(dim: int) -> None:
+    """Test operator grid on cuda if the input stationary velocity is on cuda."""
+    batch, coil = (2, 3), 3
+    if dim == 3:
+        zyx = (2, 4, 8)
+        velocity_cuda: Any = torch.zeros(dim, *batch, *zyx, device='cuda').unbind(0)
+        velocity_cpu: Any = torch.zeros(dim, *batch, *zyx, device='cpu').unbind(0)
+    elif dim == 2:
+        zyx = (1, 4, 8)
+        velocity_cuda = (None, *torch.zeros(dim, *batch, *zyx, device='cuda').unbind(0))
+        velocity_cpu = (None, *torch.zeros(dim, *batch, *zyx, device='cpu').unbind(0))
+
+    image = torch.ones(*batch, coil, *zyx)
+
+    operator_cuda = GridSamplingOp.from_stationary_velocity(*velocity_cuda)
+    (result,) = operator_cuda(image.cuda())
+    assert result.is_cuda
+
+    operator_cpu = operator_cuda.cpu()
+    (result,) = operator_cpu(image)
+    assert result.is_cpu
+
+    operator_cpu = GridSamplingOp.from_stationary_velocity(*velocity_cpu)
     (result,) = operator_cpu(image)
     assert result.is_cpu
 

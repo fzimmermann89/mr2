@@ -452,6 +452,9 @@ class GridSamplingOp(LinearOperator):
             return operator, displacement
         return operator
 
+    @overload  # type: ignore[override]
+    def __matmul__(self, other: Self) -> Self: ...
+
     @overload
     def __matmul__(self, other: LinearOperator) -> LinearOperator: ...
 
@@ -462,7 +465,8 @@ class GridSamplingOp(LinearOperator):
 
     def __matmul__(
         self,
-        other: Operator[Unpack[Tin2], tuple[torch.Tensor,]]
+        other: 'GridSamplingOp'
+        | Operator[Unpack[Tin2], tuple[torch.Tensor,]]
         | LinearOperator
         | Operator[Unpack[Tin2], tuple[torch.Tensor, ...]],
     ) -> (
@@ -620,6 +624,51 @@ class GridSamplingOp(LinearOperator):
             grid_z = None
             align_corners = n_y > 1 and n_x > 1
         return cls(grid_z, grid_y, grid_x, None, interpolation_mode, padding_mode, align_corners=align_corners)
+
+    @classmethod
+    def from_stationary_velocity(
+        cls,
+        velocity_z: torch.Tensor | None,
+        velocity_y: torch.Tensor,
+        velocity_x: torch.Tensor,
+        squaring_steps: int = 7,
+        interpolation_mode: Literal['bilinear', 'nearest', 'bicubic'] = 'bilinear',
+        padding_mode: Literal['zeros', 'border', 'reflection'] = 'border',
+    ) -> Self:
+        """Create a diffeomorphic transform from a stationary velocity field.
+
+        Uses scaling-and-squaring integration as in VoxelMorph.
+
+        Parameters
+        ----------
+        velocity_z
+            Z-component of stationary velocity in voxel units. Use ``None`` for 2D.
+        velocity_y
+            Y-component of stationary velocity in voxel units.
+        velocity_x
+            X-component of stationary velocity in voxel units.
+        squaring_steps
+            Number of squaring steps. Must be non-negative.
+        interpolation_mode
+            mode used for interpolation. bilinear is trilinear in 3D, bicubic is only supported in 2D.
+        padding_mode
+            how the input of the forward is padded.
+        """
+        if squaring_steps < 0:
+            raise ValueError(f'squaring_steps must be non-negative, got {squaring_steps}.')
+
+        scaling = float(2**squaring_steps)
+        transform = cls.from_displacement(
+            None if velocity_z is None else velocity_z / scaling,
+            velocity_y / scaling,
+            velocity_x / scaling,
+            interpolation_mode=interpolation_mode,
+            padding_mode=padding_mode,
+        )
+        for _ in range(squaring_steps):
+            transform = transform @ transform
+
+        return transform
 
     def __reshape_wrapper(
         self, x: torch.Tensor, inner: Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
