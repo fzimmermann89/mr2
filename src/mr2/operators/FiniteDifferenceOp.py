@@ -25,7 +25,7 @@ class FiniteDifferenceOp(LinearOperator):
     where :math:`e_i` is a one-step shift along axis ``dim[i]``. ``'central'``
     and ``'backward'`` use the stencils :math:`\\tfrac{1}{2}(-1,0,1)` and
     :math:`(-1,1,0)`.
-
+    ``'laplacian'`` uses the stencil :math:`(1,-2,1)`, i.e. the second order finite difference.
     For input ``x`` with shape ``S``, ``op(x)`` returns a tensor with shape
     ``(len(dim), *S)`` where channel ``i`` corresponds to axis ``dim[i]``.
     Supported schemes are ``'forward'``, ``'backward'``, and ``'central'``.
@@ -34,7 +34,7 @@ class FiniteDifferenceOp(LinearOperator):
     """
 
     @staticmethod
-    def finite_difference_kernel(mode: Literal['central', 'forward', 'backward']) -> torch.Tensor:
+    def finite_difference_kernel(mode: Literal['central', 'forward', 'backward', 'laplacian']) -> torch.Tensor:
         """Return the 1D finite-difference kernel for a given mode.
 
         Parameters
@@ -58,14 +58,16 @@ class FiniteDifferenceOp(LinearOperator):
                 kernel = torch.tensor((-1, 1, 0))
             case 'central':
                 kernel = torch.tensor((-1, 0, 1)) / 2
+            case 'laplacian':
+                kernel = torch.tensor((1, -2, 1))
             case _:
-                raise ValueError(f'mode should be one of (central, forward, backward), not {mode}')
+                raise ValueError(f'mode should be one of (central, forward, backward, laplacian), not {mode}')
         return kernel
 
     def __init__(
         self,
         dim: Sequence[int],
-        mode: Literal['central', 'forward', 'backward'] = 'forward',
+        mode: Literal['central', 'forward', 'backward', 'laplacian'] = 'forward',
         pad_mode: Literal['zeros', 'circular'] = 'zeros',
     ) -> None:
         """Initialize a finite-difference operator.

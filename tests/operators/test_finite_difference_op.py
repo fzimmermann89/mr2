@@ -17,7 +17,9 @@ from tests import (
 
 
 def create_finite_difference_op_and_range_domain(
-    dim: Sequence[int], mode: Literal['central', 'forward', 'backward'], pad_mode: Literal['zeros', 'circular']
+    dim: Sequence[int],
+    mode: Literal['central', 'forward', 'backward', 'laplacian'],
+    pad_mode: Literal['zeros', 'circular'],
 ) -> tuple[FiniteDifferenceOp, torch.Tensor, torch.Tensor]:
     """Create a finite difference operator and an element from domain and range."""
     rng = RandomGenerator(seed=0)
@@ -31,8 +33,26 @@ def create_finite_difference_op_and_range_domain(
     return finite_difference_op, u, v
 
 
+@pytest.mark.parametrize('padding_mode', ['zeros', 'circular'])
+def test_finite_difference_op_laplacian(padding_mode: Literal['zeros', 'circular']) -> None:
+    """Test the Laplacian finite difference operator."""
+    laplacian_op = FiniteDifferenceOp(dim=(-1, -2), mode='laplacian', pad_mode=padding_mode)
+    composition_op = FiniteDifferenceOp(dim=(-1, -2), mode='forward', pad_mode=padding_mode) @ FiniteDifferenceOp(
+        dim=(-1, -2), mode='backward', pad_mode=padding_mode
+    )
+    rng = RandomGenerator(seed=123)
+    u = rng.complex64_tensor(size=(5, 6, 4, 10, 20, 16))
+    (laplacian_u,) = laplacian_op(u)
+    (composition_u,) = composition_op(u)
+    composition_u = composition_u.diagonal().moveaxis(-1, 0)  # only keep the diagonal elements
+    if padding_mode == 'zeros':  # zero padding has border effects if we pad twice vs once.
+        torch.testing.assert_close(laplacian_u[..., 1:-1, 1:-1], composition_u[..., 1:-1, 1:-1])
+    else:
+        torch.testing.assert_close(laplacian_u, composition_u)
+
+
 @pytest.mark.parametrize('mode', ['central', 'forward', 'backward'])
-def test_finite_difference_op_forward(mode: Literal['central', 'forward', 'backward']) -> None:
+def test_finite_difference_op_forward(mode: Literal['central', 'forward', 'backward', 'laplacian']) -> None:
     """Test correct finite difference of simple object."""
     # Test object with positive linear gradient in real and negative linear gradient imaginary part
     linear_gradient_object = (
@@ -50,17 +70,19 @@ def test_finite_difference_op_forward(mode: Literal['central', 'forward', 'backw
 
 
 @pytest.mark.parametrize('pad_mode', ['zeros', 'circular'])
-@pytest.mark.parametrize('mode', ['central', 'forward', 'backward'])
+@pytest.mark.parametrize('mode', ['central', 'forward', 'backward', 'laplacian'])
 @pytest.mark.parametrize('dim', [(-1,), (-2, -1), (-3, -2, -1), (-4,), (1, 3)])
 def test_finite_difference_op_adjointness(
-    dim: Sequence[int], mode: Literal['central', 'forward', 'backward'], pad_mode: Literal['zeros', 'circular']
+    dim: Sequence[int],
+    mode: Literal['central', 'forward', 'backward', 'laplacian'],
+    pad_mode: Literal['zeros', 'circular'],
 ) -> None:
     """Test finite difference operator adjoint property."""
     dotproduct_adjointness_test(*create_finite_difference_op_and_range_domain(dim, mode, pad_mode))
 
 
 @pytest.mark.parametrize('pad_mode', ['zeros', 'circular'])
-@pytest.mark.parametrize('mode', ['central', 'forward', 'backward'])
+@pytest.mark.parametrize('mode', ['central', 'forward', 'backward', 'laplacian'])
 @pytest.mark.parametrize('dim', [(-1,), (-2, -1), (-3, -2, -1), (-4,), (1, 3)])
 def test_finite_difference_op_grad(
     dim: Sequence[int], mode: Literal['central', 'forward', 'backward'], pad_mode: Literal['zeros', 'circular']
@@ -70,10 +92,12 @@ def test_finite_difference_op_grad(
 
 
 @pytest.mark.parametrize('pad_mode', ['zeros', 'circular'])
-@pytest.mark.parametrize('mode', ['central', 'forward', 'backward'])
+@pytest.mark.parametrize('mode', ['central', 'forward', 'backward', 'laplacian'])
 @pytest.mark.parametrize('dim', [(-1,), (-2, -1), (-3, -2, -1), (-4,), (1, 3)])
 def test_finite_difference_op_forward_mode_autodiff(
-    dim: Sequence[int], mode: Literal['central', 'forward', 'backward'], pad_mode: Literal['zeros', 'circular']
+    dim: Sequence[int],
+    mode: Literal['central', 'forward', 'backward', 'laplacian'],
+    pad_mode: Literal['zeros', 'circular'],
 ) -> None:
     """Test the forward-mode autodiff of the finite difference operator."""
     forward_mode_autodiff_of_linear_operator_test(*create_finite_difference_op_and_range_domain(dim, mode, pad_mode))
