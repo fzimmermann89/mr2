@@ -2,13 +2,16 @@
 
 import warnings
 from collections.abc import Callable, Sequence
-from typing import Literal
+from itertools import product
+from typing import Literal, overload
 
 import torch
-from typing_extensions import Self
+from typing_extensions import Self, Unpack
 
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.operators.LinearOperator import LinearOperator
+from mr2.operators.Operator import Operator, Tin2
+from mr2.utils.reshape import unsqueeze_left
 
 
 class _AdjointGridSampleCtx(torch.autograd.function.FunctionCtx):
@@ -245,6 +248,293 @@ class GridSamplingOp(LinearOperator):
         self.align_corners = align_corners
 
     @classmethod
+    def from_affine(
+        cls,
+        affine_matrix: torch.Tensor,
+        input_shape: SpatialDimension[int],
+        interpolation_mode: Literal['bilinear', 'nearest', 'bicubic'] = 'bilinear',
+        padding_mode: Literal['zeros', 'border', 'reflection'] = 'zeros',
+        align_corners: bool = True,
+    ) -> Self:
+        """Create a GridSamplingOp from an affine matrix.
+
+        Parameters
+        ----------
+        affine_matrix
+            Affine matrix of shape ``(*batch, 2, 3)`` for 2D or ``(*batch, 3, 4)`` for 3D.
+        input_shape
+            Spatial input shape in ``(z, y, x)``.
+            For 2D affine matrices, only ``y`` and ``x`` are used.
+        interpolation_mode
+            mode used for interpolation. bilinear is trilinear in 3D, bicubic is only supported in 2D.
+        padding_mode
+            how the input of the forward is padded.
+        align_corners
+            if True, the corner pixels of the input and output tensors are aligned.
+            Generated grids are clipped to ``[-1, 1]`` to avoid invalid sampling coordinates.
+        """
+        match affine_matrix.shape[-2:]:
+            case (2, 3):
+                dim = 2
+            case (3, 4):
+                dim = 3
+            case _:
+                raise ValueError(f'affine_matrix must end with (2,3) or (3,4), got {affine_matrix.shape}.')
+
+        shape = input_shape.zyx[-dim:]
+        shape_batch = affine_matrix.shape[:-2]
+        affine_flatbatch = affine_matrix.unsqueeze(0) if affine_matrix.ndim == 2 else affine_matrix.flatten(end_dim=-3)
+        align_corners_affine = align_corners and min(shape) > 1
+
+        affine_grid = torch.nn.functional.affine_grid(
+            affine_flatbatch,
+            size=[int(affine_flatbatch.shape[0]), 1, *[int(axis_size) for axis_size in shape]],
+            align_corners=align_corners_affine,
+        )
+        # Keep normalized coordinates in range during optimization line-search steps.
+        affine_grid = affine_grid.clamp(-1.0, 1.0)
+        affine_grid = affine_grid.reshape(*(shape_batch or (1,)), *affine_grid.shape[1:])
+        return cls(
+            affine_grid[..., 2] if dim == 3 else None,
+            affine_grid[..., 1],
+            affine_grid[..., 0],
+            input_shape,
+            interpolation_mode,
+            padding_mode,
+            align_corners=align_corners_affine,
+        )
+
+    @classmethod
+    @overload
+    def from_bspline(
+        cls,
+        control_points_z: torch.Tensor | None,
+        control_points_y: torch.Tensor,
+        control_points_x: torch.Tensor,
+        input_shape: SpatialDimension[int],
+        control_point_spacing: SpatialDimension[float],
+        interpolation_mode: Literal['bilinear', 'nearest', 'bicubic'] = 'bilinear',
+        padding_mode: Literal['zeros', 'border', 'reflection'] = 'zeros',
+        *,
+        return_displacement: Literal[False] = False,
+    ) -> Self: ...
+
+    @classmethod
+    @overload
+    def from_bspline(
+        cls,
+        control_points_z: torch.Tensor | None,
+        control_points_y: torch.Tensor,
+        control_points_x: torch.Tensor,
+        input_shape: SpatialDimension[int],
+        control_point_spacing: SpatialDimension[float],
+        interpolation_mode: Literal['bilinear', 'nearest', 'bicubic'] = 'bilinear',
+        padding_mode: Literal['zeros', 'border', 'reflection'] = 'zeros',
+        *,
+        return_displacement: Literal[True],
+    ) -> tuple[Self, torch.Tensor]: ...
+
+    @classmethod
+    def from_bspline(
+        cls,
+        control_points_z: torch.Tensor | None,
+        control_points_y: torch.Tensor,
+        control_points_x: torch.Tensor,
+        input_shape: SpatialDimension[int],
+        control_point_spacing: SpatialDimension[float],
+        interpolation_mode: Literal['bilinear', 'nearest', 'bicubic'] = 'bilinear',
+        padding_mode: Literal['zeros', 'border', 'reflection'] = 'zeros',
+        *,
+        return_displacement: bool = False,
+    ) -> Self | tuple[Self, torch.Tensor]:
+        """Create a GridSamplingOp from cubic B-spline control points.
+
+        Parameters
+        ----------
+        control_points_z
+            Z-component of control points. Use ``None`` for 2D.
+            Shape ``(*batch, zc, yc, xc)``.
+        control_points_y
+            Y-component of control points. Shape ``(*batch, zc, yc, xc)`` for 3D
+            or ``(*batch, yc, xc)`` for 2D.
+        control_points_x
+            X-component of control points. Shape ``(*batch, zc, yc, xc)`` for 3D
+            or ``(*batch, yc, xc)`` for 2D.
+        input_shape
+            Spatial input shape in ``(z, y, x)``.
+            For 2D, set ``z=1``.
+        control_point_spacing
+            Control-point spacing in voxel units in ``(z, y, x)``.
+            For 2D, set the z-spacing to any positive value.
+        interpolation_mode
+            mode used for interpolation. bilinear is trilinear in 3D, bicubic is only supported in 2D.
+        padding_mode
+            how the input of the forward is padded.
+        return_displacement
+            If ``True``, return dense voxel displacement together with the operator.
+        """
+        if control_points_z is None:
+            dim = 2
+            if control_points_y.ndim < 3 or control_points_x.ndim < 3:
+                raise ValueError(
+                    'For 2D B-spline, control points should have at least 3 dimensions: batch y x. '
+                    f'Got shape {control_points_y.shape} and {control_points_x.shape}.'
+                )
+            control_points = torch.stack(torch.broadcast_tensors(control_points_y, control_points_x), dim=-3)
+        else:
+            dim = 3
+            if control_points_z.ndim < 4 or control_points_y.ndim < 4 or control_points_x.ndim < 4:
+                raise ValueError(
+                    'For 3D B-spline, control points should have at least 4 dimensions: batch z y x. '
+                    f'Got shape {control_points_z.shape}, {control_points_y.shape}, {control_points_x.shape}.'
+                )
+            control_points = torch.stack(
+                torch.broadcast_tensors(control_points_z, control_points_y, control_points_x), dim=-4
+            )
+        shape = tuple(int(size) for size in input_shape.zyx[-dim:])
+        spacing = tuple(float(size) for size in control_point_spacing.zyx[-dim:])
+
+        shape_batch = control_points.shape[: -(dim + 1)]
+        # Flatten arbitrary batch dimensions for dense displacement evaluation.
+        control_points_flatbatch = (
+            unsqueeze_left(control_points, 1) if len(shape_batch) == 0 else control_points.flatten(end_dim=-(dim + 2))
+        )
+
+        _, _, *shape_ctrl = control_points_flatbatch.shape
+        device = control_points_flatbatch.device
+        dtype = control_points_flatbatch.dtype
+        coordinate_axes = [torch.arange(size, device=device, dtype=dtype) for size in shape]
+        mesh = torch.meshgrid(*coordinate_axes, indexing='ij')
+
+        floor_indices_per_dim: list[torch.Tensor] = []
+        basis_weights_per_dim: list[torch.Tensor] = []
+        for coordinate, spacing_axis, control_size in zip(mesh, spacing, shape_ctrl, strict=True):
+            scaled_coordinate = coordinate / spacing_axis + 1.0
+            floor_index = torch.floor(scaled_coordinate).to(torch.int64)
+            fractional = (scaled_coordinate - floor_index.to(dtype)).clamp(0.0, 1.0 - 1e-7)
+            fractional2 = fractional.square()
+            fractional3 = fractional2 * fractional
+            basis = torch.stack(
+                (
+                    (1.0 - fractional).pow(3) / 6.0,
+                    (3.0 * fractional3 - 6.0 * fractional2 + 4.0) / 6.0,
+                    (-3.0 * fractional3 + 3.0 * fractional2 + 3.0 * fractional + 1.0) / 6.0,
+                    fractional3 / 6.0,
+                ),
+                dim=-1,
+            )
+            floor_indices_per_dim.append((floor_index - 1).clamp(0, control_size - 4))
+            basis_weights_per_dim.append(basis)
+
+        displacement = control_points_flatbatch.new_zeros((control_points_flatbatch.shape[0], dim, *shape))
+        for basis_offset in product(range(4), repeat=dim):
+            contribution_weight = torch.ones(shape, device=device, dtype=dtype)
+            index_components: list[torch.Tensor] = []
+            for axis, offset in enumerate(basis_offset):
+                contribution_weight = contribution_weight * basis_weights_per_dim[axis][..., offset]
+                index_components.append(floor_indices_per_dim[axis] + offset)
+            index_tuple: tuple[slice | torch.Tensor, ...] = (slice(None), slice(None), *index_components)
+            sampled_control_points = control_points_flatbatch[index_tuple]
+            displacement = displacement + sampled_control_points * contribution_weight.unsqueeze(0).unsqueeze(0)
+
+        # Move component axis to front to match from_displacement signature.
+        displacement = displacement.reshape(*(shape_batch or (1,)), *displacement.shape[1:])
+        component_axis = displacement.ndim - dim - 1
+        displacement_components = displacement.movedim(component_axis, 0)
+        operator = cls.from_displacement(
+            displacement_components[0] if dim == 3 else None,
+            displacement_components[1] if dim == 3 else displacement_components[0],
+            displacement_components[2] if dim == 3 else displacement_components[1],
+            interpolation_mode=interpolation_mode,
+            padding_mode=padding_mode,
+        )
+        if return_displacement:
+            return operator, displacement
+        return operator
+
+    @overload
+    def __matmul__(self, other: LinearOperator) -> LinearOperator: ...
+
+    @overload
+    def __matmul__(
+        self, other: Operator[Unpack[Tin2], tuple[torch.Tensor,]] | Operator[Unpack[Tin2], tuple[torch.Tensor, ...]]
+    ) -> Operator[Unpack[Tin2], tuple[torch.Tensor,]]: ...
+
+    def __matmul__(
+        self,
+        other: Operator[Unpack[Tin2], tuple[torch.Tensor,]]
+        | LinearOperator
+        | Operator[Unpack[Tin2], tuple[torch.Tensor, ...]],
+    ) -> (
+        Operator[Unpack[Tin2], tuple[torch.Tensor,]] | LinearOperator | Operator[Unpack[Tin2], tuple[torch.Tensor, ...]]
+    ):
+        """Operator composition.
+
+        For ``GridSamplingOp @ GridSamplingOp``, compose both grids into one sampling op.
+        """
+        if not isinstance(other, GridSamplingOp):
+            return super().__matmul__(other)
+
+        dim = self.grid.shape[-1]
+        dim_other = other.grid.shape[-1]
+        if self.align_corners != other.align_corners:
+            raise ValueError('Cannot compose GridSamplingOp with different align_corners.')
+        if self.interpolation_mode != other.interpolation_mode:
+            raise ValueError('Cannot compose GridSamplingOp with different interpolation_mode.')
+        if self.padding_mode != other.padding_mode:
+            raise ValueError('Cannot compose GridSamplingOp with different padding_mode.')
+
+        if dim == dim_other:
+            if self.input_shape.zyx[-dim:] != other.grid.shape[-dim - 1 : -1]:
+                raise ValueError(
+                    f'Cannot compose operators with mismatched shape: expected {self.input_shape.zyx[-dim:]}, '
+                    f'got {other.grid.shape[-dim - 1 : -1]}.'
+                )
+            # Move coordinate channels next to batch dims so we can sample the grid as an image.
+            (joint_grid_components,) = self(other.grid.movedim(-1, -dim - 1))
+            joint_grid = joint_grid_components.movedim(-dim - 1, -1)
+            input_shape = other.input_shape
+
+        elif dim == 3 and dim_other == 2:
+            if self.input_shape.zyx[-2:] != other.grid.shape[-3:-1]:
+                raise ValueError(
+                    f'Cannot compose operators with mismatched shape: expected {self.input_shape.zyx[-2:]}, '
+                    f'got {other.grid.shape[-3:-1]}.'
+                )
+            other_grid_components = other.grid.movedim(-1, -3)
+            other_grid_components = other_grid_components.unsqueeze(-3)
+            other_grid_components = other_grid_components.expand(
+                *other_grid_components.shape[:-3], int(self.input_shape.z), *other_grid_components.shape[-2:]
+            )
+            (joint_xy_components,) = self(other_grid_components)
+            joint_xy_grid = joint_xy_components.movedim(-4, -1)
+            joint_grid = torch.stack((joint_xy_grid[..., 0], joint_xy_grid[..., 1], self.grid[..., 2]), dim=-1)
+            input_shape = SpatialDimension(self.input_shape.z, other.input_shape.y, other.input_shape.x)
+
+        elif dim == 2 and dim_other == 3:
+            if self.input_shape.zyx[-2:] != other.grid.shape[-3:-1]:
+                raise ValueError(
+                    f'Cannot compose operators with mismatched shape: expected {self.input_shape.zyx[-2:]}, '
+                    f'got {other.grid.shape[-3:-1]}.'
+                )
+            (joint_grid_components,) = self(other.grid.movedim(-1, -4))
+            joint_grid = joint_grid_components.movedim(-4, -1)
+            input_shape = other.input_shape
+
+        else:
+            raise ValueError(f'Unsupported GridSamplingOp composition: {dim}D @ {dim_other}D.')
+
+        return GridSamplingOp(
+            joint_grid[..., 2] if joint_grid.shape[-1] == 3 else None,
+            joint_grid[..., 1],
+            joint_grid[..., 0],
+            input_shape=input_shape,
+            interpolation_mode=self.interpolation_mode,
+            padding_mode=self.padding_mode,
+            align_corners=self.align_corners,
+        )
+
+    @classmethod
     def from_displacement(
         cls,
         displacement_z: torch.Tensor | None,
@@ -276,6 +566,10 @@ class GridSamplingOp(LinearOperator):
             mode used for interpolation. bilinear is trilinear in 3D, bicubic is only supported in 2D.
         padding_mode
             how the input of the forward is padded.
+
+        Notes
+        -----
+        Generated normalized grids are clipped to ``[-1, 1]``.
         """
         if displacement_z is not None:  # 3D
             if displacement_x.ndim < 4 or displacement_y.ndim < 4 or displacement_z.ndim < 4:
@@ -298,9 +592,13 @@ class GridSamplingOp(LinearOperator):
                 torch.linspace(-1, 1, n_x),
                 indexing='ij',
             )
-            grid_z = grid_z.to(displacement_z) + displacement_z * 2 / (n_z - 1)
-            grid_y = grid_y.to(displacement_y) + displacement_y * 2 / (n_y - 1)
-            grid_x = grid_x.to(displacement_x) + displacement_x * 2 / (n_x - 1)
+            scale_z = 0.0 if n_z == 1 else 2 / (n_z - 1)
+            scale_y = 0.0 if n_y == 1 else 2 / (n_y - 1)
+            scale_x = 0.0 if n_x == 1 else 2 / (n_x - 1)
+            grid_z = (grid_z.to(displacement_z) + displacement_z * scale_z).clamp(-1.0, 1.0)
+            grid_y = (grid_y.to(displacement_y) + displacement_y * scale_y).clamp(-1.0, 1.0)
+            grid_x = (grid_x.to(displacement_x) + displacement_x * scale_x).clamp(-1.0, 1.0)
+            align_corners = n_z > 1 and n_y > 1 and n_x > 1
         else:  # 2D
             if displacement_x.ndim < 3 or displacement_y.ndim < 3:
                 raise ValueError(
@@ -315,10 +613,13 @@ class GridSamplingOp(LinearOperator):
                     f'Got shapes {displacement_y.shape}, {displacement_x.shape}.'
                 ) from None
             grid_y, grid_x = torch.meshgrid(torch.linspace(-1, 1, n_y), torch.linspace(-1, 1, n_x), indexing='ij')
-            grid_y = grid_y.to(displacement_y) + displacement_y * 2 / (n_y - 1)
-            grid_x = grid_x.to(displacement_x) + displacement_x * 2 / (n_x - 1)
+            scale_y = 0.0 if n_y == 1 else 2 / (n_y - 1)
+            scale_x = 0.0 if n_x == 1 else 2 / (n_x - 1)
+            grid_y = (grid_y.to(displacement_y) + displacement_y * scale_y).clamp(-1.0, 1.0)
+            grid_x = (grid_x.to(displacement_x) + displacement_x * scale_x).clamp(-1.0, 1.0)
             grid_z = None
-        return cls(grid_z, grid_y, grid_x, None, interpolation_mode, padding_mode, align_corners=True)
+            align_corners = n_y > 1 and n_x > 1
+        return cls(grid_z, grid_y, grid_x, None, interpolation_mode, padding_mode, align_corners=align_corners)
 
     def __reshape_wrapper(
         self, x: torch.Tensor, inner: Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
@@ -378,6 +679,40 @@ class GridSamplingOp(LinearOperator):
         )
 
         return sampled
+
+    def to_displacement(self) -> torch.Tensor:
+        """Convert the normalized sampling grid to displacement in voxel units.
+
+        Returns
+        -------
+            Displacement with shape ``(*batch, dim, *spatial)`` where ``dim`` is 2 or 3.
+        """
+        dim = self.grid.shape[-1]
+        spatial_shape = self.grid.shape[-dim - 1 : -1]
+
+        base_coordinates = [
+            torch.linspace(-1, 1, n, device=self.grid.device, dtype=self.grid.dtype) for n in spatial_shape
+        ]
+        base_grid = torch.meshgrid(*base_coordinates, indexing='ij')
+
+        scales = [0.0 if n == 1 else (n - 1) / 2 for n in spatial_shape]
+        if dim == 3:
+            return torch.stack(
+                (
+                    (self.grid[..., 2] - base_grid[0]) * scales[0],
+                    (self.grid[..., 1] - base_grid[1]) * scales[1],
+                    (self.grid[..., 0] - base_grid[2]) * scales[2],
+                ),
+                dim=-4,
+            )
+
+        return torch.stack(
+            (
+                (self.grid[..., 1] - base_grid[0]) * scales[0],
+                (self.grid[..., 0] - base_grid[1]) * scales[1],
+            ),
+            dim=-3,
+        )
 
     def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor]:
         """Apply the GridSampling operator.

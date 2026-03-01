@@ -416,6 +416,301 @@ def test_grid_sampling_op_from_displacement_2d() -> None:
     torch.testing.assert_close(phantom_shifted, operator(phantom)[0])
 
 
+@pytest.mark.parametrize('dim', [3, 2])
+def test_grid_sampling_op_to_displacement(dim: int) -> None:
+    """Test conversion from grid back to displacement."""
+    if dim == 3:
+        displacement = torch.zeros(2, 5, 6, 7, 3)
+        displacement[:, 1:-1, 1:-1, 1:-1, 0] = 1.0
+        displacement[:, 1:-1, 1:-1, 1:-1, 1] = -1.0
+        displacement[:, 1:-1, 1:-1, 1:-1, 2] = 0.5
+        operator = GridSamplingOp.from_displacement(
+            displacement_z=displacement[..., 0],
+            displacement_y=displacement[..., 1],
+            displacement_x=displacement[..., 2],
+        )
+    else:
+        displacement = torch.zeros(2, 6, 7, 2)
+        displacement[:, 1:-1, 1:-1, 0] = -1.0
+        displacement[:, 1:-1, 1:-1, 1] = 0.5
+        operator = GridSamplingOp.from_displacement(
+            displacement_z=None,
+            displacement_y=displacement[..., 0],
+            displacement_x=displacement[..., 1],
+        )
+
+    displacement_recovered = operator.to_displacement().movedim(1, -1)
+    torch.testing.assert_close(displacement_recovered, displacement)
+
+
+def test_grid_sampling_op_from_affine_3d_identity() -> None:
+    """Test identity transformation created from affine matrix in 3D."""
+    image = torch.zeros(2, 3, 4, 8, 9, 10)
+    image[..., 2:6, 2:7, 3:8] = 1
+
+    affine = torch.zeros(2, 3, 3, 4)
+    affine[..., 0, 0] = 1
+    affine[..., 1, 1] = 1
+    affine[..., 2, 2] = 1
+
+    operator = GridSamplingOp.from_affine(
+        affine,
+        input_shape=SpatialDimension(8, 9, 10),
+        interpolation_mode='nearest',
+        padding_mode='border',
+    )
+    torch.testing.assert_close(image, operator(image)[0])
+
+
+def test_grid_sampling_op_from_affine_2d_identity() -> None:
+    """Test identity transformation created from affine matrix in 2D."""
+    image = torch.zeros(2, 3, 4, 5, 10, 11)
+    image[..., 2:7, 3:8] = 1
+
+    affine = torch.zeros(2, 3, 2, 3)
+    affine[..., 0, 0] = 1
+    affine[..., 1, 1] = 1
+
+    operator = GridSamplingOp.from_affine(
+        affine,
+        input_shape=SpatialDimension(1, 10, 11),
+        interpolation_mode='nearest',
+        padding_mode='border',
+    )
+    torch.testing.assert_close(image, operator(image)[0])
+
+
+def test_grid_sampling_op_from_affine_unbatched_2d_identity() -> None:
+    """Test unbatched 2D affine identity."""
+    image = torch.zeros(1, 3, 10, 11)
+    image[..., 2:7, 3:8] = 1
+
+    affine = torch.zeros(2, 3)
+    affine[0, 0] = 1
+    affine[1, 1] = 1
+
+    operator = GridSamplingOp.from_affine(
+        affine,
+        input_shape=SpatialDimension(1, 10, 11),
+        interpolation_mode='nearest',
+        padding_mode='border',
+    )
+    torch.testing.assert_close(image, operator(image)[0])
+
+
+def test_grid_sampling_op_from_affine_unbatched_3d_identity() -> None:
+    """Test unbatched 3D affine identity."""
+    image = torch.zeros(1, 3, 8, 9, 10)
+    image[..., 2:6, 2:7, 3:8] = 1
+
+    affine = torch.zeros(3, 4)
+    affine[0, 0] = 1
+    affine[1, 1] = 1
+    affine[2, 2] = 1
+
+    operator = GridSamplingOp.from_affine(
+        affine,
+        input_shape=SpatialDimension(8, 9, 10),
+        interpolation_mode='nearest',
+        padding_mode='border',
+    )
+    torch.testing.assert_close(image, operator(image)[0])
+
+
+def test_grid_sampling_op_from_bspline_3d_zero_displacement() -> None:
+    """Test from_bspline with zero control points in 3D."""
+    image = torch.zeros(2, 3, 8, 9, 10)
+    image[..., 2:6, 2:7, 3:8] = 1
+    control_points_z = torch.zeros(2, 5, 5, 5)
+    control_points_y = torch.zeros(2, 5, 5, 5)
+    control_points_x = torch.zeros(2, 5, 5, 5)
+
+    operator = GridSamplingOp.from_bspline(
+        control_points_z,
+        control_points_y,
+        control_points_x,
+        input_shape=SpatialDimension(8, 9, 10),
+        control_point_spacing=SpatialDimension(4.0, 4.0, 4.0),
+        interpolation_mode='nearest',
+        padding_mode='border',
+    )
+    torch.testing.assert_close(image, operator(image)[0])
+
+
+def test_grid_sampling_op_from_bspline_2d_zero_displacement() -> None:
+    """Test from_bspline with zero control points in 2D."""
+    image = torch.zeros(2, 3, 4, 10, 11)
+    image[..., 2:7, 3:8] = 1
+    control_points_y = torch.zeros(2, 6, 7)
+    control_points_x = torch.zeros(2, 6, 7)
+
+    operator = GridSamplingOp.from_bspline(
+        None,
+        control_points_y,
+        control_points_x,
+        input_shape=SpatialDimension(1, 10, 11),
+        control_point_spacing=SpatialDimension(1.0, 4.0, 4.0),
+        interpolation_mode='nearest',
+        padding_mode='border',
+    )
+    torch.testing.assert_close(image, operator(image)[0])
+
+
+def test_grid_sampling_op_from_bspline_2d_zero_displacement_arbitrary_batch() -> None:
+    """Test from_bspline 2D supports arbitrary batch dimensions."""
+    image = torch.zeros(3, 2, 4, 10, 11)
+    image[..., 2:7, 3:8] = 1
+    control_points_y = torch.zeros(3, 6, 7)
+    control_points_x = torch.zeros(3, 6, 7)
+
+    operator = GridSamplingOp.from_bspline(
+        None,
+        control_points_y,
+        control_points_x,
+        input_shape=SpatialDimension(1, 10, 11),
+        control_point_spacing=SpatialDimension(1.0, 4.0, 4.0),
+        interpolation_mode='nearest',
+        padding_mode='border',
+    )
+    torch.testing.assert_close(image, operator(image)[0])
+
+
+def test_grid_sampling_op_from_bspline_return_displacement() -> None:
+    """Test from_bspline can return dense displacement."""
+    control_points_z = torch.zeros(2, 5, 5, 5)
+    control_points_y = torch.zeros(2, 5, 5, 5)
+    control_points_x = torch.zeros(2, 5, 5, 5)
+    operator, displacement = GridSamplingOp.from_bspline(
+        control_points_z,
+        control_points_y,
+        control_points_x,
+        input_shape=SpatialDimension(8, 9, 10),
+        control_point_spacing=SpatialDimension(4.0, 4.0, 4.0),
+        interpolation_mode='nearest',
+        padding_mode='border',
+        return_displacement=True,
+    )
+    assert isinstance(operator, GridSamplingOp)
+    torch.testing.assert_close(displacement, torch.zeros(2, 3, 8, 9, 10))
+
+
+def test_grid_sampling_op_to_displacement_roundtrip_with_singleton_dim() -> None:
+    """Test displacement roundtrip for 3D with singleton z dimension."""
+    displacement_z = torch.zeros(2, 1, 6, 7)
+    displacement_y = torch.zeros(2, 1, 6, 7)
+    displacement_x = torch.zeros(2, 1, 6, 7)
+    displacement_y[..., 1:-1, 1:-1] = 0.5
+    displacement_x[..., 1:-1, 1:-1] = -0.25
+    operator = GridSamplingOp.from_displacement(displacement_z, displacement_y, displacement_x)
+    displacement_recovered = operator.to_displacement().movedim(1, 0)
+    torch.testing.assert_close(displacement_recovered[0], torch.zeros_like(displacement_z))
+    torch.testing.assert_close(displacement_recovered[1], displacement_y)
+    torch.testing.assert_close(displacement_recovered[2], displacement_x)
+
+
+def test_grid_sampling_op_matmul_composition() -> None:
+    """Test composition of two GridSamplingOp with @."""
+    image = torch.zeros(2, 3, 8, 9, 10)
+    image[..., 2:6, 2:7, 3:8] = 1
+
+    affine = torch.zeros(2, 3, 4)
+    affine[..., 0, 0] = 1
+    affine[..., 1, 1] = 1
+    affine[..., 2, 2] = 1
+    affine_operator = GridSamplingOp.from_affine(
+        affine,
+        input_shape=SpatialDimension(8, 9, 10),
+        interpolation_mode='bilinear',
+        padding_mode='border',
+        align_corners=True,
+    )
+    spline_operator = GridSamplingOp.from_bspline(
+        torch.zeros(2, 5, 5, 5),
+        torch.zeros(2, 5, 5, 5),
+        torch.zeros(2, 5, 5, 5),
+        input_shape=SpatialDimension(8, 9, 10),
+        control_point_spacing=SpatialDimension(4.0, 4.0, 4.0),
+        interpolation_mode='bilinear',
+        padding_mode='border',
+    )
+
+    joint_operator = spline_operator @ affine_operator
+    (moved_affine,) = affine_operator(image)
+    (moved_sequential,) = spline_operator(moved_affine)
+    (moved_joint,) = joint_operator(image)
+    torch.testing.assert_close(moved_joint, moved_sequential, atol=1e-5, rtol=1e-5)
+
+
+def test_grid_sampling_op_matmul_composition_3d_2d() -> None:
+    """Test composition of 3D and 2D GridSamplingOp."""
+    image = torch.zeros(2, 3, 8, 9, 10)
+    image[..., 2:6, 2:7, 3:8] = 1
+
+    affine_3d = torch.zeros(2, 3, 4)
+    affine_3d[..., 0, 0] = 1
+    affine_3d[..., 1, 1] = 1
+    affine_3d[..., 2, 2] = 1
+    operator_3d = GridSamplingOp.from_affine(
+        affine_3d,
+        input_shape=SpatialDimension(8, 9, 10),
+        interpolation_mode='bilinear',
+        padding_mode='border',
+        align_corners=True,
+    )
+
+    affine_2d = torch.zeros(2, 2, 3)
+    affine_2d[..., 0, 0] = 1
+    affine_2d[..., 1, 1] = 1
+    operator_2d = GridSamplingOp.from_affine(
+        affine_2d,
+        input_shape=SpatialDimension(1, 9, 10),
+        interpolation_mode='bilinear',
+        padding_mode='border',
+        align_corners=True,
+    )
+
+    joint_operator = operator_3d @ operator_2d
+    (moved_2d,) = operator_2d(image)
+    (moved_sequential,) = operator_3d(moved_2d)
+    (moved_joint,) = joint_operator(image)
+    torch.testing.assert_close(moved_joint, moved_sequential, atol=1e-5, rtol=1e-5)
+
+
+def test_grid_sampling_op_matmul_composition_2d_3d() -> None:
+    """Test composition of 2D and 3D GridSamplingOp."""
+    image = torch.zeros(2, 3, 8, 9, 10)
+    image[..., 2:6, 2:7, 3:8] = 1
+
+    affine_2d = torch.zeros(2, 2, 3)
+    affine_2d[..., 0, 0] = 1
+    affine_2d[..., 1, 1] = 1
+    operator_2d = GridSamplingOp.from_affine(
+        affine_2d,
+        input_shape=SpatialDimension(1, 9, 10),
+        interpolation_mode='bilinear',
+        padding_mode='border',
+        align_corners=True,
+    )
+
+    affine_3d = torch.zeros(2, 3, 4)
+    affine_3d[..., 0, 0] = 1
+    affine_3d[..., 1, 1] = 1
+    affine_3d[..., 2, 2] = 1
+    operator_3d = GridSamplingOp.from_affine(
+        affine_3d,
+        input_shape=SpatialDimension(8, 9, 10),
+        interpolation_mode='bilinear',
+        padding_mode='border',
+        align_corners=True,
+    )
+
+    joint_operator = operator_2d @ operator_3d
+    (moved_3d,) = operator_3d(image)
+    (moved_sequential,) = operator_2d(moved_3d)
+    (moved_joint,) = joint_operator(image)
+    torch.testing.assert_close(moved_joint, moved_sequential, atol=1e-5, rtol=1e-5)
+
+
 @pytest.mark.cuda
 @pytest.mark.parametrize('dim', [3, 2])
 def test_grid_sampling_op_from_displacement_cuda(dim: int) -> None:
@@ -441,6 +736,108 @@ def test_grid_sampling_op_from_displacement_cuda(dim: int) -> None:
     assert result.is_cpu
 
     operator_cpu = GridSamplingOp.from_displacement(*displacement_cpu)
+    (result,) = operator_cpu(image)
+    assert result.is_cpu
+
+    operator_cuda = operator_cpu.cuda()
+    (result,) = operator_cuda(image.cuda())
+    assert result.is_cuda
+
+
+@pytest.mark.cuda
+@pytest.mark.parametrize('dim', [3, 2])
+def test_grid_sampling_op_from_affine_cuda(dim: int) -> None:
+    """Test operator grid on cuda if the input affine is on cuda."""
+    batch, coil = (2, 3), 3
+    if dim == 3:
+        zyx = (2, 4, 8)
+        affine_cuda = torch.zeros(*batch, 3, 4, device='cuda')
+        affine_cpu = torch.zeros(*batch, 3, 4, device='cpu')
+        affine_cuda[..., 0, 0] = 1
+        affine_cuda[..., 1, 1] = 1
+        affine_cuda[..., 2, 2] = 1
+        affine_cpu[..., 0, 0] = 1
+        affine_cpu[..., 1, 1] = 1
+        affine_cpu[..., 2, 2] = 1
+        input_shape = SpatialDimension(*zyx)
+    elif dim == 2:
+        zyx = (1, 4, 8)
+        affine_cuda = torch.zeros(*batch, 2, 3, device='cuda')
+        affine_cpu = torch.zeros(*batch, 2, 3, device='cpu')
+        affine_cuda[..., 0, 0] = 1
+        affine_cuda[..., 1, 1] = 1
+        affine_cpu[..., 0, 0] = 1
+        affine_cpu[..., 1, 1] = 1
+        input_shape = SpatialDimension(*zyx)
+
+    image = torch.ones(*batch, coil, *zyx)
+
+    operator_cuda = GridSamplingOp.from_affine(affine_cuda, input_shape=input_shape)
+    (result,) = operator_cuda(image.cuda())
+    assert result.is_cuda
+
+    operator_cpu = operator_cuda.cpu()
+    (result,) = operator_cpu(image)
+    assert result.is_cpu
+
+    operator_cpu = GridSamplingOp.from_affine(affine_cpu, input_shape=input_shape)
+    (result,) = operator_cpu(image)
+    assert result.is_cpu
+
+    operator_cuda = operator_cpu.cuda()
+    (result,) = operator_cuda(image.cuda())
+    assert result.is_cuda
+
+
+@pytest.mark.cuda
+@pytest.mark.parametrize('dim', [3, 2])
+def test_grid_sampling_op_from_bspline_cuda(dim: int) -> None:
+    """Test operator grid on cuda if the input B-spline control points are on cuda."""
+    batch, coil = (2, 3), 3
+    if dim == 3:
+        zyx = (2, 4, 8)
+        control_points_z_cuda = torch.zeros(*batch, 5, 6, 7, device='cuda')
+        control_points_y_cuda = torch.zeros(*batch, 5, 6, 7, device='cuda')
+        control_points_x_cuda = torch.zeros(*batch, 5, 6, 7, device='cuda')
+        control_points_z_cpu = torch.zeros(*batch, 5, 6, 7, device='cpu')
+        control_points_y_cpu = torch.zeros(*batch, 5, 6, 7, device='cpu')
+        control_points_x_cpu = torch.zeros(*batch, 5, 6, 7, device='cpu')
+        input_shape = SpatialDimension(*zyx)
+        spacing = SpatialDimension(2.0, 2.0, 2.0)
+    elif dim == 2:
+        zyx = (1, 4, 8)
+        control_points_z_cuda = None
+        control_points_y_cuda = torch.zeros(*batch, 6, 7, device='cuda')
+        control_points_x_cuda = torch.zeros(*batch, 6, 7, device='cuda')
+        control_points_z_cpu = None
+        control_points_y_cpu = torch.zeros(*batch, 6, 7, device='cpu')
+        control_points_x_cpu = torch.zeros(*batch, 6, 7, device='cpu')
+        input_shape = SpatialDimension(*zyx)
+        spacing = SpatialDimension(1.0, 2.0, 2.0)
+
+    image = torch.ones(*batch, coil, *zyx)
+
+    operator_cuda = GridSamplingOp.from_bspline(
+        control_points_z_cuda,
+        control_points_y_cuda,
+        control_points_x_cuda,
+        input_shape=input_shape,
+        control_point_spacing=spacing,
+    )
+    (result,) = operator_cuda(image.cuda())
+    assert result.is_cuda
+
+    operator_cpu = operator_cuda.cpu()
+    (result,) = operator_cpu(image)
+    assert result.is_cpu
+
+    operator_cpu = GridSamplingOp.from_bspline(
+        control_points_z_cpu,
+        control_points_y_cpu,
+        control_points_x_cpu,
+        input_shape=input_shape,
+        control_point_spacing=spacing,
+    )
     (result,) = operator_cpu(image)
     assert result.is_cpu
 
