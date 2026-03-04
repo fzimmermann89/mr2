@@ -77,15 +77,14 @@ def sliding_window(
                 f'window_size={window_shape_[i]}, dilation={dilation_[i]}, stride={stride_[i]}'
             )
         out_shape.append(n_win)
-    x_stride = x.stride()
-    out_stride = [x_stride[ax] * st for ax, st in zip(dim, stride_, strict=False)]
+    out_stride = [x.stride(ax) * st for ax, st in zip(dim, stride_, strict=False)]
     for i in range(len(x.shape)):
         if i in axis_to_idx:
             idx = axis_to_idx[i]
             out_shape.append(window_shape_[idx])
-            out_stride.append(x_stride[i] * dilation_[idx])
+            out_stride.append(x.stride(i) * dilation_[idx])
         else:
             out_shape.append(x.shape[i])
-            out_stride.append(x_stride[i])
+            out_stride.append(x.stride(i))
 
     return x.as_strided(size=out_shape, stride=out_stride)
