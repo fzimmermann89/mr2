@@ -564,21 +564,24 @@ def test_grid_sampling_op_from_bspline_2d_zero_displacement() -> None:
 
 def test_grid_sampling_op_from_bspline_return_displacement() -> None:
     """Test from_bspline can return dense displacement."""
-    control_points_z = torch.zeros(2, 5, 5, 5)
-    control_points_y = torch.zeros(2, 5, 5, 5)
-    control_points_x = torch.zeros(2, 5, 5, 5)
+    shape = SpatialDimension(8, 9, 10)
+    spacing = SpatialDimension(4, 4, 4)
+    control_points_shape = (shape - 1) // spacing + 4
+    control_points_z = torch.zeros(2, *control_points_shape.zyx)
+    control_points_y = torch.zeros(2, *control_points_shape.zyx)
+    control_points_x = torch.zeros(2, *control_points_shape.zyx)
     operator, displacement = GridSamplingOp.from_bspline(
         control_points_z,
         control_points_y,
         control_points_x,
-        input_shape=SpatialDimension(8, 9, 10),
-        control_point_spacing=SpatialDimension(4.0, 4.0, 4.0),
+        input_shape=shape,
+        control_point_spacing=spacing,
         interpolation_mode='nearest',
         padding_mode='border',
         return_displacement=True,
     )
     assert isinstance(operator, GridSamplingOp)
-    torch.testing.assert_close(displacement, torch.zeros(2, 3, 8, 9, 10))
+    torch.testing.assert_close(displacement, torch.zeros(3, 2, *shape.zyx))
 
 
 def test_grid_sampling_op_from_stationary_identity_3d() -> None:
@@ -609,7 +612,8 @@ def test_grid_sampling_op_from_stationary_identity_2d() -> None:
 
 def test_grid_sampling_op_matmul_composition() -> None:
     """Test composition of two GridSamplingOp with @."""
-    image = torch.zeros(2, 3, 8, 9, 10)
+    shape = SpatialDimension(8, 9, 10)
+    image = torch.zeros(2, 3, *shape.zyx)
     image[..., 2:6, 2:7, 3:8] = 1
 
     affine = torch.zeros(2, 3, 4)
@@ -618,17 +622,19 @@ def test_grid_sampling_op_matmul_composition() -> None:
     affine[..., 2, 2] = 1
     affine_operator = GridSamplingOp.from_affine(
         affine,
-        input_shape=SpatialDimension(8, 9, 10),
+        input_shape=shape,
         interpolation_mode='bilinear',
         padding_mode='border',
         align_corners=True,
     )
+    spacing = SpatialDimension(4, 4, 4)
+    control_points_shape = (shape - 1) // spacing + 4
     spline_operator = GridSamplingOp.from_bspline(
-        torch.zeros(2, 5, 5, 5),
-        torch.zeros(2, 5, 5, 5),
-        torch.zeros(2, 5, 5, 5),
-        input_shape=SpatialDimension(8, 9, 10),
-        control_point_spacing=SpatialDimension(4.0, 4.0, 4.0),
+        torch.zeros(2, *control_points_shape.zyx),
+        torch.zeros(2, *control_points_shape.zyx),
+        torch.zeros(2, *control_points_shape.zyx),
+        input_shape=shape,
+        control_point_spacing=spacing,
         interpolation_mode='bilinear',
         padding_mode='border',
     )
