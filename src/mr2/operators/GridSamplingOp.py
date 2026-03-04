@@ -3,6 +3,7 @@
 import warnings
 from collections.abc import Callable, Sequence
 from itertools import product
+from math import floor
 from typing import Literal, overload
 
 import torch
@@ -11,7 +12,6 @@ from typing_extensions import Self, Unpack
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.operators.LinearOperator import LinearOperator
 from mr2.operators.Operator import Operator, Tin2
-from mr2.utils.reshape import unsqueeze_left
 
 
 class _AdjointGridSampleCtx(torch.autograd.function.FunctionCtx):
@@ -189,7 +189,7 @@ class GridSamplingOp(LinearOperator):
         input_shape: SpatialDimension | None = None,
         interpolation_mode: Literal['bilinear', 'nearest', 'bicubic'] = 'bilinear',
         padding_mode: Literal['zeros', 'border', 'reflection'] = 'zeros',
-        align_corners: bool = False,
+        align_corners: bool = True,
     ):
         r"""Initialize Sampling Operator.
 
@@ -276,20 +276,21 @@ class GridSamplingOp(LinearOperator):
         match affine_matrix.shape[-2:]:
             case (2, 3):
                 dim = 2
-            case (3, 4):
+            case (3, 4) if input_shape.z > 1:
                 dim = 3
+            case (3, 4):
+                raise ValueError('Affine matrix for 2D input should have shape (2,3).')
             case _:
-                raise ValueError(f'affine_matrix must end with (2,3) or (3,4), got {affine_matrix.shape}.')
+                raise ValueError(f'affine_matrix shape must end with (2,3) or (3,4), got {affine_matrix.shape}.')
 
         shape = input_shape.zyx[-dim:]
         shape_batch = affine_matrix.shape[:-2]
         affine_flatbatch = affine_matrix.unsqueeze(0) if affine_matrix.ndim == 2 else affine_matrix.flatten(end_dim=-3)
-        align_corners_affine = align_corners and min(shape) > 1
 
         affine_grid = torch.nn.functional.affine_grid(
             affine_flatbatch,
             size=[int(affine_flatbatch.shape[0]), 1, *[int(axis_size) for axis_size in shape]],
-            align_corners=align_corners_affine,
+            align_corners=align_corners,
         )
         # Keep normalized coordinates in range during optimization line-search steps.
         affine_grid = affine_grid.clamp(-1.0, 1.0)
@@ -301,7 +302,7 @@ class GridSamplingOp(LinearOperator):
             input_shape,
             interpolation_mode,
             padding_mode,
-            align_corners=align_corners_affine,
+            align_corners=align_corners,
         )
 
     @classmethod
@@ -394,60 +395,82 @@ class GridSamplingOp(LinearOperator):
         shape = tuple(int(size) for size in input_shape.zyx[-dim:])
         spacing = tuple(float(size) for size in control_point_spacing.zyx[-dim:])
 
-        shape_batch = control_points.shape[: -(dim + 1)]
-        # Flatten arbitrary batch dimensions for dense displacement evaluation.
-        control_points_flatbatch = (
-            unsqueeze_left(control_points, 1) if len(shape_batch) == 0 else control_points.flatten(end_dim=-(dim + 2))
-        )
+        batch_dim = control_points.shape[: -(dim + 1)]
+        control_points_flatbatch = control_points.flatten(end_dim=-(dim + 2))
 
-        _, _, *shape_ctrl = control_points_flatbatch.shape
+        if any(
+            cp != (floor((n - 1) / sp)) + 4 and n > 1
+            for n, sp, cp in zip(shape, spacing, control_points_flatbatch.shape[2:], strict=True)
+        ):
+            warnings.warn(
+                'Control point does not match the expected shape for cubic B-spline; boundary '
+                'clamping will occur and can create repeated/striped regions, or points will be unused. '
+                'Use floor((n-1)/spacing)+4 control points along each axis.',
+                stacklevel=1,
+            )
+
         device = control_points_flatbatch.device
-        dtype = control_points_flatbatch.dtype
-        coordinate_axes = [torch.arange(size, device=device, dtype=dtype) for size in shape]
+        coordinate_axes = [torch.arange(size, device=device) for size in shape]
         mesh = torch.meshgrid(*coordinate_axes, indexing='ij')
 
         floor_indices_per_dim: list[torch.Tensor] = []
         basis_weights_per_dim: list[torch.Tensor] = []
-        for coordinate, spacing_axis, control_size in zip(mesh, spacing, shape_ctrl, strict=True):
-            scaled_coordinate = coordinate / spacing_axis + 1.0
+
+        # spline basis calculation, see https://en.wikipedia.org/wiki/B-spline#Cubic_B-splines
+        for coordinate, spacing_axis, control_size in zip(
+            mesh, spacing, control_points_flatbatch.shape[2:], strict=True
+        ):
+            scaled_coordinate = (coordinate / spacing_axis + 1.0).clamp(1.0, float(control_size) - 2.0 - 1e-6)
             floor_index = torch.floor(scaled_coordinate).to(torch.int64)
-            fractional = (scaled_coordinate - floor_index.to(dtype)).clamp(0.0, 1.0 - 1e-7)
-            fractional2 = fractional.square()
-            fractional3 = fractional2 * fractional
-            basis = torch.stack(
-                (
-                    (1.0 - fractional).pow(3) / 6.0,
-                    (3.0 * fractional3 - 6.0 * fractional2 + 4.0) / 6.0,
-                    (-3.0 * fractional3 + 3.0 * fractional2 + 3.0 * fractional + 1.0) / 6.0,
-                    fractional3 / 6.0,
-                ),
-                dim=-1,
+            t = (scaled_coordinate - floor_index).clamp(0.0, 1.0 - 1e-6)
+            tt = t**2
+            ttt = tt * t
+            basis = (
+                torch.stack(
+                    (
+                        (1.0 - t) ** 3,  # == (-t**3+3*t**2-3*t+1)
+                        (3 * tt - 6 * tt + 4),
+                        -3 * ttt + 3 * tt + 3 * t + 1,
+                        ttt,
+                    ),
+                    dim=-1,
+                )
+                / 6.0
             )
-            floor_indices_per_dim.append((floor_index - 1).clamp(0, control_size - 4))
+            floor_indices_per_dim.append(floor_index - 1)
             basis_weights_per_dim.append(basis)
 
         displacement = control_points_flatbatch.new_zeros((control_points_flatbatch.shape[0], dim, *shape))
         for basis_offset in product(range(4), repeat=dim):
-            contribution_weight = torch.ones(shape, device=device, dtype=dtype)
+            contribution_weight = torch.ones(shape, device=device)
             index_components: list[torch.Tensor] = []
             for axis, offset in enumerate(basis_offset):
                 contribution_weight = contribution_weight * basis_weights_per_dim[axis][..., offset]
                 index_components.append(floor_indices_per_dim[axis] + offset)
-            index_tuple: tuple[slice | torch.Tensor, ...] = (slice(None), slice(None), *index_components)
-            sampled_control_points = control_points_flatbatch[index_tuple]
-            displacement = displacement + sampled_control_points * contribution_weight.unsqueeze(0).unsqueeze(0)
+            displacement = (
+                displacement
+                + control_points_flatbatch[(slice(None), slice(None), *index_components)]  # type:ignore[index] # python 3.10 compatible...
+                * contribution_weight[None, None]
+            )
 
-        # Move component axis to front to match from_displacement signature.
-        displacement = displacement.reshape(*(shape_batch or (1,)), *displacement.shape[1:])
-        component_axis = displacement.ndim - dim - 1
-        displacement_components = displacement.movedim(component_axis, 0)
-        operator = cls.from_displacement(
-            displacement_components[0] if dim == 3 else None,
-            displacement_components[1] if dim == 3 else displacement_components[0],
-            displacement_components[2] if dim == 3 else displacement_components[1],
-            interpolation_mode=interpolation_mode,
-            padding_mode=padding_mode,
-        )
+        displacement = displacement.swapaxes(0, 1).unflatten(1, batch_dim)
+        match dim:
+            case 2:
+                operator = cls.from_displacement(
+                    None,
+                    displacement[0],
+                    displacement[1],
+                    interpolation_mode=interpolation_mode,
+                    padding_mode=padding_mode,
+                )
+            case 3:
+                operator = cls.from_displacement(
+                    displacement[0],
+                    displacement[1],
+                    displacement[2],
+                    interpolation_mode=interpolation_mode,
+                    padding_mode=padding_mode,
+                )
         if return_displacement:
             return operator, displacement
         return operator
@@ -602,7 +625,6 @@ class GridSamplingOp(LinearOperator):
             grid_z = (grid_z.to(displacement_z) + displacement_z * scale_z).clamp(-1.0, 1.0)
             grid_y = (grid_y.to(displacement_y) + displacement_y * scale_y).clamp(-1.0, 1.0)
             grid_x = (grid_x.to(displacement_x) + displacement_x * scale_x).clamp(-1.0, 1.0)
-            align_corners = n_z > 1 and n_y > 1 and n_x > 1
         else:  # 2D
             if displacement_x.ndim < 3 or displacement_y.ndim < 3:
                 raise ValueError(
@@ -622,8 +644,7 @@ class GridSamplingOp(LinearOperator):
             grid_y = (grid_y.to(displacement_y) + displacement_y * scale_y).clamp(-1.0, 1.0)
             grid_x = (grid_x.to(displacement_x) + displacement_x * scale_x).clamp(-1.0, 1.0)
             grid_z = None
-            align_corners = n_y > 1 and n_x > 1
-        return cls(grid_z, grid_y, grid_x, None, interpolation_mode, padding_mode, align_corners=align_corners)
+        return cls(grid_z, grid_y, grid_x, None, interpolation_mode, padding_mode, align_corners=True)
 
     @classmethod
     def from_stationary_velocity(
