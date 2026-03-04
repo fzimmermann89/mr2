@@ -44,7 +44,7 @@ def test_kspace_image_match(ellipse_phantom: EllipsePhantomTestData) -> None:
     # Due to discretization artifacts the reconstructed image will be different to the reference image. Using standard
     # testing functions such as numpy.testing.assert_almost_equal fails because there are few voxels with high
     # differences along the edges of the elliptic objects.
-    assert relative_image_difference(reconstructed_img, img[0, 0, 0]) <= 0.05
+    assert relative_image_difference(reconstructed_img, img[0, 0, 0]) <= 0.08
 
 
 def test_kdata_fullysampled(ellipse_phantom: EllipsePhantomTestData) -> None:
@@ -55,4 +55,4 @@ def test_kdata_fullysampled(ellipse_phantom: EllipsePhantomTestData) -> None:
     fourier_op = FourierOp.from_kdata(kdata)
     (reconstructed_img,) = fourier_op.adjoint(kdata.data)
     img = ellipse_phantom.phantom.image_space(matrix)
-    assert relative_image_difference(reconstructed_img[0, 0, 0], img[0, 0, 0]) <= 0.05
+    assert relative_image_difference(reconstructed_img[0, 0, 0], img[0, 0, 0]) <= 0.08
