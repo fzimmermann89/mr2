@@ -519,18 +519,21 @@ def test_grid_sampling_op_from_affine_unbatched_3d_identity() -> None:
 
 def test_grid_sampling_op_from_bspline_3d_zero_displacement() -> None:
     """Test from_bspline with zero control points in 3D."""
-    image = torch.zeros(2, 3, 8, 9, 10)
+    shape = SpatialDimension(8, 9, 10)
+    spacing = SpatialDimension(4, 4, 4)
+    control_points_shape = (shape - 1) // spacing + 4
+    image = torch.zeros(2, 3, *shape.zyx)
     image[..., 2:6, 2:7, 3:8] = 1
-    control_points_z = torch.zeros(2, 5, 5, 5)
-    control_points_y = torch.zeros(2, 5, 5, 5)
-    control_points_x = torch.zeros(2, 5, 5, 5)
+    control_points_z = torch.zeros(2, *control_points_shape.zyx)
+    control_points_y = torch.zeros(2, *control_points_shape.zyx)
+    control_points_x = torch.zeros(2, *control_points_shape.zyx)
 
     operator = GridSamplingOp.from_bspline(
         control_points_z,
         control_points_y,
         control_points_x,
         input_shape=SpatialDimension(8, 9, 10),
-        control_point_spacing=SpatialDimension(4.0, 4.0, 4.0),
+        control_point_spacing=spacing,
         interpolation_mode='nearest',
         padding_mode='border',
     )
@@ -539,36 +542,20 @@ def test_grid_sampling_op_from_bspline_3d_zero_displacement() -> None:
 
 def test_grid_sampling_op_from_bspline_2d_zero_displacement() -> None:
     """Test from_bspline with zero control points in 2D."""
-    image = torch.zeros(2, 3, 4, 10, 11)
+    shape = SpatialDimension(1, 10, 11)
+    image = torch.zeros(4, 2, 3, *shape.zyx)
     image[..., 2:7, 3:8] = 1
-    control_points_y = torch.zeros(2, 6, 7)
-    control_points_x = torch.zeros(2, 6, 7)
+    spacing = SpatialDimension(1, 4, 4)
+    control_points_shape = (shape - 1) // spacing + 4
+    control_points_y = torch.zeros(4, 2, *control_points_shape.zyx[1:])
+    control_points_x = torch.zeros(4, 2, *control_points_shape.zyx[1:])
 
     operator = GridSamplingOp.from_bspline(
         None,
         control_points_y,
         control_points_x,
-        input_shape=SpatialDimension(1, 10, 11),
-        control_point_spacing=SpatialDimension(1.0, 4.0, 4.0),
-        interpolation_mode='nearest',
-        padding_mode='border',
-    )
-    torch.testing.assert_close(image, operator(image)[0])
-
-
-def test_grid_sampling_op_from_bspline_2d_zero_displacement_arbitrary_batch() -> None:
-    """Test from_bspline 2D supports arbitrary batch dimensions."""
-    image = torch.zeros(3, 2, 4, 10, 11)
-    image[..., 2:7, 3:8] = 1
-    control_points_y = torch.zeros(3, 6, 7)
-    control_points_x = torch.zeros(3, 6, 7)
-
-    operator = GridSamplingOp.from_bspline(
-        None,
-        control_points_y,
-        control_points_x,
-        input_shape=SpatialDimension(1, 10, 11),
-        control_point_spacing=SpatialDimension(1.0, 4.0, 4.0),
+        input_shape=shape,
+        control_point_spacing=spacing,
         interpolation_mode='nearest',
         padding_mode='border',
     )
