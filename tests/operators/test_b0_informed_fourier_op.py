@@ -2,11 +2,11 @@
 
 import pytest
 import torch
-from torch.autograd.gradcheck import gradcheck
-
 from mrpro.operators.B0InformedFourierOp import ConjugatePhaseFourierOp, MultiFrequencyFourierOp, TimeSegmentedFourierOp
 from mrpro.operators.FastFourierOp import FastFourierOp
 from mrpro.utils import RandomGenerator
+from torch.autograd.gradcheck import gradcheck
+
 from tests import (
     dotproduct_adjointness_test,
     forward_mode_autodiff_of_linear_operator_test,

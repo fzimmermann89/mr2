@@ -5,7 +5,6 @@ from abc import ABC, abstractmethod
 import einops
 import torch
 
-from mrpro.operators.FourierOp import FourierOp
 from mrpro.operators.LinearOperator import LinearOperator
 
 

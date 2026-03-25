@@ -15,8 +15,8 @@ __all__ = [
     "FastMRIImageDataset",
     "FastMRIKDataDataset",
     "M4RawDataset",
-    "random_b0map",
     "brainweb",
     "coils",
-    "mdcnn"
+    "mdcnn",
+    "random_b0map"
 ]
