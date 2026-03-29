@@ -4,17 +4,23 @@ from collections.abc import Sequence
 
 import pytest
 import torch
+from mr2.data.SpatialDimension import SpatialDimension
 from mr2.operators.models.BMC import (
     BMCSequence,
     ConstantRFBlock,
     DelayBlock,
+    GradientBlock,
     LongitudinalReadoutBlock,
     Parameters,
     PiecewiseRFBlock,
     ResetBlock,
+    SliceSelectiveRFBlock,
     SpoilBlock,
+    gradient_to_extra_off_resonance,
+    initial_state,
 )
 from mr2.operators.SignalModel import SignalModel
+from mr2.utils.slice_profiles import GaussianRFPulse, SincRFPulse, SliceRFPulseBase, SliceSmoothedRectangular
 from mr2.utils.unit_conversion import GYROMAGNETIC_RATIO_PROTON, magnetic_field_to_lamor_frequency
 
 # fmt: off
@@ -39,10 +45,13 @@ PULSES = {
 
 
 class BMModel(SignalModel[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]):
+    static_off_resonance_offsets: torch.Tensor | None
+
     def __init__(self) -> None:
         super().__init__()
+        self.sequence: BMCSequence
         self.register_buffer('static_off_resonance_offsets', None)
-        self.b0: float | None = None
+        self.b0 = 0.0
 
     def forward(
         self,
@@ -54,11 +63,11 @@ class BMModel(SignalModel[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor
     ) -> tuple[torch.Tensor]:
         """Simulate the sequence."""
 
-        static_off_resonance = (
-            (-2 * torch.pi * self.static_off_resonance_offsets * (magnetic_field_to_lamor_frequency(self.b0) / 1e6))
-            if self.static_off_resonance_offsets is not None
-            else None
-        )
+        static_off_resonance = None
+        if self.static_off_resonance_offsets is not None:
+            static_off_resonance = torch.as_tensor(
+                -2 * torch.pi * self.static_off_resonance_offsets * (magnetic_field_to_lamor_frequency(self.b0) / 1e6)
+            )
         parameters = Parameters(
             equilibrium_magnetization, t1, t2, exchange_rate, chemical_shift, static_off_resonance=static_off_resonance
         )
@@ -201,6 +210,202 @@ class BMsimTwoPulseWASABI(BMModel):
         self.sequence = sequence
 
 
+def test_gradient_block_zero_gradient_matches_delay() -> None:
+    parameters = Parameters(
+        equilibrium_magnetization=torch.tensor([1.0]),
+        t1=torch.tensor([1.2]),
+        t2=torch.tensor([0.08]),
+        exchange_rate=torch.tensor([[0.0]]),
+        chemical_shift=torch.tensor([0.0]),
+    )
+    state = initial_state(parameters).expand(5, -1, -1).clone()
+    positions = SpatialDimension(
+        z=torch.linspace(-2e-3, 2e-3, 5),
+        y=torch.zeros(5),
+        x=torch.zeros(5),
+    )
+    gradient_block = GradientBlock(
+        duration=4e-3,
+        gradient_z=torch.tensor(0.0),
+        gradient_y=torch.tensor(0.0),
+        gradient_x=torch.tensor(0.0),
+        positions=positions,
+    )
+    delay_block = DelayBlock(4e-3)
+
+    gradient_state, _ = gradient_block(parameters, state)
+    delay_state, _ = delay_block(parameters, state)
+
+    torch.testing.assert_close(gradient_state, delay_state)
+
+
+def test_gradient_block_position_mismatch_raises() -> None:
+    parameters = Parameters(
+        equilibrium_magnetization=torch.tensor([1.0]),
+        t1=torch.tensor([1.2]),
+        t2=torch.tensor([0.08]),
+        exchange_rate=torch.tensor([[0.0]]),
+        chemical_shift=torch.tensor([0.0]),
+    )
+    state = initial_state(parameters).expand(4, -1, -1).clone()
+    block = GradientBlock(
+        duration=4e-3,
+        gradient_z=torch.tensor(0.0),
+        gradient_y=torch.tensor(0.0),
+        gradient_x=torch.tensor(0.0),
+        positions=SpatialDimension(
+            z=torch.linspace(-2e-3, 2e-3, 5),
+            y=torch.zeros(5),
+            x=torch.zeros(5),
+        ),
+    )
+
+    with pytest.raises(ValueError, match='Isochromat axis mismatch'):
+        block(parameters, state)
+
+
+def test_reset_block_preserves_isochromat_axis() -> None:
+    parameters = Parameters(
+        equilibrium_magnetization=torch.tensor([1.0]),
+        t1=torch.tensor([1.2]),
+        t2=torch.tensor([0.08]),
+        exchange_rate=torch.tensor([[0.0]]),
+        chemical_shift=torch.tensor([0.0]),
+    )
+    state = initial_state(parameters).expand(5, -1, -1).clone()
+    reset_state, _ = ResetBlock()(parameters, state)
+
+    assert reset_state.shape == state.shape
+    torch.testing.assert_close(reset_state[..., 0], torch.zeros_like(reset_state[..., 0]))
+    torch.testing.assert_close(reset_state[..., 1], torch.zeros_like(reset_state[..., 1]))
+    torch.testing.assert_close(reset_state[..., 2], torch.ones_like(reset_state[..., 2]))
+
+
+def test_reset_block_explicit_state_preserves_isochromat_axis() -> None:
+    parameters = Parameters(
+        equilibrium_magnetization=torch.tensor([1.0]),
+        t1=torch.tensor([1.2]),
+        t2=torch.tensor([0.08]),
+        exchange_rate=torch.tensor([[0.0]]),
+        chemical_shift=torch.tensor([0.0]),
+    )
+    state = initial_state(parameters).expand(5, -1, -1).clone()
+    explicit_state = torch.tensor([[0.0, 0.0, 0.75]])
+
+    reset_state, _ = ResetBlock(state=explicit_state)(parameters, state)
+
+    assert reset_state.shape == state.shape
+    torch.testing.assert_close(reset_state[..., 0], torch.zeros_like(reset_state[..., 0]))
+    torch.testing.assert_close(reset_state[..., 1], torch.zeros_like(reset_state[..., 1]))
+    torch.testing.assert_close(reset_state[..., 2], torch.full_like(reset_state[..., 2], 0.75))
+
+
+def test_piecewise_rf_block_zero_extra_off_resonance_matches_piecewise_rf_block() -> None:
+    parameters = Parameters(
+        equilibrium_magnetization=torch.tensor([1.0]),
+        t1=torch.tensor([1.2]),
+        t2=torch.tensor([0.08]),
+        exchange_rate=torch.tensor([[0.0]]),
+        chemical_shift=torch.tensor([0.0]),
+    )
+    state = initial_state(parameters).clone()
+    amp = torch.tensor([0.3, 0.8, 1.0, 0.8, 0.3])
+    rf_block = PiecewiseRFBlock(rf_amplitude=amp, dt=2.5e-4)
+    gradient_rf_block = PiecewiseRFBlock(
+        rf_amplitude=amp,
+        dt=2.5e-4,
+        extra_off_resonance=0.0,
+    )
+
+    rf_state, _ = rf_block(parameters, state)
+    gradient_rf_state, _ = gradient_rf_block(parameters, state)
+
+    torch.testing.assert_close(gradient_rf_state, rf_state)
+
+
+def test_piecewise_rf_block_extra_off_resonance_batching() -> None:
+    parameters = Parameters(
+        equilibrium_magnetization=torch.ones(5, 1),
+        t1=torch.full((5, 1), 1.2),
+        t2=torch.full((5, 1), 0.08),
+        exchange_rate=torch.zeros(5, 1, 1),
+        chemical_shift=torch.zeros(5, 1),
+    )
+    state = initial_state(parameters).clone()
+    block = PiecewiseRFBlock(
+        rf_amplitude=torch.tensor([1.0, 0.5]),
+        dt=2.5e-4,
+        extra_off_resonance=torch.zeros(2, 5),
+    )
+    out, _ = block(parameters, state)
+    assert out.shape[0] == 5
+    assert out.shape[-3:] == (1, 1, 3)
+
+
+def test_slice_selective_rf_flat_profile_matches_piecewise_rf_block() -> None:
+    parameters = Parameters(
+        equilibrium_magnetization=torch.tensor([1.0]),
+        t1=torch.tensor([1.2]),
+        t2=torch.tensor([0.08]),
+        exchange_rate=torch.tensor([[0.0]]),
+        chemical_shift=torch.tensor([0.0]),
+    )
+    state = initial_state(parameters).expand(5, -1, -1).clone()
+    positions = SpatialDimension(
+        z=torch.linspace(-2e-3, 2e-3, 5),
+        y=torch.zeros(5),
+        x=torch.zeros(5),
+    )
+    amp = torch.tensor([0.3, 0.8, 1.0, 0.8, 0.3])
+    profile = SliceSmoothedRectangular(fwhm_rect=1.0, fwhm_gauss=0.0)
+
+    rf_state, _ = PiecewiseRFBlock(rf_amplitude=amp, dt=2.5e-4)(parameters, state)
+    profile_state, _ = SliceSelectiveRFBlock(
+        rf_amplitude=amp,
+        slice_profile=profile,
+        positions=positions,
+        dt=2.5e-4,
+    )(parameters, state)
+
+    torch.testing.assert_close(profile_state, rf_state)
+
+
+@pytest.mark.parametrize('pulse_cls', [GaussianRFPulse, SincRFPulse])
+def test_slice_rf_pulse_templates_match_flip_angle(pulse_cls: type[torch.nn.Module]) -> None:
+    flip_angle = torch.tensor(torch.pi / 3)
+    dt = torch.tensor(10e-6)
+    duration = torch.tensor(2e-3)
+    pulse = pulse_cls()
+    waveform = pulse(flip_angle=flip_angle, duration=duration, dt=dt)
+    achieved_flip_angle = GYROMAGNETIC_RATIO_PROTON * dt * waveform.sum()
+    torch.testing.assert_close(achieved_flip_angle, flip_angle, atol=1e-6, rtol=1e-6)
+
+
+@pytest.mark.parametrize('pulse_cls', [GaussianRFPulse, SincRFPulse])
+def test_slice_rf_pulse_templates_rf_and_phase(pulse_cls: type[SliceRFPulseBase]) -> None:
+    pulse = pulse_cls()
+    rf, phase = pulse.rf_and_phase(flip_angle=torch.pi / 6, duration=2e-3, dt=10e-6)
+    assert rf.shape == phase.shape
+    torch.testing.assert_close(phase, torch.zeros_like(phase))
+
+
+def test_gradient_to_extra_off_resonance() -> None:
+    positions = SpatialDimension(
+        z=torch.tensor([-1e-3, 1e-3, 2e-3]),
+        y=torch.zeros(3),
+        x=torch.zeros(3),
+    )
+    gradient_z = torch.tensor([0.01, 0.02])
+    expected = 2 * torch.pi * GYROMAGNETIC_RATIO_PROTON * gradient_z[:, None] * positions.z[None, :]
+    actual = gradient_to_extra_off_resonance(gradient_z, None, None, positions)
+    torch.testing.assert_close(actual, expected)
+
+
+def require_tensor(value: torch.Tensor | None) -> torch.Tensor:
+    assert value is not None
+    return value
+
+
 def test_bmsim_case_1_basic() -> None:
     """Basic smoke test for BMsim case 1."""
     parameters = Parameters(
@@ -217,7 +422,7 @@ def test_bmsim_case_1_basic() -> None:
         parameters.t1,
         parameters.t2,
         parameters.exchange_rate,
-        parameters.chemical_shift,
+        require_tensor(parameters.chemical_shift),
     )
     assert signal.shape == (302,)
     assert signal.isfinite().all()
@@ -242,7 +447,7 @@ def test_bmsim_case_2_basic() -> None:
         parameters.t1,
         parameters.t2,
         parameters.exchange_rate,
-        parameters.chemical_shift,
+        require_tensor(parameters.chemical_shift),
     )
     assert signal.shape == (302,)
     assert signal.isfinite().all()
@@ -277,7 +482,7 @@ def test_bmsim_case_3_basic() -> None:
         parameters.t1,
         parameters.t2,
         parameters.exchange_rate,
-        parameters.chemical_shift,
+        require_tensor(parameters.chemical_shift),
     )
     assert signal.shape == (302,)
     assert signal.isfinite().all()
@@ -311,7 +516,7 @@ def test_bmsim_case_4_basic() -> None:
         parameters.t1,
         parameters.t2,
         parameters.exchange_rate,
-        parameters.chemical_shift,
+        require_tensor(parameters.chemical_shift),
     )
     assert signal.shape == (82,)
     assert signal.isfinite().all()
@@ -336,7 +541,7 @@ def test_bmsim_case_5_basic() -> None:
         case_5_parameters.t1,
         case_5_parameters.t2,
         case_5_parameters.exchange_rate,
-        case_5_parameters.chemical_shift,
+        require_tensor(case_5_parameters.chemical_shift),
     )
     assert signal.shape == (202,)
     assert signal.isfinite().all()
@@ -366,7 +571,7 @@ def test_bmsim_case_6_basic() -> None:
         parameters.t1,
         parameters.t2,
         parameters.exchange_rate,
-        parameters.chemical_shift,
+        require_tensor(parameters.chemical_shift),
     )
     assert signal.shape == (302,)
     assert signal.isfinite().all()
@@ -407,7 +612,7 @@ def test_bmsim_case_7_basic() -> None:
         parameters.t1,
         parameters.t2,
         parameters.exchange_rate,
-        parameters.chemical_shift,
+        require_tensor(parameters.chemical_shift),
     )
     assert signal.shape == (302,)
     assert signal.isfinite().all()
@@ -446,7 +651,7 @@ def test_bmsim_case_8_basic() -> None:
         case_8_parameters.t1,
         case_8_parameters.t2,
         case_8_parameters.exchange_rate,
-        case_8_parameters.chemical_shift,
+        require_tensor(case_8_parameters.chemical_shift),
     )
     assert signal.shape == (82,)
     assert signal.isfinite().all()
@@ -473,7 +678,7 @@ def test_bmsim_case_1_reference() -> None:
         parameters.t1,
         parameters.t2,
         parameters.exchange_rate,
-        parameters.chemical_shift,
+        require_tensor(parameters.chemical_shift),
     )
     reference = torch.tensor(REFERENCE[1], dtype=signal.dtype)
     diff = (signal.cpu() - reference).abs()
@@ -499,7 +704,7 @@ def test_bmsim_case_2_reference() -> None:
         parameters.t1,
         parameters.t2,
         parameters.exchange_rate,
-        parameters.chemical_shift,
+        require_tensor(parameters.chemical_shift),
     )
     reference = torch.tensor(REFERENCE[2], dtype=signal.dtype)
     diff = (signal.cpu() - reference).abs()
@@ -535,7 +740,7 @@ def test_bmsim_case_3_reference() -> None:
         parameters.t1,
         parameters.t2,
         parameters.exchange_rate,
-        parameters.chemical_shift,
+        require_tensor(parameters.chemical_shift),
     )
     reference = torch.tensor(REFERENCE[3], dtype=signal.dtype)
     diff = (signal.cpu() - reference).abs()
@@ -573,7 +778,7 @@ def test_bmsim_case_4_reference() -> None:
         parameters.t1,
         parameters.t2,
         parameters.exchange_rate,
-        parameters.chemical_shift,
+        require_tensor(parameters.chemical_shift),
     )
     reference = torch.tensor(REFERENCE[4], dtype=signal.dtype)
     diff = (signal.cpu() - reference).abs()
@@ -601,7 +806,7 @@ def test_bmsim_case_5_reference() -> None:
         parameters.t1,
         parameters.t2,
         parameters.exchange_rate,
-        parameters.chemical_shift,
+        require_tensor(parameters.chemical_shift),
     )
     reference = torch.tensor(REFERENCE[5], dtype=signal.dtype)
     diff = (signal.cpu() - reference).abs()
@@ -629,7 +834,7 @@ def test_bmsim_case_6_reference() -> None:
         parameters.t1,
         parameters.t2,
         parameters.exchange_rate,
-        parameters.chemical_shift,
+        require_tensor(parameters.chemical_shift),
     )
     reference = torch.tensor(REFERENCE[6], dtype=signal.dtype)
     diff = (signal.cpu() - reference).abs()
@@ -667,7 +872,7 @@ def test_bmsim_case_7_reference() -> None:
         parameters.t1,
         parameters.t2,
         parameters.exchange_rate,
-        parameters.chemical_shift,
+        require_tensor(parameters.chemical_shift),
     )
     reference = torch.tensor(REFERENCE[7], dtype=signal.dtype)
     diff = (signal.cpu() - reference).abs()
@@ -706,7 +911,7 @@ def test_bmsim_case_8_reference() -> None:
         parameters.t1,
         parameters.t2,
         parameters.exchange_rate,
-        parameters.chemical_shift,
+        require_tensor(parameters.chemical_shift),
     )
     reference = torch.tensor(REFERENCE[8], dtype=signal.dtype)
     diff = (signal.cpu() - reference).abs()
@@ -731,7 +936,7 @@ def test_bmsim_cuda() -> None:
         parameters.t1,
         parameters.t2,
         parameters.exchange_rate,
-        parameters.chemical_shift,
+        require_tensor(parameters.chemical_shift),
     )
     assert signal.is_cuda
     assert signal.isfinite().all()
