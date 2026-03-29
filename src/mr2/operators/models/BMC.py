@@ -5,8 +5,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 import torch
+from torch.utils.checkpoint import checkpoint as activation_checkpoint
 
 from mr2.data.Dataclass import Dataclass
+from mr2.utils.reshape import unsqueeze_right
 from mr2.utils.TensorAttributeMixin import TensorAttributeMixin
 
 
@@ -25,6 +27,7 @@ class MTSaturation(ABC):
         r"""Evaluate \(G(\Delta)\) [s]."""
 
 
+@dataclass
 class LorentzianMT(MTSaturation):
     """Lorentzian lineshape for MT saturation."""
 
@@ -48,6 +51,7 @@ class LorentzianMT(MTSaturation):
         return t2 / (1 + x * x)
 
 
+@dataclass
 class SuperLorentzianMT(MTSaturation):
     """Super-Lorentzian lineshape for MT saturation."""
 
@@ -118,6 +122,43 @@ class Parameters(Dataclass):
         """Number of pools."""
         return int(self.equilibrium_magnetization.shape[-1])
 
+    @property
+    def ndim(self) -> int:
+        """Broadcast ndim of parameter batch dimensions."""
+        ndim = max(
+            self.equilibrium_magnetization.ndim,
+            self.t1.ndim,
+            self.t2.ndim,
+            self.exchange_rate.ndim - 1,
+        )
+        if self.chemical_shift is not None:
+            ndim = max(ndim, self.chemical_shift.ndim)
+        if self.static_off_resonance is not None:
+            ndim = max(ndim, self.static_off_resonance.ndim + 1)
+        if self.relative_b1 is not None:
+            ndim = max(ndim, self.relative_b1.ndim + 1)
+        return ndim
+
+
+def system_recovery_vector(parameters: Parameters) -> torch.Tensor:
+    """Build the affine recovery vector."""
+    m0, t1 = parameters.equilibrium_magnetization, parameters.t1
+    batch_shape = torch.broadcast_shapes(
+        m0.shape[:-1],
+        t1.shape[:-1],
+        parameters.t2.shape[:-1],
+        parameters.exchange_rate.shape[:-2],
+    )
+    if parameters.chemical_shift is not None:
+        batch_shape = torch.broadcast_shapes(batch_shape, parameters.chemical_shift.shape[:-1])
+    if parameters.static_off_resonance is not None:
+        batch_shape = torch.broadcast_shapes(batch_shape, parameters.static_off_resonance.shape)
+    if parameters.relative_b1 is not None:
+        batch_shape = torch.broadcast_shapes(batch_shape, parameters.relative_b1.shape)
+    c = torch.zeros(*batch_shape, 3 * parameters.n_pools, device=m0.device, dtype=m0.dtype)
+    c[..., 2 * parameters.n_pools :] = (1.0 / t1) * m0
+    return c
+
 
 def initial_state(parameters: Parameters, mz: torch.Tensor | None = None) -> torch.Tensor:
     """Create an initial magnetization state.
@@ -160,33 +201,76 @@ def exchange_generator(exchange_rate: torch.Tensor) -> torch.Tensor:
     return exchange_rate - torch.diag_embed(out_rate)
 
 
-def system_matrix(
+def system_base_matrix(
+    parameters: Parameters,
+    rf_frequency: torch.Tensor | float,
+) -> torch.Tensor:
+    """Build the RF-amplitude independent Bloch-McConnell matrix."""
+    m0, t1, t2, exchange = parameters.equilibrium_magnetization, parameters.t1, parameters.t2, parameters.exchange_rate
+    freq = torch.as_tensor(rf_frequency, device=m0.device, dtype=m0.dtype)
+
+    if parameters.chemical_shift is not None:
+        shift = parameters.chemical_shift.to(m0)
+    else:
+        shift = m0.new_zeros(*m0.shape[:-1], parameters.n_pools)
+
+    if parameters.static_off_resonance is not None:
+        dw0 = parameters.static_off_resonance.to(m0)
+    else:
+        dw0 = m0.new_zeros(m0.shape[:-1])
+
+    batch = torch.broadcast_shapes(
+        m0.shape[:-1],
+        t1.shape[:-1],
+        t2.shape[:-1],
+        exchange.shape[:-2],
+        freq.shape,
+        shift.shape[:-1],
+        dw0.shape,
+    )
+    t1 = torch.broadcast_to(t1, (*batch, parameters.n_pools))
+    t2 = torch.broadcast_to(t2, (*batch, parameters.n_pools))
+    exchange = torch.broadcast_to(exchange, (*batch, parameters.n_pools, parameters.n_pools))
+    shift = torch.broadcast_to(shift, (*batch, parameters.n_pools))
+    dw0 = torch.broadcast_to(dw0, batch)
+    freq = torch.broadcast_to(freq, batch)
+
+    r1 = 1.0 / t1
+    r2 = 1.0 / t2
+
+    qz = exchange_generator(exchange)
+    qxy = qz
+    if parameters.mt_saturation is not None:
+        if not (0 <= parameters.mt_saturation.pool_index < parameters.n_pools):
+            raise ValueError('mt_saturation.pool_index out of bounds.')
+        qxy = qz.clone()
+        qxy[..., parameters.mt_saturation.pool_index, :] = 0
+        qxy[..., :, parameters.mt_saturation.pool_index] = 0
+
+    delta_omega = dw0[..., None] - 2 * torch.pi * freq[..., None] + 2 * torch.pi * shift
+
+    a_xx = qxy - torch.diag_embed(r2)
+    a_zz = qz - torch.diag_embed(r1)
+    a_xy = -torch.diag_embed(delta_omega)
+
+    n = 3 * parameters.n_pools
+    matrix = torch.zeros(*batch, n, n, device=m0.device, dtype=m0.dtype)
+    matrix[..., : parameters.n_pools, : parameters.n_pools] = a_xx
+    matrix[..., parameters.n_pools : 2 * parameters.n_pools, parameters.n_pools : 2 * parameters.n_pools] = a_xx
+    matrix[..., 2 * parameters.n_pools :, 2 * parameters.n_pools :] = a_zz
+    matrix[..., : parameters.n_pools, parameters.n_pools : 2 * parameters.n_pools] += a_xy
+    matrix[..., parameters.n_pools : 2 * parameters.n_pools, : parameters.n_pools] -= a_xy
+    return matrix
+
+
+def system_rf_matrix(
     parameters: Parameters,
     rf_amplitude: torch.Tensor | float,
     rf_phase: torch.Tensor | float,
     rf_frequency: torch.Tensor | float,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    r"""Build affine Bloch-McConnell system \(dm/dt = A m + c\).
-
-    Parameters
-    ----------
-    parameters
-        Simulation parameters.
-    rf_amplitude
-        RF amplitude in Hz, broadcastable to batch. Shape ``(..., pools)``.
-    rf_phase
-        RF phase in rad, broadcastable to batch. Shape ``(..., pools)``.
-    rf_frequency
-        RF carrier offset in Hz, broadcastable to batch. Shape ``(..., pools)``.
-
-    Returns
-    -------
-    A
-        System matrix with shape ``(..., 3*pools, 3*pools)``.
-    c
-        Inhomogeneity vector with shape ``(..., 3*pools)``.
-    """
-    m0, t1, t2, exchange = parameters.equilibrium_magnetization, parameters.t1, parameters.t2, parameters.exchange_rate
+) -> torch.Tensor:
+    """Build the RF-amplitude dependent Bloch-McConnell matrix contribution."""
+    m0 = parameters.equilibrium_magnetization
 
     amp = torch.as_tensor(rf_amplitude, device=m0.device, dtype=m0.dtype)
     phase = torch.as_tensor(rf_phase, device=m0.device, dtype=m0.dtype)
@@ -208,58 +292,27 @@ def system_matrix(
     if parameters.static_off_resonance is not None:
         dw0 = parameters.static_off_resonance.to(m0)
     else:
-        dw0 = m0.new_zeros(*m0.shape[:-1])
+        dw0 = m0.new_zeros(m0.shape[:-1])
 
     batch = torch.broadcast_shapes(
         m0.shape[:-1],
-        t1.shape[:-1],
-        t2.shape[:-1],
-        exchange.shape[:-2],
         amp.shape,
         phase.shape,
         freq.shape,
         shift.shape[:-1],
         dw0.shape,
     )
-    # TODO: check if we need these
-    m0 = torch.broadcast_to(m0, (*batch, parameters.n_pools))
-    t1 = torch.broadcast_to(t1, (*batch, parameters.n_pools))
-    t2 = torch.broadcast_to(t2, (*batch, parameters.n_pools))
-    exchange = torch.broadcast_to(exchange, (*batch, parameters.n_pools, parameters.n_pools))
     shift = torch.broadcast_to(shift, (*batch, parameters.n_pools))
     dw0 = torch.broadcast_to(dw0, batch)
     amp = torch.broadcast_to(amp, batch)
     phase = torch.broadcast_to(phase, batch)
     freq = torch.broadcast_to(freq, batch)
 
-    r1 = 1.0 / t1
-    r2 = 1.0 / t2
-
-    qz = exchange_generator(exchange)
-    qxy = qz
-    if parameters.mt_saturation is not None:
-        if not (0 <= parameters.mt_saturation.pool_index < parameters.n_pools):
-            raise ValueError('mt_saturation.pool_index out of bounds.')
-        qxy = qz.clone()
-        qxy[..., parameters.mt_saturation.pool_index, :] = 0
-        qxy[..., :, parameters.mt_saturation.pool_index] = 0
-
     delta_omega = dw0[..., None] - 2 * torch.pi * freq[..., None] + 2 * torch.pi * shift
 
     w1 = 2 * torch.pi * amp
     w1x = w1 * torch.cos(phase)
     w1y = w1 * torch.sin(phase)
-
-    a_xx = qxy - torch.diag_embed(r2)
-    a_zz = qz - torch.diag_embed(r1)
-
-    if parameters.mt_saturation is not None:
-        g = parameters.mt_saturation(delta_omega[..., parameters.mt_saturation.pool_index])
-        one_hot = torch.zeros(parameters.n_pools, device=m0.device, dtype=m0.dtype)
-        one_hot[parameters.mt_saturation.pool_index] = 1.0
-        a_zz = a_zz - torch.diag_embed(((w1 * w1) * g)[..., None] * one_hot)
-
-    a_xy = -torch.diag_embed(delta_omega)
 
     eye_rf = torch.eye(parameters.n_pools, device=m0.device, dtype=m0.dtype)
     if parameters.mt_saturation is not None:
@@ -271,19 +324,51 @@ def system_matrix(
 
     n = 3 * parameters.n_pools
     matrix = torch.zeros(*batch, n, n, device=m0.device, dtype=m0.dtype)
-    matrix[..., : parameters.n_pools, : parameters.n_pools] = a_xx
-    matrix[..., parameters.n_pools : 2 * parameters.n_pools, parameters.n_pools : 2 * parameters.n_pools] = a_xx
-    matrix[..., 2 * parameters.n_pools : n, 2 * parameters.n_pools : n] = a_zz
-    matrix[..., : parameters.n_pools, parameters.n_pools : 2 * parameters.n_pools] += a_xy
-    matrix[..., parameters.n_pools : 2 * parameters.n_pools, : parameters.n_pools] -= a_xy
-    matrix[..., : parameters.n_pools, 2 * parameters.n_pools : n] += a_xz
-    matrix[..., parameters.n_pools : 2 * parameters.n_pools, 2 * parameters.n_pools : n] += a_yz
-    matrix[..., 2 * parameters.n_pools : n, : parameters.n_pools] -= a_xz
-    matrix[..., 2 * parameters.n_pools : n, parameters.n_pools : 2 * parameters.n_pools] -= a_yz
+    matrix[..., : parameters.n_pools, 2 * parameters.n_pools :] += a_xz
+    matrix[..., parameters.n_pools : 2 * parameters.n_pools, 2 * parameters.n_pools :] += a_yz
+    matrix[..., 2 * parameters.n_pools :, : parameters.n_pools] -= a_xz
+    matrix[..., 2 * parameters.n_pools :, parameters.n_pools : 2 * parameters.n_pools] -= a_yz
 
-    c = torch.zeros(*batch, n, device=m0.device, dtype=m0.dtype)
-    c[..., 2 * parameters.n_pools : n] = r1 * m0
+    if parameters.mt_saturation is not None:
+        g = parameters.mt_saturation(delta_omega[..., parameters.mt_saturation.pool_index])
+        one_hot = torch.zeros(parameters.n_pools, device=m0.device, dtype=m0.dtype)
+        one_hot[parameters.mt_saturation.pool_index] = 1.0
+        mt_diag = torch.diag_embed(((w1 * w1) * g)[..., None] * one_hot)
+        matrix[..., 2 * parameters.n_pools :, 2 * parameters.n_pools :] -= mt_diag
 
+    return matrix
+
+
+def system_matrix(
+    parameters: Parameters,
+    rf_amplitude: torch.Tensor | float,
+    rf_phase: torch.Tensor | float,
+    rf_frequency: torch.Tensor | float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    r"""Build affine Bloch-McConnell system \(dm/dt = A m + c\).
+
+    Parameters
+    ----------
+    parameters
+        Simulation parameters.
+    rf_amplitude
+        RF amplitude in Hz, broadcastable to batch. Shape ``(...)``.
+    rf_phase
+        RF phase in rad, broadcastable to batch. Shape ``(...)``.
+    rf_frequency
+        RF carrier offset in Hz, broadcastable to batch. Shape ``(...)``.
+
+    Returns
+    -------
+    A
+        System matrix with shape ``(..., 3*pools, 3*pools)``.
+    c
+        Inhomogeneity vector with shape ``(..., 3*pools)``.
+    """
+    matrix = system_base_matrix(parameters, rf_frequency) + system_rf_matrix(
+        parameters, rf_amplitude, rf_phase, rf_frequency
+    )
+    c = system_recovery_vector(parameters)
     return matrix, c
 
 
@@ -293,27 +378,48 @@ def propagate(
     c: torch.Tensor,
     duration: torch.Tensor | float,
 ) -> torch.Tensor:
-    r"""Propagate dynamics \(dm/dt = A m + c\) via augmented expm."""
+    r"""Propagate dynamics \(dm/dt = A m + c\) via exact affine evolution."""
+    step = propagation_step(matrix, c, duration)
+    return apply_propagation_step(state, step)
+
+
+def propagation_step(
+    matrix: torch.Tensor,
+    c: torch.Tensor,
+    duration: torch.Tensor | float,
+) -> torch.Tensor:
+    """Build exact affine propagation steps for constant-system evolution."""
+    duration = torch.as_tensor(duration, device=matrix.device, dtype=matrix.dtype)
+    linear_step = torch.matrix_exp(matrix * duration[..., None, None])
+    identity = torch.eye(matrix.shape[-1], device=matrix.device, dtype=matrix.dtype)
+    offset_rhs = ((linear_step - identity) @ c.unsqueeze(-1)).squeeze(-1)
+    offset, info = torch.linalg.solve_ex(matrix, offset_rhs.unsqueeze(-1))
+    if torch.any(info != 0):
+        augmented = torch.zeros(
+            *matrix.shape[:-2],
+            matrix.shape[-1] + 1,
+            matrix.shape[-1] + 1,
+            device=matrix.device,
+            dtype=matrix.dtype,
+        )
+        augmented[..., :-1, :-1] = matrix
+        augmented[..., :-1, -1] = c
+        augmented_step = torch.matrix_exp(augmented * duration[..., None, None])
+        return augmented_step[..., :-1, :]
+    return torch.cat([linear_step, offset], dim=-1)
+
+
+def apply_propagation_step(state: torch.Tensor, step: torch.Tensor) -> torch.Tensor:
+    """Apply a precomputed exact affine propagation step to a state."""
     pools = int(state.shape[-2])
     n = 3 * pools
-    duration = torch.as_tensor(duration, device=state.device, dtype=state.dtype)
-
-    augmented = torch.zeros(
-        *matrix.shape[:-2],
-        n + 1,
-        n + 1,
-        device=state.device,
-        dtype=state.dtype,
-    )
-    augmented[..., :n, :n] = matrix.to(state)
-    augmented[..., :n, n] = c.to(state)
-    exp = torch.matrix_exp(augmented * duration[..., None, None])
-
-    m = state.transpose(-1, -2).reshape(*state.shape[:-2], n)
-    ones = torch.ones(*m.shape[:-1], 1, device=state.device, dtype=state.dtype)
-    m_aug = torch.cat([m, ones], dim=-1)
-    m_next = (exp @ m_aug.unsqueeze(-1)).squeeze(-1)[..., :n]
-    return m_next.reshape(*state.shape[:-2], 3, pools).transpose(-1, -2)
+    batch = torch.broadcast_shapes(state.shape[:-2], step.shape[:-2])
+    state = torch.broadcast_to(state, (*batch, pools, 3))
+    m = state.transpose(-1, -2).reshape(*batch, n)
+    step = step.to(state)
+    linear_step, offset = step[..., :n], step[..., n]
+    m_next = (linear_step @ m.unsqueeze(-1)).squeeze(-1) + offset
+    return m_next.reshape(*batch, 3, pools).transpose(-1, -2)
 
 
 def transverse_readout(state: torch.Tensor) -> torch.Tensor:
@@ -325,15 +431,17 @@ class BMCBlock(TensorAttributeMixin, ABC):
     """Base class for Bloch-McConnell blocks."""
 
     def __call__(
-        self, parameters: Parameters, state: torch.Tensor | None = None
+        self, parameters: Parameters, state: torch.Tensor | None = None, **kwargs
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, ...]]:
         """Apply the block."""
         if state is None:
             state = initial_state(parameters)
-        return super().__call__(parameters, state)
+        return super().__call__(parameters, state, **kwargs)
 
     @abstractmethod
-    def forward(self, parameters: Parameters, state: torch.Tensor) -> tuple[torch.Tensor, tuple[torch.Tensor, ...]]:
+    def forward(
+        self, parameters: Parameters, state: torch.Tensor, **kwargs
+    ) -> tuple[torch.Tensor, tuple[torch.Tensor, ...]]:
         """Apply the block."""
         raise NotImplementedError
 
@@ -377,11 +485,15 @@ class ConstantRFBlock(BMCBlock):
         """Duration of the block."""
         return self._duration
 
-    def forward(self, parameters: Parameters, state: torch.Tensor) -> tuple[torch.Tensor, tuple[torch.Tensor, ...]]:
+    def forward(
+        self,
+        parameters: Parameters,
+        state: torch.Tensor,
+        **kwargs,  # noqa: ARG002
+    ) -> tuple[torch.Tensor, tuple[torch.Tensor, ...]]:
         """Apply the block."""
-        p = parameters.to(state, copy=False)
         matrix, c = system_matrix(
-            p,
+            parameters,
             self.rf_amplitude.to(state),
             self.rf_phase.to(state),
             self.rf_frequency.to(state),
@@ -405,13 +517,13 @@ class PiecewiseRFBlock(BMCBlock):
         Parameters
         ----------
         rf_amplitude
-            RF amplitude. Shape ``(time,)``.
+            RF amplitude. Shape ``(time, ...)``.
         rf_phase
-            RF phase in rad. Shape ``(time,)`` or scalar.
+            RF phase in rad. Shape ``(time, ...)``, ``(1, ...)`` or scalar.
         rf_frequency
-            RF frequency in Hz. Shape ``(time,)`` or scalar.
+            RF frequency in Hz. Shape ``(time, ...)``, ``(1, ...)`` or scalar.
         dt
-            Sample duration in seconds. Shape ``(time,)`` or scalar.
+            Sample duration in seconds. Shape ``(time, ...)``, ``(1, ...)`` or scalar.
         """
         super().__init__()
         self.rf_amplitude = torch.as_tensor(rf_amplitude)
@@ -419,38 +531,106 @@ class PiecewiseRFBlock(BMCBlock):
         self.rf_frequency = torch.as_tensor(rf_frequency)
         self.dt = torch.as_tensor(dt)
 
-        if self.rf_amplitude.ndim != 1:
-            raise ValueError('rf_amplitude must be 1D.')
+        if self.rf_amplitude.ndim < 1:
+            raise ValueError('rf_amplitude must have a leading time dimension.')
 
     @property
     def duration(self) -> torch.Tensor:
         """Duration of the block."""
         if self.dt.ndim == 0:
             return self.dt * self.rf_amplitude.shape[0]
-        return self.dt.sum()
+        if self.dt.shape[0] == 1:
+            return self.dt.squeeze(0) * self.rf_amplitude.shape[0]
+        return self.dt.sum(dim=0)
 
-    def forward(self, parameters: Parameters, state: torch.Tensor) -> tuple[torch.Tensor, tuple[torch.Tensor, ...]]:
+    def forward(
+        self, parameters: Parameters, state: torch.Tensor, **kwargs
+    ) -> tuple[torch.Tensor, tuple[torch.Tensor, ...]]:
         """Apply the block."""
-        p = parameters.to(state, copy=False)
-
+        del kwargs
         amp = self.rf_amplitude.to(state)
         ph = self.rf_phase.to(state)
         fr = self.rf_frequency.to(state)
         dt = self.dt.to(state)
 
+        time = amp.shape[0]
         if ph.ndim == 0:
-            ph = ph.expand_as(amp)
+            ph = ph.reshape(1)
         if fr.ndim == 0:
-            fr = fr.expand_as(amp)
+            fr = fr.reshape(1)
         if dt.ndim == 0:
-            dt = dt.expand_as(amp)
+            dt = dt.reshape(1)
+        if ph.shape[0] not in (1, time):
+            raise ValueError('rf_phase must have leading dimension 1 or match rf_amplitude.')
+        if fr.shape[0] not in (1, time):
+            raise ValueError('rf_frequency must have leading dimension 1 or match rf_amplitude.')
+        if dt.shape[0] not in (1, time):
+            raise ValueError('dt must have leading dimension 1 or match rf_amplitude.')
 
-        if ph.ndim != 1 or fr.ndim != 1 or dt.ndim != 1:
-            raise ValueError('rf_phase, rf_frequency, dt must be scalar or 1D.')
+        ndim = max(amp.ndim, ph.ndim, fr.ndim, dt.ndim, state.ndim - 1, parameters.ndim)
 
-        for a, ph_i, fr_i, d in zip(amp, ph, fr, dt, strict=True):
-            matrix, c = system_matrix(p, a, ph_i, fr_i)
-            state = propagate(state, matrix, c, d)
+        amp = unsqueeze_right(amp, ndim - amp.ndim)
+        ph = unsqueeze_right(ph, ndim - ph.ndim)
+        fr = unsqueeze_right(fr, ndim - fr.ndim)
+        dt = unsqueeze_right(dt, ndim - dt.ndim)
+
+        if ph.shape[0] == 1 and time != 1:
+            ph = ph.expand(time, *ph.shape[1:])
+        if fr.shape[0] == 1 and time != 1:
+            fr = fr.expand(time, *fr.shape[1:])
+        if dt.shape[0] == 1 and time != 1:
+            dt = dt.expand(time, *dt.shape[1:])
+
+        c = system_recovery_vector(parameters)
+        same_frequency = bool(torch.all(fr == fr[:1]))
+        base_matrix = system_base_matrix(parameters, fr[0]) if same_frequency else None
+
+        work = state[..., 0, 0].numel() * time
+        if work <= 128_000:
+            chunk_size = time
+        else:
+            chunk_size = 16 if same_frequency else 8
+
+        def run_chunk(
+            state: torch.Tensor,
+            amp_chunk: torch.Tensor,
+            ph_chunk: torch.Tensor,
+            fr_chunk: torch.Tensor,
+            dt_chunk: torch.Tensor,
+        ) -> torch.Tensor:
+            if same_frequency:
+                assert base_matrix is not None
+                matrices = base_matrix + system_rf_matrix(parameters, amp_chunk, ph_chunk, fr_chunk)
+            else:
+                matrices = system_base_matrix(parameters, fr_chunk) + system_rf_matrix(
+                    parameters, amp_chunk, ph_chunk, fr_chunk
+                )
+            steps = propagation_step(matrices, c, dt_chunk)
+            for step in steps:
+                state = apply_propagation_step(state, step)
+            return state
+
+        use_checkpoint = torch.is_grad_enabled() and chunk_size < time
+
+        for start in range(0, time, chunk_size):
+            stop = min(start + chunk_size, time)
+            amp_chunk = amp[start:stop]
+            ph_chunk = ph[start:stop]
+            fr_chunk = fr[start:stop]
+            dt_chunk = dt[start:stop]
+            if use_checkpoint:
+                state = activation_checkpoint(
+                    run_chunk,
+                    state,
+                    amp_chunk,
+                    ph_chunk,
+                    fr_chunk,
+                    dt_chunk,
+                    use_reentrant=False,
+                    preserve_rng_state=False,
+                )
+            else:
+                state = run_chunk(state, amp_chunk, ph_chunk, fr_chunk, dt_chunk)
         return state, ()
 
 
@@ -473,50 +653,13 @@ class DelayBlock(BMCBlock):
         """Duration of the block."""
         return self._duration
 
-    def forward(self, parameters: Parameters, state: torch.Tensor) -> tuple[torch.Tensor, tuple[torch.Tensor, ...]]:
-        """Apply the block.
-
-        Parameters
-        ----------
-        parameters
-            Simulation parameters.
-        state
-            State tensor. Shape ``(..., pools, 3)``.
-
-        Returns
-        -------
-        state
-            State tensor. Shape ``(..., pools, 3)``.
-        """
-        p = parameters.to(state, copy=False)
-        matrix, c = system_matrix(p, 0.0, 0.0, 0.0)
-        state = propagate(state, matrix, c, self._duration.to(state))
-        return state, ()
-
-
-class SpoilBlock(BMCBlock):
-    """Perfect spoiling with non-zero duration."""
-
-    def __init__(self, duration: torch.Tensor | float) -> None:
-        """Initialize the block.
-
-        Parameters
-        ----------
-        duration
-            Duration in seconds. Shape ``(..., pools)``.
-        """
-        super().__init__()
-        self._duration = torch.as_tensor(duration)
-
-    @property
-    def duration(self) -> torch.Tensor:
-        """Duration of the block."""
-        return self._duration
-
     def forward(
         self,
         parameters: Parameters,
         state: torch.Tensor,
+        *,
+        zero_matrix: torch.Tensor | None = None,
+        zero_c: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, ...]]:
         """Apply the block.
 
@@ -526,18 +669,57 @@ class SpoilBlock(BMCBlock):
             Simulation parameters.
         state
             State tensor. Shape ``(..., pools, 3)``.
+        zero_matrix
+            Cached no-RF system matrix for the current sequence execution, if available.
+        zero_c
+            Cached no-RF recovery vector for the current sequence execution, if available.
 
         Returns
         -------
         state
             State tensor. Shape ``(..., pools, 3)``.
         """
-        p = parameters.to(state, copy=False)
-        matrix, c = system_matrix(p, 0.0, 0.0, 0.0)
+        if zero_matrix is None or zero_c is None:
+            matrix, c = system_matrix(parameters, 0.0, 0.0, 0.0)
+        else:
+            matrix, c = zero_matrix, zero_c
         state = propagate(state, matrix, c, self._duration.to(state))
-        mx, my, mz = state.unbind(-1)
+        return state, ()
+
+
+class SpoilBlock(DelayBlock):
+    """Perfect spoiling with non-zero duration."""
+
+    def forward(
+        self,
+        parameters: Parameters,
+        state: torch.Tensor,
+        *,
+        zero_matrix: torch.Tensor | None = None,
+        zero_c: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, tuple[torch.Tensor, ...]]:
+        """Apply the block.
+
+        Parameters
+        ----------
+        parameters
+            Simulation parameters.
+        state
+            State tensor. Shape ``(..., pools, 3)``.
+        zero_matrix
+            Cached no-RF system matrix for the current sequence execution, if available.
+        zero_c
+            Cached no-RF recovery vector for the current sequence execution, if available.
+
+        Returns
+        -------
+        state
+            State tensor. Shape ``(..., pools, 3)``.
+        """
+        state, out = super().forward(parameters, state, zero_matrix=zero_matrix, zero_c=zero_c)
+        mx, _, mz = state.unbind(-1)
         z = torch.zeros_like(mx)
-        return torch.stack([z, z, mz], dim=-1), ()
+        return torch.stack([z, z, mz], dim=-1), out
 
 
 class AcquisitionBlock(BMCBlock):
@@ -547,6 +729,7 @@ class AcquisitionBlock(BMCBlock):
         self,
         parameters: Parameters,  # noqa: ARG002
         state: torch.Tensor,
+        **kwargs,  # noqa: ARG002
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, ...]]:
         """Apply the block.
 
@@ -563,6 +746,32 @@ class AcquisitionBlock(BMCBlock):
             State tensor. Shape ``(..., pools, 3)``.
         """
         return state, (transverse_readout(state),)
+
+
+class LongitudinalReadoutBlock(BMCBlock):
+    """Read out longitudinal magnetization of a selected pool."""
+
+    def __init__(self, pool_index: int = 0) -> None:
+        """Initialize the block.
+
+        Parameters
+        ----------
+        pool_index
+            Pool index to read out.
+        """
+        super().__init__()
+        self.pool_index = pool_index
+
+    def forward(
+        self,
+        parameters: Parameters,
+        state: torch.Tensor,
+        **kwargs,  # noqa: ARG002
+    ) -> tuple[torch.Tensor, tuple[torch.Tensor, ...]]:
+        """Apply the block."""
+        if not (0 <= self.pool_index < parameters.n_pools):
+            raise ValueError('pool_index out of bounds.')
+        return state, (state[..., self.pool_index, 2],)
 
 
 class ResetBlock(BMCBlock):
@@ -584,7 +793,12 @@ class ResetBlock(BMCBlock):
         """Duration of the block."""
         return torch.as_tensor(0.0)
 
-    def forward(self, parameters: Parameters, state: torch.Tensor) -> tuple[torch.Tensor, tuple[torch.Tensor, ...]]:
+    def forward(
+        self,
+        parameters: Parameters,
+        state: torch.Tensor,
+        **kwargs,  # noqa: ARG002
+    ) -> tuple[torch.Tensor, tuple[torch.Tensor, ...]]:
         """Apply the block.
 
         Parameters
@@ -593,6 +807,8 @@ class ResetBlock(BMCBlock):
             Simulation parameters.
         state
             State tensor. Shape ``(..., pools, 3)``.
+        kwargs
+            Unused extension point for subclasses following the ``BMCBlock`` interface.
 
         Returns
         -------
@@ -625,7 +841,12 @@ class BMCSequence(torch.nn.ModuleList, BMCBlock):
             start=torch.as_tensor(0.0),
         )
 
-    def forward(self, parameters: Parameters, state: torch.Tensor) -> tuple[torch.Tensor, tuple[torch.Tensor, ...]]:
+    def forward(
+        self,
+        parameters: Parameters,
+        state: torch.Tensor,
+        **kwargs,  # noqa: ARG002
+    ) -> tuple[torch.Tensor, tuple[torch.Tensor, ...]]:
         """Apply the sequence of blocks.
 
         Parameters
@@ -634,6 +855,8 @@ class BMCSequence(torch.nn.ModuleList, BMCBlock):
             Simulation parameters.
         state
             State tensor. Shape ``(..., pools, 3)``.
+        kwargs
+            Unused extension point for subclasses following the ``BMCBlock`` interface.
 
         Returns
         -------
@@ -642,9 +865,17 @@ class BMCSequence(torch.nn.ModuleList, BMCBlock):
         outputs
             List of output tensors.
         """
+        parameters = parameters.to(state, copy=False)
+        zero_matrix: torch.Tensor | None = None
+        zero_c: torch.Tensor | None = None
         outputs: list[torch.Tensor] = []
         for block in self:
             assert isinstance(block, BMCBlock)  # noqa: S101
-            state, out = block(parameters, state)
+            if isinstance(block, DelayBlock | SpoilBlock):
+                if zero_matrix is None or zero_c is None:
+                    zero_matrix, zero_c = system_matrix(parameters, 0.0, 0.0, 0.0)
+                state, out = block(parameters, state, zero_matrix=zero_matrix, zero_c=zero_c)
+            else:
+                state, out = block(parameters, state)
             outputs.extend(out)
         return state, tuple(outputs)
