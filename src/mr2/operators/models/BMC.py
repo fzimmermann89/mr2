@@ -697,7 +697,7 @@ class PiecewiseRFBlock(BMCBlock):
                     extra_off_resonance,
                 )
             matrices = matrices.unsqueeze(-3)
-            recovery = unsqueeze_left(c, matrices.ndim - c.ndim - 1)
+            recovery = c[(None,) * (matrices.ndim - c.ndim - 2) + (...,)].unsqueeze(-2)
             recovery = torch.broadcast_to(recovery, (*matrices.shape[:-2], c.shape[-1]))
             steps = propagation_step(matrices, recovery, dt_chunk)
             for step in steps:
@@ -780,10 +780,16 @@ class SliceSelectiveRFBlock(BMCBlock):
             )
 
         profile = self.slice_profile(self.positions.z.to(state))
-        if parameters.relative_b1 is None:
-            relative_b1 = profile
-        else:
-            relative_b1 = parameters.relative_b1[..., None] * profile
+        effective_rf_amplitude = self._block.rf_amplitude[..., None] * profile
+        if parameters.relative_b1 is not None:
+            effective_rf_amplitude = effective_rf_amplitude * parameters.relative_b1[..., None]
+        effective_block = PiecewiseRFBlock(
+            rf_amplitude=effective_rf_amplitude,
+            rf_phase=self._block.rf_phase,
+            rf_frequency=self._block.rf_frequency,
+            dt=self._block.dt,
+            extra_off_resonance=self._block.extra_off_resonance,
+        )
         effective_parameters = Parameters(
             equilibrium_magnetization=parameters.equilibrium_magnetization,
             t1=parameters.t1,
@@ -791,10 +797,11 @@ class SliceSelectiveRFBlock(BMCBlock):
             exchange_rate=parameters.exchange_rate,
             chemical_shift=parameters.chemical_shift,
             static_off_resonance=parameters.static_off_resonance,
-            relative_b1=relative_b1,
+            relative_b1=None,
             mt_saturation=parameters.mt_saturation,
         )
-        return self._block(effective_parameters, state)
+        state, outputs = effective_block(effective_parameters, state.unsqueeze(-3))
+        return state.squeeze(-3), outputs
 
 
 class DelayBlock(BMCBlock):
