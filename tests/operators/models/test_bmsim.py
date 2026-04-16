@@ -6,6 +6,7 @@ import pytest
 import torch
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.operators.models.BMC import (
+    AcquisitionBlock,
     BMCSequence,
     ConstantRFBlock,
     DelayBlock,
@@ -20,7 +21,13 @@ from mr2.operators.models.BMC import (
     initial_state,
 )
 from mr2.operators.SignalModel import SignalModel
-from mr2.utils.slice_profiles import GaussianRFPulse, SincRFPulse, SliceRFPulseBase, SliceSmoothedRectangular
+from mr2.utils.slice_profiles import (
+    GaussianRFPulse,
+    SincRFPulse,
+    SliceGaussian,
+    SliceRFPulseBase,
+    SliceSmoothedRectangular,
+)
 from mr2.utils.unit_conversion import GYROMAGNETIC_RATIO_PROTON, magnetic_field_to_lamor_frequency
 
 # fmt: off
@@ -210,6 +217,62 @@ class BMsimTwoPulseWASABI(BMModel):
         self.sequence = sequence
 
 
+class IsochromatGradientReadoutModel(SignalModel[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]):
+    """Test-only model for analytic isochromat gradient comparisons."""
+
+    def __init__(
+        self,
+        positions: SpatialDimension[torch.Tensor],
+        gradient_blocks: Sequence[tuple[float, float, float, float]],
+        initial_phase: float = 0.0,
+        readout_pool: int = 0,
+    ) -> None:
+        super().__init__()
+        self.positions = positions.apply(torch.as_tensor)
+        self.initial_phase = float(initial_phase)
+        self.readout_pool = readout_pool
+        self.sequence = BMCSequence(
+            [
+                *[
+                    GradientBlock(
+                        duration=duration,
+                        positions=self.positions,
+                        gradient_z=gradient_z,
+                        gradient_y=gradient_y,
+                        gradient_x=gradient_x,
+                    )
+                    for duration, gradient_z, gradient_y, gradient_x in gradient_blocks
+                ],
+                AcquisitionBlock(pool_index=readout_pool),
+            ]
+        )
+
+    def forward(
+        self,
+        equilibrium_magnetization: torch.Tensor,
+        t1: torch.Tensor,
+        t2: torch.Tensor,
+        exchange_rate: torch.Tensor,
+        chemical_shift: torch.Tensor,
+    ) -> tuple[torch.Tensor]:
+        parameters = Parameters(equilibrium_magnetization, t1, t2, exchange_rate, chemical_shift)
+        state = torch.zeros(
+            self.positions.z.numel(),
+            parameters.n_pools,
+            3,
+            device=equilibrium_magnetization.device,
+            dtype=equilibrium_magnetization.dtype,
+        )
+        state[..., self.readout_pool, 0] = torch.cos(
+            torch.tensor(self.initial_phase, dtype=state.dtype, device=state.device)
+        )
+        state[..., self.readout_pool, 1] = torch.sin(
+            torch.tensor(self.initial_phase, dtype=state.dtype, device=state.device)
+        )
+        _, (signal,) = self.sequence(parameters, state)
+        return (signal,)
+
+
 def test_gradient_block_zero_gradient_matches_delay() -> None:
     parameters = Parameters(
         equilibrium_magnetization=torch.tensor([1.0]),
@@ -262,6 +325,76 @@ def test_gradient_block_position_mismatch_raises() -> None:
 
     with pytest.raises(ValueError, match='Isochromat axis mismatch'):
         block(parameters, state)
+
+
+def test_isochromat_gradient_model_matches_analytic_signal() -> None:
+    parameters = Parameters(
+        equilibrium_magnetization=torch.tensor([1.0]),
+        t1=torch.tensor([1e12]),
+        t2=torch.tensor([1e12]),
+        exchange_rate=torch.tensor([[0.0]]),
+        chemical_shift=torch.tensor([0.0]),
+    )
+    positions = SpatialDimension(
+        z=torch.tensor([-2e-3, 0.0, 2e-3]),
+        y=torch.tensor([1e-3, -1e-3, 2e-3]),
+        x=torch.tensor([0.5e-3, -0.5e-3, 1e-3]),
+    )
+    duration = 3e-3
+    gradient_z = torch.tensor(0.012)
+    gradient_y = torch.tensor(-0.007)
+    gradient_x = torch.tensor(0.004)
+    model = IsochromatGradientReadoutModel(
+        positions=positions,
+        gradient_blocks=[(duration, float(gradient_z), float(gradient_y), float(gradient_x))],
+    )
+    (signal,) = model(
+        parameters.equilibrium_magnetization,
+        parameters.t1,
+        parameters.t2,
+        parameters.exchange_rate,
+        require_tensor(parameters.chemical_shift),
+    )
+
+    phase = duration * gradient_to_extra_off_resonance(gradient_z, gradient_y, gradient_x, positions)
+    expected_signal = torch.exp(1j * phase).mean()
+    torch.testing.assert_close(signal, expected_signal, atol=1e-5, rtol=1e-5)
+
+
+def test_isochromat_gradient_model_rephases_zero_net_gradient_moment() -> None:
+    parameters = Parameters(
+        equilibrium_magnetization=torch.tensor([1.0]),
+        t1=torch.tensor([1e12]),
+        t2=torch.tensor([1e12]),
+        exchange_rate=torch.tensor([[0.0]]),
+        chemical_shift=torch.tensor([0.0]),
+    )
+    positions = SpatialDimension(
+        z=torch.linspace(-3e-3, 3e-3, 9),
+        y=torch.linspace(2e-3, -2e-3, 9),
+        x=torch.linspace(-1e-3, 1e-3, 9),
+    )
+    initial_phase = 0.37
+    gradient_blocks = [
+        (2e-3, 0.011, -0.008, 0.003),
+        (3e-3, -0.011 * 2 / 3, 0.008 * 2 / 3, -0.003 * 2 / 3),
+    ]
+    model = IsochromatGradientReadoutModel(
+        positions=positions,
+        gradient_blocks=gradient_blocks,
+        initial_phase=initial_phase,
+    )
+
+    (signal,) = model(
+        parameters.equilibrium_magnetization,
+        parameters.t1,
+        parameters.t2,
+        parameters.exchange_rate,
+        require_tensor(parameters.chemical_shift),
+    )
+
+    expected_signal = torch.exp(1j * torch.tensor(initial_phase))
+    torch.testing.assert_close(signal, expected_signal, atol=1e-5, rtol=1e-5)
 
 
 def test_reset_block_preserves_isochromat_axis() -> None:
@@ -368,6 +501,58 @@ def test_slice_selective_rf_flat_profile_matches_piecewise_rf_block() -> None:
     )(parameters, state)
 
     torch.testing.assert_close(profile_state, rf_state)
+
+
+@pytest.mark.parametrize('slice_fwhm', [4e-3, 7e-3])
+def test_slice_profile_approx_rf(slice_fwhm: float) -> None:
+    parameters = Parameters(
+        equilibrium_magnetization=torch.tensor([1.0]),
+        t1=torch.tensor([1.2]),
+        t2=torch.tensor([0.08]),
+        exchange_rate=torch.tensor([[0.0]]),
+        chemical_shift=torch.tensor([0.0]),
+    )
+    n_iso = 101
+    positions = SpatialDimension(
+        z=torch.linspace(-1.5 * slice_fwhm, 1.5 * slice_fwhm, n_iso),
+        y=torch.zeros(n_iso),
+        x=torch.zeros(n_iso),
+    )
+    state = initial_state(parameters).expand(n_iso, -1, -1).clone()
+
+    flip_angle = torch.deg2rad(torch.tensor(5.0))
+    duration = 2e-3
+    dt = 10e-6
+    rf_pulse = GaussianRFPulse(fwhm_fraction=0.35)
+    waveform = rf_pulse(flip_angle=flip_angle, duration=duration, dt=dt)
+
+    gradient_z = (
+        4
+        * torch.log(torch.tensor(2.0))
+        / (torch.pi * rf_pulse.fwhm_fraction * duration * GYROMAGNETIC_RATIO_PROTON * slice_fwhm)
+    )
+    extra_off_resonance = gradient_to_extra_off_resonance(gradient_z, None, None, positions)
+
+    explicit_state, _ = PiecewiseRFBlock(
+        rf_amplitude=waveform[..., None],
+        dt=dt,
+        extra_off_resonance=extra_off_resonance[None, :],
+    )(parameters, state.unsqueeze(-3))
+    explicit_state = explicit_state.squeeze(-3)
+
+    approximate_state, _ = SliceSelectiveRFBlock(
+        rf_amplitude=waveform,
+        slice_profile=SliceGaussian(fwhm=slice_fwhm),
+        positions=positions,
+        dt=dt,
+    )(parameters, state)
+
+    explicit_profile = torch.linalg.vector_norm(explicit_state[..., 0, :2], dim=-1)
+    approximate_profile = torch.linalg.vector_norm(approximate_state[..., 0, :2], dim=-1)
+    explicit_profile = explicit_profile / explicit_profile.max()
+    approximate_profile = approximate_profile / approximate_profile.max()
+
+    torch.testing.assert_close(approximate_profile, explicit_profile, atol=7e-2, rtol=7e-2)
 
 
 @pytest.mark.parametrize('pulse_cls', [GaussianRFPulse, SincRFPulse])
