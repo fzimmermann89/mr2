@@ -34,7 +34,7 @@ from mr2.operators.SymmetrizedGradientOp import SymmetrizedGradientOp
 from mr2.operators.WaveletOp import WaveletOp
 from mr2.operators.ZeroPadOp import ZeroPadOp
 from mr2.operators.ZeroOp import ZeroOp
-from mr2.operators.B0InformedFourierOp import ConjugatePhaseFourierOp, TimeSegmentedFourierOp, MultiFrequencyFourierOp
+from mr2.operators.B0InformedFourierOp import ConjugatePhaseFourierOp, MultiFrequencyFourierOp, TimeSegmentedFourierOp
 
 
 __all__ = [
