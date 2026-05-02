@@ -63,6 +63,25 @@ def test_ncc_global_matches_numpy_corrcoef() -> None:
     torch.testing.assert_close(ncc_value, torch.tensor([expected], dtype=ncc_value.dtype))
 
 
+def test_ncc_global_weighted_reduction() -> None:
+    """Test weighted global NCC reduction modes."""
+    target = torch.tensor([[[[1.0, 2.0], [3.0, 5.0]]]], dtype=torch.float32)
+    prediction = torch.tensor([[[[3.0, 7.0], [9.0, 12.0]]]], dtype=torch.float32)
+    weight = torch.tensor([[[[1.0, 1.0], [0.0, 0.0]]]], dtype=torch.float32)
+
+    (ncc_none,) = NCC(target, weight=weight, window_size=None, reduction='none')(prediction)
+    (ncc_volume,) = NCC(target, weight=weight, window_size=None, reduction='volume')(prediction)
+    (ncc_full,) = NCC(target, weight=weight, window_size=None, reduction='full')(prediction)
+
+    x = target[weight > 0].detach().cpu().numpy()
+    y = prediction[weight > 0].detach().cpu().numpy()
+    expected = np.corrcoef(x, y)[0, 1]
+
+    torch.testing.assert_close(ncc_none, torch.tensor([expected], dtype=ncc_none.dtype))
+    torch.testing.assert_close(ncc_volume, torch.tensor([expected], dtype=ncc_volume.dtype))
+    torch.testing.assert_close(ncc_full, torch.tensor(expected, dtype=ncc_full.dtype))
+
+
 def test_ncc_local_masked_matches_bruteforce_reference() -> None:
     """Test local masked NCC against a brute-force sliding-window implementation."""
     target = torch.tensor(
