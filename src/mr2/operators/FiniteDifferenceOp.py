@@ -34,9 +34,7 @@ class FiniteDifferenceOp(LinearOperator):
     """
 
     @staticmethod
-    def finite_difference_kernel(
-        mode: Literal['central', 'forward', 'backward', 'second_difference']
-    ) -> torch.Tensor:
+    def finite_difference_kernel(mode: Literal['central', 'forward', 'backward', 'second_difference']) -> torch.Tensor:
         """Return the 1D finite-difference kernel for a given mode.
 
         Parameters
@@ -65,9 +63,7 @@ class FiniteDifferenceOp(LinearOperator):
             case 'second_difference':
                 kernel = torch.tensor((1, -2, 1))
             case _:
-                raise ValueError(
-                    f'mode should be one of (central, forward, backward, second_difference), not {mode}'
-                )
+                raise ValueError(f'mode should be one of (central, forward, backward, second_difference), not {mode}')
         return kernel
 
     def __init__(
