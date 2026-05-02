@@ -206,7 +206,7 @@ def spline_registration(
     )
 
     laplace_penalty = L2NormSquared(divide_by_n=True, weight=regularization_weight) @ FiniteDifferenceOp(
-        dim=(-3, -2, -1), mode='laplacian', pad_mode='zeros'
+        dim=(-3, -2, -1), mode='second_difference', pad_mode='zeros'
     )
     similarity = NCC(target=fixed_level, weight=weight_level, window_size=window_size_level, reduction='full')
 
