@@ -3,7 +3,7 @@
 import pytest
 import torch
 from mr2.algorithms.optimizers import admm_l2, admm_linear
-from mr2.algorithms.optimizers.admm import ADMMLinearStatus
+from mr2.algorithms.optimizers.admm import ADMML2Status, ADMMLinearStatus
 from mr2.operators import IdentityOp, LinearOperatorMatrix
 from mr2.operators.functionals import L1Norm, L2NormSquared
 from mr2.utils import RandomGenerator
@@ -120,6 +120,39 @@ def test_admm_linear_callback_early_stop() -> None:
     assert callback_count == 1
 
 
+def test_admm_l2_callback_early_stop() -> None:
+    """Check early stop via callback."""
+    rng = RandomGenerator(seed=0)
+
+    data = rng.float32_tensor(size=(16, 16))
+    initial_values = (rng.float32_tensor(size=data.shape),)
+    callback_count = 0
+
+    def callback(admm_status: ADMML2Status):
+        nonlocal callback_count
+        _, _, _, _, _ = (
+            admm_status['iteration_number'],
+            admm_status['solution'][0],
+            admm_status['z'],
+            admm_status['u'],
+            admm_status['objective'](*admm_status['solution']),
+        )
+        callback_count += 1
+        return False
+
+    admm_l2(
+        g=0.1 * L1Norm(divide_by_n=False),
+        op=IdentityOp(),
+        b=data,
+        a=IdentityOp(),
+        initial_values=initial_values,
+        tau=1.0,
+        max_iterations=64,
+        callback=callback,
+    )
+    assert callback_count == 1
+
+
 def test_admm_linear_value_errors() -> None:
     """Check that value-errors are caught."""
     rng = RandomGenerator(seed=0)
@@ -133,6 +166,59 @@ def test_admm_linear_value_errors() -> None:
             initial_values=initial_values,
             tau=1.0,
             mu=0.95,
+            max_iterations=1,
+        )
+
+
+def test_admm_l2_value_errors() -> None:
+    """Check that value-errors are caught."""
+    rng = RandomGenerator(seed=0)
+    initial_values = (rng.float32_tensor(size=(8, 8)),)
+    data = rng.float32_tensor(size=(8, 8))
+
+    with pytest.raises(ValueError, match='rows of a'):
+        admm_l2(
+            g=L1Norm() | L1Norm(),
+            op=IdentityOp(),
+            b=data,
+            a=IdentityOp(),
+            initial_values=initial_values,
+            tau=1.0,
+            max_iterations=1,
+        )
+
+    with pytest.raises(ValueError, match='rows of op'):
+        admm_l2(
+            g=L1Norm(),
+            op=LinearOperatorMatrix(((IdentityOp(),), (IdentityOp(),))),
+            b=data,
+            a=IdentityOp(),
+            initial_values=initial_values,
+            tau=1.0,
+            max_iterations=1,
+        )
+
+    with pytest.raises(ValueError, match='initial_z'):
+        admm_l2(
+            g=L1Norm(),
+            op=IdentityOp(),
+            b=data,
+            a=IdentityOp(),
+            initial_values=initial_values,
+            tau=1.0,
+            initial_z=(initial_values[0], initial_values[0]),
+            max_iterations=1,
+        )
+
+    with pytest.raises(ValueError, match='initial_u'):
+        admm_l2(
+            g=L1Norm(),
+            op=IdentityOp(),
+            b=data,
+            a=IdentityOp(),
+            initial_values=initial_values,
+            tau=1.0,
+            initial_u=(initial_values[0], initial_values[0]),
             max_iterations=1,
         )
 

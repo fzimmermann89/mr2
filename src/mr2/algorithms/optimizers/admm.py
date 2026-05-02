@@ -120,6 +120,10 @@ def admm_linear(
 
     with scaled dual variable :math:`u`.
 
+    For convergence of the linearized method, ``mu / tau`` must be chosen
+    sufficiently small relative to the squared operator norm of :math:`A`.
+    This is not checked automatically.
+
     Parameters
     ----------
     f
@@ -137,6 +141,8 @@ def admm_linear(
         Positive ADMM penalty parameter for the z-update.
     mu
         Positive linearization/proximal parameter for the x-update.
+        Together with ``tau``, it must satisfy the convergence condition of
+        linearized ADMM.
     max_iterations
         Maximum number of iterations.
     tolerance
@@ -346,12 +352,24 @@ def admm_l2(
         raise ValueError('op and a must have matching number of columns')
     if len(g_sum) != n_reg_rows:
         raise ValueError('Number of functionals in g must match rows of a')
+    if (1 if isinstance(b, torch.Tensor) else len(b)) != n_data_rows:
+        raise ValueError('b must have same length as rows of op')
+    if initial_z is not None and (1 if isinstance(initial_z, torch.Tensor) else len(initial_z)) != n_reg_rows:
+        raise ValueError('initial_z must have same length as rows of a')
+    if initial_u is not None and (1 if isinstance(initial_u, torch.Tensor) else len(initial_u)) != n_reg_rows:
+        raise ValueError('initial_u must have same length as rows of a')
 
     x = to_tuple(n_x, initial_values)
     b_tuple = to_tuple(n_data_rows, b)
+    if len(b_tuple) != n_data_rows:
+        raise ValueError('b must have same length as rows of op')
     ax = a_matrix(*x)
     z = ax if initial_z is None else to_tuple(n_reg_rows, initial_z)
     u = tuple(torch.zeros_like(zi) for zi in z) if initial_u is None else to_tuple(n_reg_rows, initial_u)
+    if len(z) != n_reg_rows:
+        raise ValueError('initial_z must have same length as rows of a')
+    if len(u) != n_reg_rows:
+        raise ValueError('initial_u must have same length as rows of a')
 
     h = op_matrix.gram + inv_tau * a_matrix.gram
     op_h_b = op_matrix.H(*b_tuple)
