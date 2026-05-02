@@ -12,8 +12,6 @@ from mr2.data.KData import KData
 from mr2.data.KHeader import KHeader
 from mr2.data.KNoise import KNoise
 from mr2.data.KTrajectory import KTrajectory
-from mr2.data.QData import QData
-from mr2.data.QHeader import QHeader
 from mr2.data.Rotation import Rotation
 from mr2.data.SpatialDimension import SpatialDimension
 
@@ -32,8 +30,6 @@ __all__ = [
     "KNoise",
     "KTrajectory",
     "Limits",
-    "QData",
-    "QHeader",
     "Rotation",
     "SpatialDimension",
     "acq_filters",
