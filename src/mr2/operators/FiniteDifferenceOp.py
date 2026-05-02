@@ -24,23 +24,24 @@ class FiniteDifferenceOp(LinearOperator):
 
     where :math:`e_i` is a one-step shift along axis ``dim[i]``. ``'central'``
     and ``'backward'`` use the stencils :math:`\\tfrac{1}{2}(-1,0,1)` and
-    :math:`(-1,1,0)`.
-
+    :math:`(-1,1,0)`. ``'second_difference'`` uses the stencil
+    :math:`(1,-2,1)`, i.e. the second-order finite difference along each axis.
     For input ``x`` with shape ``S``, ``op(x)`` returns a tensor with shape
     ``(len(dim), *S)`` where channel ``i`` corresponds to axis ``dim[i]``.
-    Supported schemes are ``'forward'``, ``'backward'``, and ``'central'``.
-    Boundary handling is controlled by ``pad_mode`` (``'zeros'`` or
-    ``'circular'``).
+    Supported schemes are ``'forward'``, ``'backward'``, ``'central'``, and
+    ``'second_difference'``. Boundary handling is controlled by ``pad_mode``
+    (``'zeros'`` or ``'circular'``).
     """
 
     @staticmethod
-    def finite_difference_kernel(mode: Literal['central', 'forward', 'backward']) -> torch.Tensor:
+    def finite_difference_kernel(mode: Literal['central', 'forward', 'backward', 'second_difference']) -> torch.Tensor:
         """Return the 1D finite-difference kernel for a given mode.
 
         Parameters
         ----------
         mode
-            Difference scheme: `'forward'`, `'backward'`, or `'central'`.
+            Difference scheme: `'forward'`, `'backward'`, `'central'`, or
+            `'second_difference'`.
 
         Returns
         -------
@@ -49,7 +50,8 @@ class FiniteDifferenceOp(LinearOperator):
         Raises
         ------
         `ValueError`
-            If `mode` is not one of `'central'`, `'forward'`, or `'backward'`.
+            If `mode` is not one of `'central'`, `'forward'`, `'backward'`, or
+            `'second_difference'`.
         """
         match mode:
             case 'forward':
@@ -58,14 +60,16 @@ class FiniteDifferenceOp(LinearOperator):
                 kernel = torch.tensor((-1, 1, 0))
             case 'central':
                 kernel = torch.tensor((-1, 0, 1)) / 2
+            case 'second_difference':
+                kernel = torch.tensor((1, -2, 1))
             case _:
-                raise ValueError(f'mode should be one of (central, forward, backward), not {mode}')
+                raise ValueError(f'mode should be one of (central, forward, backward, second_difference), not {mode}')
         return kernel
 
     def __init__(
         self,
         dim: Sequence[int],
-        mode: Literal['central', 'forward', 'backward'] = 'forward',
+        mode: Literal['central', 'forward', 'backward', 'second_difference'] = 'forward',
         pad_mode: Literal['zeros', 'circular'] = 'zeros',
     ) -> None:
         """Initialize a finite-difference operator.
@@ -76,7 +80,9 @@ class FiniteDifferenceOp(LinearOperator):
             Axes along which finite differences are computed.
             The order defines the order of directional channels in the output.
         mode
-            Finite-difference scheme used to construct the 1D kernel.
+            Finite-difference scheme used to construct the 1D kernel. The
+            ``'second_difference'`` mode computes one second-order directional
+            difference per axis and does not sum across axes.
         pad_mode
             Boundary handling used during filtering.
             `'zeros'` maps to constant-zero padding, `'circular'` to periodic padding.
