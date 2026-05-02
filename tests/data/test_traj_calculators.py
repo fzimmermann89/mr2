@@ -244,6 +244,23 @@ def test_KTrajectoryCartesian_random_xy(acceleration_y: int = 4, acceleration_x:
         assert center_idx in lines_x1
 
 
+def test_KTrajectoryCartesian_random_xy_odd_n_center(n_k: int = 64) -> None:
+    """Test odd ACS widths stay centered around zero."""
+    traj = KTrajectoryCartesian.gaussian_variable_density_nd(
+        encoding_matrix=SpatialDimension(1, n_k, n_k),
+        acceleration=SpatialDimension(1, 4, 2),
+        n_center=SpatialDimension(1, 3, 1),
+        n_other=(1,),
+        seed=123,
+    )
+
+    lines_y = traj.ky.unique()
+    lines_x = traj.kx.unique()
+    for center_idx in (-1, 0, 1):
+        assert center_idx in lines_y
+    assert 0 in lines_x
+
+
 def test_KTrajectoryCartesian_fullysampled() -> None:
     """Test the generation of a fully sampled Cartesian trajectory"""
     traj = KTrajectoryCartesian.fullysampled(SpatialDimension(10, 64, 64))
@@ -267,6 +284,14 @@ def test_KTrajectoryCartesian_uniform_undersampling(acceleration: int, n_k: int 
 
     lines = traj.ky.unique().sort().values
     torch.testing.assert_close(lines, expected.to(lines))
+
+
+def test_KTrajectoryCartesian_uniform_undersampling_odd_n_center(n_k: int = 64) -> None:
+    """Test odd ACS widths stay centered around zero for uniform undersampling."""
+    traj = KTrajectoryCartesian.uniform_undersampling(n_k, acceleration=4, n_center=3)
+    lines = traj.ky.unique().sort().values
+    for center_idx in (-1, 0, 1):
+        assert center_idx in lines
 
 
 @pytest.mark.parametrize('acceleration', [1, 16])

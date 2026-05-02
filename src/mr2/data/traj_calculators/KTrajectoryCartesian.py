@@ -148,7 +148,38 @@ class KTrajectoryCartesian(KTrajectoryCalculator):
     ) -> KTrajectory:
         """Generate Gaussian weighted variable density Cartesian undersampling.
 
-        Undersampling is applied independently in each dimension where acceleration > 1.
+        Undersampling is applied independently in each dimension where
+        ``acceleration > 1``.
+
+        Parameters
+        ----------
+        encoding_matrix
+            Encoded K-space size.
+        acceleration
+            Per-axis acceleration factors. Dimensions with ``acceleration <= 1``
+            are fully sampled.
+        n_center
+            Number of fully-sampled center lines to always include per axis.
+            If given as an integer, the same value is used for all axes.
+        fwhm_ratio
+            Per-axis full-width at half-maximum of the Gaussian relative to the
+            encoded matrix size. Larger values approach uniform sampling.
+            If given as a scalar, the same value is used for all axes.
+        n_other
+            Batch size(s). The trajectory is different for each batch sample.
+        seed
+            Random seed for reproducibility.
+
+        Returns
+        -------
+            Cartesian trajectory.
+
+        Raises
+        ------
+        ValueError
+            If any acceleration is non-positive, if any ``n_center`` is outside
+            the corresponding encoding range, or if a requested center region
+            exceeds the number of retained samples along an undersampled axis.
         """
         if not isinstance(n_center, SpatialDimension):
             n_center = SpatialDimension(n_center, n_center, n_center)
@@ -182,7 +213,7 @@ class KTrajectoryCartesian(KTrajectoryCalculator):
                 low=low,
                 high=high,
                 fwhm=fwhm_rel * n,
-                always_sample=range(-center // 2, center // 2),
+                always_sample=range(-(center // 2), center - (center // 2)),
             )
 
         kz_idx = sample_axis(encoding_matrix.z, acceleration.z, n_center.z, fwhm_ratio.z)
@@ -250,7 +281,7 @@ class KTrajectoryCartesian(KTrajectoryCalculator):
         low = -n_k1 // 2
         high = n_k1 // 2
         uniform_lines = torch.arange(low, high, acceleration)
-        center_lines = torch.arange(-n_center // 2, n_center // 2)
+        center_lines = torch.arange(-(n_center // 2), n_center - (n_center // 2))
         k1_idx = torch.cat([uniform_lines, center_lines]).unique(sorted=True)
 
         return cls()(
