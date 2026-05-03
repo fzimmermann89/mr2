@@ -5,7 +5,6 @@ import enum
 import importlib
 from collections.abc import Callable, Iterator, Sequence
 from copy import copy as shallowcopy
-from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from typing import ClassVar, TypeAlias, cast
@@ -415,9 +414,15 @@ class Dataclass:
             return data
 
         def _module_to(data: torch.nn.Module) -> torch.nn.Module:
-            if copy:
-                data = deepcopy(data)
-            return data._apply(_tensor_to, recurse=True)
+            # Module._apply would do in-place conversion. We don't want to modify the original.
+            new = shallowcopy(data)
+            new._modules = {k: _module_to(v) if v is not None else None for k, v in data._modules.items()}
+            new._parameters = {
+                k: torch.nn.Parameter(_tensor_to(v), v.requires_grad) if v is not None else None
+                for k, v in data._parameters.items()
+            }
+            new._buffers = {k: _tensor_to(v) if v is not None else None for k, v in data._buffers.items()}
+            return new
 
         def _mixin_to(obj: Dataclass) -> Dataclass:
             return obj._to(
@@ -484,7 +489,7 @@ class Dataclass:
             If `True`, the returned tensor will always be a copy, even if the input was already on the correct device.
             This will also create new tensors for views.
         """
-        return self._to(device='cpu', dtype=None, non_blocking=True, memory_format=memory_format, copy=copy)
+        return self._to(device='cpu', dtype=None, non_blocking=False, memory_format=memory_format, copy=copy)
 
     def double(self, *, memory_format: torch.memory_format = torch.preserve_format, copy: bool = False) -> Self:
         """Convert all float tensors to double precision.

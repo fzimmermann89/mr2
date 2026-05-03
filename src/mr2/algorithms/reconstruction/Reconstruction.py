@@ -17,9 +17,10 @@ from mr2.operators.DensityCompensationOp import DensityCompensationOp
 from mr2.operators.FourierOp import FourierOp
 from mr2.operators.LinearOperator import LinearOperator
 from mr2.operators.SensitivityOp import SensitivityOp
+from mr2.utils.TensorAttributeMixin import TensorAttributeMixin
 
 
-class Reconstruction(torch.nn.Module, ABC):
+class Reconstruction(TensorAttributeMixin, torch.nn.Module, ABC):
     """A Reconstruction."""
 
     dcf_op: DensityCompensationOp | None
@@ -128,13 +129,11 @@ class Reconstruction(torch.nn.Module, ABC):
 
         operator = self.fourier_op
 
-        if csm is not False:
-            if csm is None:
-                csm_op = self.csm_op
-            else:
-                csm_op = csm.as_operator()
-            if csm_op is not None:
-                operator = operator @ csm_op
+        if csm is None:
+            if self.csm_op is not None:
+                operator = operator @ self.csm_op
+        elif csm:
+            operator = operator @ csm.as_operator()
 
         if self.dcf_op is not None:
             operator = self.dcf_op @ operator
