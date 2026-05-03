@@ -51,7 +51,7 @@ PULSES = {
 # fmt: on
 
 
-class BMModel(SignalModel[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]):
+class BMModel(SignalModel[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None]):
     """Base signal model using Bloch-McConnel simulation."""
 
     static_off_resonance_offsets: torch.Tensor | None
@@ -68,7 +68,7 @@ class BMModel(SignalModel[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor
         t1: torch.Tensor,
         t2: torch.Tensor,
         exchange_rate: torch.Tensor,
-        chemical_shift: torch.Tensor,
+        chemical_shift: torch.Tensor | None,
     ) -> tuple[torch.Tensor]:
         """Simulate the sequence."""
 
@@ -219,7 +219,9 @@ class BMsimTwoPulseWASABI(BMModel):
         self.sequence = sequence
 
 
-class IsochromatGradientReadoutModel(SignalModel[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]):
+class IsochromatGradientReadoutModel(
+    SignalModel[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None]
+):
     """Test-only model for analytic isochromat gradient comparisons."""
 
     def __init__(
@@ -255,7 +257,7 @@ class IsochromatGradientReadoutModel(SignalModel[torch.Tensor, torch.Tensor, tor
         t1: torch.Tensor,
         t2: torch.Tensor,
         exchange_rate: torch.Tensor,
-        chemical_shift: torch.Tensor,
+        chemical_shift: torch.Tensor | None,
     ) -> tuple[torch.Tensor]:
         parameters = Parameters(equilibrium_magnetization, t1, t2, exchange_rate, chemical_shift)
         state = torch.zeros(
@@ -332,7 +334,7 @@ def test_isochromat_gradient_model_matches_analytic_signal() -> None:
         parameters.t1,
         parameters.t2,
         parameters.exchange_rate,
-        require_tensor(parameters.chemical_shift),
+        parameters.chemical_shift,
     )
 
     phase = duration * gradient_to_extra_off_resonance(gradient_z, gradient_y, gradient_x, positions)
