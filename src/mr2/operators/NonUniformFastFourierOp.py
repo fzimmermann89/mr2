@@ -436,7 +436,7 @@ class NonUniformFastFourierOpGramOp(LinearOperator, adjoint_as_backward=True):
             weight = weight.data
         weight_shape = [*nufft_op._traj_broadcast_shape[:-4], 1, *nufft_op._traj_broadcast_shape[-3:]]
         if weight is None:
-            weight = torch.ones(weight_shape, device=nufft_op._omega.device)
+            weight = torch.ones(weight_shape, device=nufft_op._omega.device, dtype=nufft_op._omega.dtype.to_real())
         else:
             weight = weight.to(nufft_op._omega.device).broadcast_to(weight_shape)
         # We rearrange weight into (sep_dims, joint_dims, nufft_directions)
@@ -595,7 +595,7 @@ class SubspaceNonUniformFastFourierOpGramOp(LinearOperator, adjoint_as_backward=
             weight = weight.data
         weight_shape = [*nufft_op._traj_broadcast_shape[:-4], 1, *nufft_op._traj_broadcast_shape[-3:]]
         if weight is None:
-            weight = torch.ones(weight_shape, device=nufft_op._omega.device)
+            weight = torch.ones(weight_shape, device=nufft_op._omega.device, dtype=nufft_op._omega.dtype.to_real())
         else:
             weight = weight.to(nufft_op._omega.device).broadcast_to(weight_shape)
         _, _permute_zyx, sep_dims_210, permute_210 = nufft_op._separate_joint_dimensions(weight.ndim)
@@ -608,10 +608,6 @@ class SubspaceNonUniformFastFourierOpGramOp(LinearOperator, adjoint_as_backward=
 
         omega = nufft_op._omega
 
-        if weight.shape[1] != 1 or omega.shape[1] != 1:
-            raise NotImplementedError(
-                'SubspaceNonUniformFastFourierOpGramOp currently only supports singleton joint trajectory dimensions.'
-            )
         if len(sep_dims_210) > 1:
             raise NotImplementedError(
                 'SubspaceNonUniformFastFourierOpGramOp currently only supports a single varying separate dimension.'

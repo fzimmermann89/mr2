@@ -279,15 +279,15 @@ def test_subspace_non_uniform_fast_fourier_op_gram() -> None:
 
     nufft_op = create_time_varying_2d_nufft_op(n_timepoints=n_timepoints, image_shape=image_shape)
     basis = rng.complex64_tensor((n_timepoints, n_coefficients))
-    alpha = rng.complex64_tensor((n_coefficients, *image_shape))
+    alpha = rng.complex64_tensor((n_coefficients, 1, 1, *image_shape))
 
     subspace_gram = nufft_op.toeplitz(subspace=basis)
     assert isinstance(subspace_gram, SubspaceNonUniformFastFourierOpGramOp)
 
-    expanded = einops.einsum(basis, alpha, 'time coeff, coeff ... -> time ...')[:, None, :, :]
+    expanded = einops.einsum(basis, alpha, 'time coeff, coeff joint coil ... -> time joint coil ...')
     (kspace,) = nufft_op(expanded)
     (backprojected,) = nufft_op.H(kspace)
-    expected = einops.einsum(basis.conj(), backprojected, 'time coeff, time coil ... -> coeff ...')
+    expected = einops.einsum(basis.conj(), backprojected, 'time coeff, time joint coil ... -> coeff joint coil ...')
     (actual,) = subspace_gram(alpha)
 
     torch.testing.assert_close(actual, expected, rtol=2e-3, atol=2e-3)
@@ -303,7 +303,7 @@ def test_subspace_non_uniform_fast_fourier_op_gram_accepts_pca_operator() -> Non
     training_signals = rng.complex64_tensor((1, 32, n_timepoints))
     pca_op = PCACompressionOp(training_signals, n_components=n_coefficients, centering=False)
     basis = pca_op._compression_matrix.squeeze(0).mH
-    alpha = rng.complex64_tensor((n_coefficients, *image_shape))
+    alpha = rng.complex64_tensor((n_coefficients, 1, 1, *image_shape))
 
     subspace_gram_from_pca = SubspaceNonUniformFastFourierOpGramOp(nufft_op, pca_op)
     subspace_gram_from_basis = SubspaceNonUniformFastFourierOpGramOp(nufft_op, basis)
@@ -325,7 +325,7 @@ def test_non_uniform_fast_fourier_op_gram_autograd() -> None:
         dtype=torch.float64,
     )
     operator = nufft_op.toeplitz().double()
-    image = rng.complex128_tensor((n_timepoints, 1, *image_shape)).requires_grad_(True)
+    image = rng.complex128_tensor((n_timepoints, 1, 1, *image_shape)).requires_grad_(True)
 
     gradcheck(operator, (image,), fast_mode=True)
 
@@ -342,7 +342,7 @@ def test_subspace_non_uniform_fast_fourier_op_gram_autograd() -> None:
     )
     basis = rng.complex128_tensor((n_timepoints, n_coefficients))
     operator = nufft_op.toeplitz(subspace=basis).double()
-    coefficients = rng.complex128_tensor((n_coefficients, *image_shape)).requires_grad_(True)
+    coefficients = rng.complex128_tensor((n_coefficients, 1, 1, *image_shape)).requires_grad_(True)
 
     gradcheck(operator, (coefficients,), fast_mode=True)
 
@@ -355,8 +355,8 @@ def test_non_uniform_fast_fourier_op_gram_cuda() -> None:
     image_shape = (12, 10)
 
     nufft_op = create_time_varying_2d_nufft_op(n_timepoints=n_timepoints, image_shape=image_shape)
-    image = rng.complex64_tensor((n_timepoints, 1, *image_shape))
-    coefficients = rng.complex64_tensor((n_coefficients, *image_shape))
+    image = rng.complex64_tensor((n_timepoints, 1, 1, *image_shape))
+    coefficients = rng.complex64_tensor((n_coefficients, 1, 1, *image_shape))
     basis = rng.complex64_tensor((n_timepoints, n_coefficients))
 
     gram = nufft_op.toeplitz()
