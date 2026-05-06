@@ -3,7 +3,6 @@
 import einops
 import pytest
 import torch
-from torch.autograd.gradcheck import gradcheck
 from mr2.data import KData, KTrajectory
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.data.traj_calculators import KTrajectoryIsmrmrd
@@ -14,6 +13,7 @@ from mr2.operators import (
     SubspaceNonUniformFastFourierOpGramOp,
 )
 from mr2.utils import RandomGenerator
+from torch.autograd.gradcheck import gradcheck
 
 from tests.conftest import COMMON_MR_TRAJECTORIES, create_traj
 from tests.helper import dotproduct_adjointness_test, relative_image_difference
