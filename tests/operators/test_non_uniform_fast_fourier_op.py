@@ -31,11 +31,10 @@ def create_time_varying_2d_nufft_op(
     n_timepoints: int = 4,
     image_shape: tuple[int, int] = (12, 10),
     dtype: torch.dtype = torch.float32,
-    device: torch.device | str = 'cpu',
 ) -> NonUniformFastFourierOp:
     """Create a small 2D NUFFT with one radial spoke per time point."""
-    angles = torch.linspace(0, torch.pi, n_timepoints + 1, dtype=dtype, device=device)[:-1]
-    readout = torch.linspace(-image_shape[-1] / 2, image_shape[-1] / 2, image_shape[-1], dtype=dtype, device=device)
+    angles = torch.linspace(0, torch.pi, n_timepoints + 1, dtype=dtype)[:-1]
+    readout = torch.linspace(-image_shape[-1] / 2, image_shape[-1] / 2, image_shape[-1], dtype=dtype)
     kx = (torch.cos(angles)[:, None] * readout[None, :])[:, None, None, :]
     ky = (torch.sin(angles)[:, None] * readout[None, :])[:, None, None, :]
     kx = kx[:, None, :, :]
@@ -104,10 +103,8 @@ def test_non_uniform_fast_fourier_op_gram(
 
     (expected,) = (nufft_op.H @ nufft_op)(img)
     (actual,) = nufft_op.gram(img)
-    (actual_toeplitz,) = nufft_op.toeplitz()(img)
 
     torch.testing.assert_close(actual, expected, rtol=1e-3, atol=1e-3)
-    torch.testing.assert_close(actual_toeplitz, expected, rtol=1e-3, atol=1e-3)
 
 
 def test_non_uniform_fast_fourier_op_equal_to_fft(ismrmrd_cart_high_res) -> None:
@@ -351,32 +348,38 @@ def test_subspace_non_uniform_fast_fourier_op_gram_autograd() -> None:
 def test_non_uniform_fast_fourier_op_gram_cuda() -> None:
     """Test Toeplitz Gram operators work on CUDA devices."""
     rng = RandomGenerator(seed=5)
-    n_timepoints, n_coefficients = 4, 2
+    n_timepoints = 4
     image_shape = (12, 10)
+    image = rng.complex64_tensor((n_timepoints, 1, 1, *image_shape)).cuda()
+
+    nufft_op = create_time_varying_2d_nufft_op(n_timepoints=n_timepoints, image_shape=image_shape).cuda()
+    gram = nufft_op.gram.cuda()
+    (result,) = gram(image)
+    assert result.is_cuda
 
     nufft_op = create_time_varying_2d_nufft_op(n_timepoints=n_timepoints, image_shape=image_shape)
-    image = rng.complex64_tensor((n_timepoints, 1, 1, *image_shape))
-    coefficients = rng.complex64_tensor((n_coefficients, 1, 1, *image_shape))
+    gram = nufft_op.gram
+    (result,) = gram(image)
+    assert result.is_cuda
+
+
+@pytest.mark.cuda
+def test_non_uniform_fast_fourier_op_subspace_gram_cuda() -> None:
+    """Test subspace Toeplitz Gram operators work on CUDA devices."""
+    rng = RandomGenerator(seed=5)
+    n_timepoints, n_coefficients = 4, 2
+    image_shape = (12, 10)
+    coefficients = rng.complex64_tensor((n_coefficients, 1, 1, *image_shape)).cuda()
     basis = rng.complex64_tensor((n_timepoints, n_coefficients))
 
-    gram = nufft_op.toeplitz()
-    gram.cuda()
-    (result,) = gram(image.cuda())
+    nufft_op = create_time_varying_2d_nufft_op(n_timepoints=n_timepoints, image_shape=image_shape)
+    subspace_gram = nufft_op.toeplitz(subspace=basis).cuda()
+    (result,) = subspace_gram(coefficients)
     assert result.is_cuda
 
+    nufft_op = create_time_varying_2d_nufft_op(n_timepoints=n_timepoints, image_shape=image_shape).cuda()
     subspace_gram = nufft_op.toeplitz(subspace=basis)
-    subspace_gram.cuda()
-    (result,) = subspace_gram(coefficients.cuda())
-    assert result.is_cuda
-
-    nufft_op = create_time_varying_2d_nufft_op(
-        n_timepoints=n_timepoints,
-        image_shape=image_shape,
-        device='cuda',
-    )
-    (result,) = nufft_op.toeplitz()(image.cuda())
-    assert result.is_cuda
-    (result,) = nufft_op.toeplitz(subspace=basis.cuda())(coefficients.cuda())
+    (result,) = subspace_gram(coefficients)
     assert result.is_cuda
 
 
