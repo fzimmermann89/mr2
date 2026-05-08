@@ -3,10 +3,11 @@
 import einops
 import pytest
 import torch
-from mr2.data import KData, KTrajectory
+from mr2.data import DcfData, KData, KTrajectory
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.data.traj_calculators import KTrajectoryIsmrmrd
 from mr2.operators import (
+    DensityCompensationOp,
     FastFourierOp,
     NonUniformFastFourierOp,
     PCACompressionOp,
@@ -309,6 +310,25 @@ def test_subspace_non_uniform_fast_fourier_op_gram_accepts_pca_operator() -> Non
     (actual_from_basis,) = subspace_gram_from_basis(alpha)
 
     torch.testing.assert_close(actual_from_pca, actual_from_basis)
+
+
+def test_non_uniform_fast_fourier_op_weighted_toeplitz_matches_explicit_dcf_normal_operator() -> None:
+    """Test Toeplitz(weight=dcf) matches the explicit weighted normal operator F^H DCF F."""
+    rng = RandomGenerator(seed=6)
+    n_timepoints = 4
+    image_shape = (12, 10)
+
+    nufft_op = create_time_varying_2d_nufft_op(n_timepoints=n_timepoints, image_shape=image_shape)
+    image = rng.complex64_tensor((n_timepoints, 1, 1, *image_shape))
+    dcf = DcfData(data=rng.float32_tensor((n_timepoints, 1, 1, 1, image_shape[-1])))
+
+    explicit_operator = nufft_op.H @ DensityCompensationOp(dcf) @ nufft_op
+    weighted_toeplitz = nufft_op.toeplitz(weight=dcf)
+
+    (expected,) = explicit_operator(image)
+    (actual,) = weighted_toeplitz(image)
+
+    torch.testing.assert_close(actual, expected, rtol=2e-3, atol=2e-3)
 
 
 def test_non_uniform_fast_fourier_op_gram_autograd() -> None:
