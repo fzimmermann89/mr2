@@ -21,7 +21,7 @@ jobs:
     steps:
       # use the results of python 3.12, consider this as target platform
       - name: Download PyTest report artifact for mr2_py312
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: pytest-report-mr2_py312
           run-id: ${{ github.event.workflow_run.id }}
@@ -50,7 +50,7 @@ jobs:
 
       - name: Post PyTest Coverage Comment
         id: coverage_comment
-        uses: MishaKav/pytest-coverage-comment@v1.2.0
+        uses: MishaKav/pytest-coverage-comment@v1.7.1
         with:
           issue-number: ${{ steps.pr-context.outputs.number }}
           pytest-coverage-path: pytest-coverage.txt
@@ -85,7 +85,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -93,13 +93,13 @@ jobs:
 
       - name: Post PyTest Coverage Comment on push main
         id: coverage_comment
-        uses: MishaKav/pytest-coverage-comment@v1.2.0
+        uses: MishaKav/pytest-coverage-comment@v1.7.1
         with:
           pytest-coverage-path: pytest-coverage.txt
           junitxml-path: pytest.xml
 
       - name: Create Coverage Badge on Main Branch Push
-        uses: schneegans/dynamic-badges-action@v1.7.0
+        uses: schneegans/dynamic-badges-action@v1.8.0
         with:
           auth: ${{ secrets.GIST_SECRET }}
           gistID: f688ae5c6e8daec44ac7f8fc4067e93f
