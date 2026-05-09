@@ -20,6 +20,7 @@ from mr2.operators.GridSamplingOp import GridSamplingOp
 from mr2.operators.IdentityOp import IdentityOp
 from mr2.operators.Jacobian import Jacobian
 from mr2.operators.LinearOperatorMatrix import LinearOperatorMatrix
+from mr2.operators.LookupTableOp import LookupTableOp
 from mr2.operators.MagnitudeOp import MagnitudeOp
 from mr2.operators.MultiIdentityOp import MultiIdentityOp
 from mr2.operators.NonUniformFastFourierOp import NonUniformFastFourierOp, SubspaceNonUniformFastFourierOpGramOp
@@ -62,6 +63,7 @@ __all__ = [
     "Jacobian",
     "LinearOperator",
     "LinearOperatorMatrix",
+    "LookupTableOp",
     "MagnitudeOp",
     "MultiFrequencyFourierOp",
     "MultiIdentityOp",
