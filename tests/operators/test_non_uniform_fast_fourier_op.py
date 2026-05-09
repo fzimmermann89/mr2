@@ -327,6 +327,26 @@ def test_subspace_non_uniform_fast_fourier_op_gram_non_contiguous_directions() -
     torch.testing.assert_close(actual, expected, rtol=2e-3, atol=2e-3)
 
 
+@pytest.mark.parametrize('n_coefficients', [1, 2])
+def test_subspace_non_uniform_fast_fourier_op_gram_single_timepoint_basis(n_coefficients: int) -> None:
+    """Test single-timepoint bases keep their time and coefficient axes."""
+    rng = RandomGenerator(seed=8)
+    n_timepoints = 1
+    image_shape = (12, 10)
+
+    nufft_op = create_time_varying_2d_nufft_op(n_timepoints=n_timepoints, image_shape=image_shape)
+    basis = rng.complex64_tensor((n_timepoints, n_coefficients))
+    alpha = rng.complex64_tensor((n_coefficients, 1, 1, *image_shape))
+
+    expanded = einops.einsum(basis, alpha, 'time coeff, coeff joint coil ... -> time joint coil ...')
+    (kspace,) = nufft_op(expanded)
+    (backprojected,) = nufft_op.H(kspace)
+    expected = einops.einsum(basis.conj(), backprojected, 'time coeff, time joint coil ... -> coeff joint coil ...')
+    (actual,) = nufft_op.toeplitz(subspace=basis)(alpha)
+
+    torch.testing.assert_close(actual, expected, rtol=2e-3, atol=2e-3)
+
+
 def test_subspace_non_uniform_fast_fourier_op_gram_accepts_pca_operator() -> None:
     """Test subspace Gram accepts a PCACompressionOp as basis input."""
     rng = RandomGenerator(seed=2)

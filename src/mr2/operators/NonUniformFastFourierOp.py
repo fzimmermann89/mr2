@@ -425,12 +425,12 @@ class NonUniformFastFourierOpGramOp(LinearOperator, adjoint_as_backward=True):
             Optional density compensation weights. If provided, calculates F^H W F.
         """
         super().__init__()
-        self._dim = nufft_op._direction_zyx
-        self._recon_shape = nufft_op._im_size
-
         if not nufft_op._dimension_210:
             self._kernel = None
             return
+
+        self._dim = nufft_op._direction_zyx
+        self._recon_shape = nufft_op._im_size
 
         if isinstance(weight, DcfData):
             weight = weight.data
@@ -571,22 +571,23 @@ class SubspaceNonUniformFastFourierOpGramOp(LinearOperator, adjoint_as_backward=
             Dimension of the coefficient channel in the input/output tensors.
         """
         super().__init__()
-        self._dim = nufft_op._direction_zyx
-        self._recon_shape = nufft_op._im_size
-        self._subspace_dim = subspace_dim
-
         if not nufft_op._dimension_210:
             self._kernel = None
             return
+
+        self._dim = nufft_op._direction_zyx
+        self._recon_shape = nufft_op._im_size
+        self._subspace_dim = subspace_dim
 
         if isinstance(subspace_basis, PCACompressionOp):
             basis = subspace_basis.compression_matrix.mH
         else:
             basis = subspace_basis
-        basis = basis.squeeze()
         if basis.ndim > 2:
-            raise ValueError(f'Basis cannot contain non-singleton batch dimensions; got squeezed shape {basis.shape}.')
-        elif basis.ndim == 1:  # rank-1 special case, we squeezed the singleton subspace dimension
+            basis = basis.squeeze(tuple(range(basis.ndim - 2)))
+        if basis.ndim > 2:
+            raise ValueError(f'Basis cannot contain non-singleton batch dimensions; got shape {basis.shape}.')
+        if basis.ndim == 1:  # rank-1 special case: only one coefficient
             basis = basis.unsqueeze(-1)
         basis = basis.to(device=nufft_op._omega.device)
 
