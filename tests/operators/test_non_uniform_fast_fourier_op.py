@@ -397,7 +397,7 @@ def test_non_uniform_fast_fourier_op_subspace_gram_cuda() -> None:
     assert result.is_cuda
 
     nufft_op = create_time_varying_2d_nufft_op(n_timepoints=n_timepoints, image_shape=image_shape).cuda()
-    subspace_gram = nufft_op.toeplitz(subspace=basis)
+    subspace_gram = nufft_op.toeplitz(subspace=basis.cuda())
     (result,) = subspace_gram(coefficients)
     assert result.is_cuda
 

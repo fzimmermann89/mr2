@@ -22,7 +22,7 @@ from mr2.operators.Jacobian import Jacobian
 from mr2.operators.LinearOperatorMatrix import LinearOperatorMatrix
 from mr2.operators.MagnitudeOp import MagnitudeOp
 from mr2.operators.MultiIdentityOp import MultiIdentityOp
-from mr2.operators.NonUniformFastFourierOp import NonUniformFastFourierOp, SubspaceNonUniformFastFourierOpGramOp
+from mr2.operators.NonUniformFastFourierOp import NonUniformFastFourierOp
 from mr2.operators.OptimizerOp import OptimizerOp
 from mr2.operators.PatchOp import PatchOp
 from mr2.operators.PCACompressionOp import PCACompressionOp
@@ -78,7 +78,6 @@ __all__ = [
     "SensitivityOp",
     "SignalModel",
     "SliceProjectionOp",
-    "SubspaceNonUniformFastFourierOpGramOp",
     "SymmetrizedGradientOp",
     "TimeSegmentedFourierOp",
     "WaveletOp",

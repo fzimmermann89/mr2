@@ -581,7 +581,7 @@ class SubspaceNonUniformFastFourierOpGramOp(LinearOperator, adjoint_as_backward=
             return
 
         if isinstance(subspace_basis, PCACompressionOp):
-            basis = subspace_basis._compression_matrix.mH
+            basis = subspace_basis.compression_matrix.mH
         else:
             basis = subspace_basis
         basis = basis.squeeze()
@@ -631,7 +631,7 @@ class SubspaceNonUniformFastFourierOpGramOp(LinearOperator, adjoint_as_backward=
     def n_coefficients(self) -> int:
         """Number of compressed coefficient channels."""
         if self._kernel is None:
-            raise RuntimeError('n_coefficients is undefined before the Toeplitz kernel is initialized.')
+            raise RuntimeError('n_coefficients is undefined if there are no NUFFT axes.')
         return self._kernel.shape[0]
 
     @property
