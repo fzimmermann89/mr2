@@ -195,21 +195,20 @@ class TestDifferentiableDictionaryMatchOp:
             low_error = (result_k[low_region] - prior_k[low_region]).abs().mean()
             assert high_error < low_error
 
-    def test_refinement_with_offgrid_target(self)->None:
+    def test_refinement_with_offgrid_target(self) -> None:
         """Test refinement between two points with scaling!= 1"""
-        rng = RandomGenerator(2)  
-        model = InversionRecovery(rng.float32_tensor(5))  
-        t1_dict = torch.linspace(0.1, 1.0, 20)  
-        m0_dict = torch.ones_like(t1_dict)  
-        op = DifferentiableDictionaryMatchOp(model, index_of_scaling_parameter=0)  
-        op.append(m0_dict, t1_dict)  
-        t1_true = torch.tensor([0.37])  
-        m0_true = torch.tensor([0.6])  
-        (y,) = model(m0_true, t1_true)  
-        m0_hat, t1_hat = op(y)  
-        torch.testing.assert_close(t1_hat, t1_true, atol=5e-2, rtol=0)  
-        torch.testing.assert_close(m0_hat, m0_true, atol=5e-2, rtol=0)  
-
+        rng = RandomGenerator(2)
+        model = InversionRecovery(rng.float32_tensor(5))
+        t1_dict = torch.linspace(0.1, 1.0, 20)
+        m0_dict = torch.ones_like(t1_dict)
+        op = DifferentiableDictionaryMatchOp(model, index_of_scaling_parameter=0)
+        op.append(m0_dict, t1_dict)
+        t1_true = torch.tensor([0.37])
+        m0_true = torch.tensor([0.6])
+        (y,) = model(m0_true, t1_true)
+        m0_hat, t1_hat = op(y)
+        torch.testing.assert_close(t1_hat, t1_true, atol=5e-2, rtol=0)
+        torch.testing.assert_close(m0_hat, m0_true, atol=5e-2, rtol=0)
 
     @pytest.mark.parametrize('index_of_scaling_parameter', [None, 0], ids=['no_scale', 'scale'])
     def test_prior_validation_raises(self, index_of_scaling_parameter: int | None):

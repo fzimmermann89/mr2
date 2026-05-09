@@ -204,7 +204,12 @@ class DifferentiableDictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]
             if len(prior) != n_x or not all(isinstance(p, torch.Tensor) for p in prior):
                 raise ValueError('Prior must be a tuple of tensors matching the number of parameters.')
             prior_ = tuple(p for p in prior if isinstance(p, torch.Tensor))
-            if len(prior_precision) != n_x or not all(isinstance(lam, torch.Tensor) and torch.isfinite(lam).all() and not (lam.is_complex() or (lam < 0).any()) for lam in prior_precision):
+            if len(prior_precision) != n_x or not all(
+                isinstance(lam, torch.Tensor)
+                and torch.isfinite(lam).all()
+                and not (lam.is_complex() or (lam < 0).any())
+                for lam in prior_precision
+            ):
                 raise ValueError(
                     'prior_precision must be a tuple of finite non-negative real tensors matching the number '
                     'of parameters.'
@@ -260,8 +265,8 @@ class DifferentiableDictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]
                 scale_precision = precision_flat[scaling_position]
                 scale = (scale + scale_precision * prior_flat[scaling_position]) / (norm_y_sq[idx] + scale_precision)
             j_cols = [scale[:, None] * col for col in j_cols]
-            x.insert(scaling_position, scale) 
-            j_cols.insert(scaling_position, y) # y is the partial deriv. wrt scale
+            x.insert(scaling_position, scale)
+            j_cols.insert(scaling_position, y)  # y is the partial deriv. wrt scale
             y = scale[:, None] * y
 
         j = torch.stack(j_cols, dim=2)
