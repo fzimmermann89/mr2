@@ -5,13 +5,8 @@ import pytest
 import torch
 from mr2.data import DcfData, KData, KTrajectory, SpatialDimension
 from mr2.data.traj_calculators import KTrajectoryIsmrmrd
-from mr2.operators import (
-    DensityCompensationOp,
-    FastFourierOp,
-    NonUniformFastFourierOp,
-    PCACompressionOp,
-    SubspaceNonUniformFastFourierOpGramOp,
-)
+from mr2.operators import DensityCompensationOp, FastFourierOp, NonUniformFastFourierOp, PCACompressionOp
+from mr2.operators.NonUniformFastFourierOp import SubspaceNonUniformFastFourierOpGramOp
 from mr2.utils import RandomGenerator
 from torch.autograd.gradcheck import gradcheck
 
@@ -59,12 +54,8 @@ def create_time_varying_zx_nufft_op(
     angles = torch.linspace(0, torch.pi, n_timepoints + 1, dtype=dtype)[:-1]
     z_readout = torch.linspace(-nz / 2, nz / 2, nz, dtype=dtype)
     x_readout = torch.linspace(-nx / 2, nx / 2, nx, dtype=dtype)
-    kz = (torch.sin(angles)[:, None, None, None, None] * z_readout[None, None, :, None, None]).expand(
-        -1, 1, -1, 1, nx
-    )
-    kx = (torch.cos(angles)[:, None, None, None, None] * x_readout[None, None, None, None, :]).expand(
-        -1, 1, nz, 1, -1
-    )
+    kz = (torch.sin(angles)[:, None, None, None, None] * z_readout[None, None, :, None, None]).expand(-1, 1, -1, 1, nx)
+    kx = (torch.cos(angles)[:, None, None, None, None] * x_readout[None, None, None, None, :]).expand(-1, 1, nz, 1, -1)
     ky = torch.zeros((n_timepoints, 1, 1, 1, 1), dtype=dtype)
     trajectory = KTrajectory(kz=kz, ky=ky, kx=kx)
     return NonUniformFastFourierOp(
