@@ -581,7 +581,7 @@ class SubspaceNonUniformFastFourierOpGramOp(LinearOperator, adjoint_as_backward=
             return
 
         if isinstance(subspace_basis, PCACompressionOp):
-            basis = subspace_basis._compression_matrix.mH
+            basis = subspace_basis.compression_matrix.mH
         else:
             basis = subspace_basis
         basis = basis.squeeze()

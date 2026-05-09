@@ -47,6 +47,11 @@ class PCACompressionOp(LinearOperator):
         v = repeat(v.conj(), '... comp1 comp2 -> ... joint_dim  comp2 comp1', joint_dim=1)
         self._compression_matrix = v[..., -n_components:, :].flip(-2)  # V is sorted in ascending order
 
+    @property
+    def compression_matrix(self) -> torch.Tensor:
+        """Compression matrix, read-only."""
+        return self._compression_matrix
+
     def __call__(self, data: torch.Tensor) -> tuple[torch.Tensor,]:
         """Apply PCA-based compression to the input data.
 

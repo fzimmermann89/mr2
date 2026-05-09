@@ -300,11 +300,11 @@ def test_subspace_non_uniform_fast_fourier_op_gram_accepts_pca_operator() -> Non
     nufft_op = create_time_varying_2d_nufft_op(n_timepoints=n_timepoints, image_shape=image_shape)
     training_signals = rng.complex64_tensor((1, 32, n_timepoints))
     pca_op = PCACompressionOp(training_signals, n_components=n_coefficients, centering=False)
-    basis = pca_op._compression_matrix.squeeze(0).mH
+    basis = pca_op.compression_matrix.squeeze(0).mH
     alpha = rng.complex64_tensor((n_coefficients, 1, 1, *image_shape))
 
     subspace_gram_from_pca = SubspaceNonUniformFastFourierOpGramOp(nufft_op, pca_op)
-    subspace_gram_from_basis = SubspaceNonUniformFastFourierOpGramOp(nufft_op, basis)
+
 
     (actual_from_pca,) = subspace_gram_from_pca(alpha)
     (actual_from_basis,) = subspace_gram_from_basis(alpha)
