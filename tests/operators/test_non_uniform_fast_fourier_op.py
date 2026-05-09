@@ -25,43 +25,27 @@ def create_data(img_shape, nkx, nky, nkz, type_kx, type_ky, type_kz) -> tuple[to
 def create_time_varying_2d_nufft_op(
     n_timepoints: int = 4,
     image_shape: tuple[int, int] = (12, 10),
-    dtype: torch.dtype = torch.float32,
 ) -> NonUniformFastFourierOp:
-    """Create a small 2D NUFFT with one radial spoke per time point."""
-    angles = torch.linspace(0, torch.pi, n_timepoints + 1, dtype=dtype)[:-1]
-    readout = torch.linspace(-image_shape[-1] / 2, image_shape[-1] / 2, image_shape[-1], dtype=dtype)
-    kx = (torch.cos(angles)[:, None] * readout[None, :])[:, None, None, :]
-    ky = (torch.sin(angles)[:, None] * readout[None, :])[:, None, None, :]
-    kx = kx[:, None, :, :]
-    ky = ky[:, None, :, :]
-    kz = torch.zeros_like(kx)
-    trajectory = KTrajectory(kz=kz, ky=ky, kx=kx)
-    return NonUniformFastFourierOp(
-        direction=(-2, -1),
-        recon_matrix=SpatialDimension(z=1, y=image_shape[0], x=image_shape[1]),
-        encoding_matrix=SpatialDimension(z=1, y=image_shape[0], x=image_shape[1]),
-        traj=trajectory,
+    """Create a small time-varying 2D NUFFT over y/x."""
+    nk = (n_timepoints, 1, 1, *image_shape)
+    trajectory = create_traj(
+        nkx=nk,
+        nky=nk,
+        nkz=(n_timepoints, 1, 1, 1, 1),
+        type_kx='non-uniform',
+        type_ky='non-uniform',
+        type_kz='zero',
     )
-
-
-def create_time_varying_zx_nufft_op(
-    n_timepoints: int = 4,
-    image_shape: tuple[int, int, int] = (6, 5, 7),
-    dtype: torch.dtype = torch.float32,
-) -> NonUniformFastFourierOp:
-    """Create a small NUFFT over non-contiguous z/x image axes."""
-    nz, ny, nx = image_shape
-    angles = torch.linspace(0, torch.pi, n_timepoints + 1, dtype=dtype)[:-1]
-    z_readout = torch.linspace(-nz / 2, nz / 2, nz, dtype=dtype)
-    x_readout = torch.linspace(-nx / 2, nx / 2, nx, dtype=dtype)
-    kz = (torch.sin(angles)[:, None, None, None, None] * z_readout[None, None, :, None, None]).expand(-1, 1, -1, 1, nx)
-    kx = (torch.cos(angles)[:, None, None, None, None] * x_readout[None, None, None, None, :]).expand(-1, 1, nz, 1, -1)
-    ky = torch.zeros((n_timepoints, 1, 1, 1, 1), dtype=dtype)
-    trajectory = KTrajectory(kz=kz, ky=ky, kx=kx)
+    encoding_matrix = SpatialDimension(
+        int(trajectory.kz.max() - trajectory.kz.min() + 1),
+        int(trajectory.ky.max() - trajectory.ky.min() + 1),
+        int(trajectory.kx.max() - trajectory.kx.min() + 1),
+    )
+    direction = tuple(d for d, e in zip((-3, -2, -1), encoding_matrix.zyx, strict=False) if e > 1)
     return NonUniformFastFourierOp(
-        direction=(-3, -1),
-        recon_matrix=SpatialDimension(z=nz, y=ny, x=nx),
-        encoding_matrix=SpatialDimension(z=nz, y=ny, x=nx),
+        direction=direction,
+        recon_matrix=SpatialDimension(z=1, y=image_shape[0], x=image_shape[1]),
+        encoding_matrix=encoding_matrix,
         traj=trajectory,
     )
 
@@ -310,19 +294,35 @@ def test_subspace_non_uniform_fast_fourier_op_gram() -> None:
 def test_subspace_non_uniform_fast_fourier_op_gram_non_contiguous_directions() -> None:
     """Test subspace Toeplitz Gram over non-contiguous z/x image axes."""
     rng = RandomGenerator(seed=7)
-    n_timepoints, n_coefficients = 4, 2
-    image_shape = (6, 5, 7)
+    n_coefficients = 2
+    img_shape = (8, 5, 64, 1, 64)
+    nkx = (8, 1, 1, 18, 128)
+    nky = (8, 1, 1, 1, 1)
+    nkz = (8, 1, 1, 18, 128)
+    trajectory = create_traj(nkx, nky, nkz, type_kx='non-uniform', type_ky='zero', type_kz='non-uniform')
 
-    nufft_op = create_time_varying_zx_nufft_op(n_timepoints=n_timepoints, image_shape=image_shape)
-    basis = rng.complex64_tensor((n_timepoints, n_coefficients))
-    alpha = rng.complex64_tensor((n_coefficients, 1, 1, *image_shape))
+    recon_matrix = SpatialDimension(img_shape[-3], img_shape[-2], img_shape[-1])
+    encoding_matrix = SpatialDimension(
+        int(trajectory.kz.max() - trajectory.kz.min() + 1),
+        int(trajectory.ky.max() - trajectory.ky.min() + 1),
+        int(trajectory.kx.max() - trajectory.kx.min() + 1),
+    )
+    direction = [d for d, e in zip(('z', 'y', 'x'), encoding_matrix.zyx, strict=False) if e > 1]
+    nufft_op = NonUniformFastFourierOp(
+        direction=direction,  # type: ignore[arg-type]
+        recon_matrix=recon_matrix,
+        encoding_matrix=encoding_matrix,
+        traj=trajectory,
+    )
+    basis = rng.complex64_tensor((img_shape[0], n_coefficients))
+    alpha = rng.complex64_tensor((n_coefficients, *img_shape[1:]))
 
     subspace_gram = nufft_op.toeplitz(subspace=basis)
 
-    expanded = einops.einsum(basis, alpha, 'time coeff, coeff joint coil ... -> time joint coil ...')
+    expanded = einops.einsum(basis, alpha, 'time coeff, coeff coil ... -> time coil ...')
     (kspace,) = nufft_op(expanded)
     (backprojected,) = nufft_op.H(kspace)
-    expected = einops.einsum(basis.conj(), backprojected, 'time coeff, time joint coil ... -> coeff joint coil ...')
+    expected = einops.einsum(basis.conj(), backprojected, 'time coeff, time coil ... -> coeff coil ...')
     (actual,) = subspace_gram(alpha)
 
     torch.testing.assert_close(actual, expected, rtol=2e-3, atol=2e-3)
@@ -376,7 +376,6 @@ def test_non_uniform_fast_fourier_op_gram_autograd() -> None:
     nufft_op = create_time_varying_2d_nufft_op(
         n_timepoints=n_timepoints,
         image_shape=image_shape,
-        dtype=torch.float64,
     )
     operator = nufft_op.toeplitz().double()
     image = rng.complex128_tensor((n_timepoints, 1, 1, *image_shape)).requires_grad_(True)
@@ -392,7 +391,6 @@ def test_subspace_non_uniform_fast_fourier_op_gram_autograd() -> None:
     nufft_op = create_time_varying_2d_nufft_op(
         n_timepoints=n_timepoints,
         image_shape=image_shape,
-        dtype=torch.float64,
     )
     basis = rng.complex128_tensor((n_timepoints, n_coefficients))
     operator = nufft_op.toeplitz(subspace=basis).double()
