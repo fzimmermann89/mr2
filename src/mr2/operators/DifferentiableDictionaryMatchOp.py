@@ -204,18 +204,12 @@ class DifferentiableDictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]
             if len(prior) != n_x or not all(isinstance(p, torch.Tensor) for p in prior):
                 raise ValueError('Prior must be a tuple of tensors matching the number of parameters.')
             prior_ = tuple(p for p in prior if isinstance(p, torch.Tensor))
-            if len(prior_precision) != n_x or not all(isinstance(lam, torch.Tensor) for lam in prior_precision):
+            if len(prior_precision) != n_x or not all(isinstance(lam, torch.Tensor) and torch.isfinite(lam).all() and not (lam.is_complex() or (lam < 0).any()) for lam in prior_precision):
                 raise ValueError(
                     'prior_precision must be a tuple of finite non-negative real tensors matching the number '
                     'of parameters.'
                 )
             prior_precision_ = tuple(lam for lam in prior_precision if isinstance(lam, torch.Tensor))
-            if any(lam.is_complex() or not torch.isfinite(lam).all() or (lam < 0).any() for lam in prior_precision_):
-                raise ValueError(
-                    'prior_precision must be a tuple of finite non-negative real tensors matching the number '
-                    'of parameters.'
-                )
-
             prior_flat = [p.broadcast_to(batch_shape).flatten() for p in prior_]
             precision_flat = [lam.broadcast_to(batch_shape).to(dtype.to_real()).flatten() for lam in prior_precision_]
 
@@ -265,10 +259,10 @@ class DifferentiableDictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]
             else:
                 scale_precision = precision_flat[scaling_position]
                 scale = (scale + scale_precision * prior_flat[scaling_position]) / (norm_y_sq[idx] + scale_precision)
-            y = scale[:, None] * y
             j_cols = [scale[:, None] * col for col in j_cols]
-            x.insert(scaling_position, scale)
-            j_cols.insert(scaling_position, y)  # y is the partial deriv. wrt scale
+            x.insert(scaling_position, scale) 
+            j_cols.insert(scaling_position, y) # y is the partial deriv. wrt scale
+            y = scale[:, None] * y
 
         j = torch.stack(j_cols, dim=2)
         residual = signal - y
