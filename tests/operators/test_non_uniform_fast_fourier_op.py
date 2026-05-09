@@ -49,6 +49,32 @@ def create_time_varying_2d_nufft_op(
     )
 
 
+def create_time_varying_zx_nufft_op(
+    n_timepoints: int = 4,
+    image_shape: tuple[int, int, int] = (6, 5, 7),
+    dtype: torch.dtype = torch.float32,
+) -> NonUniformFastFourierOp:
+    """Create a small NUFFT over non-contiguous z/x image axes."""
+    nz, ny, nx = image_shape
+    angles = torch.linspace(0, torch.pi, n_timepoints + 1, dtype=dtype)[:-1]
+    z_readout = torch.linspace(-nz / 2, nz / 2, nz, dtype=dtype)
+    x_readout = torch.linspace(-nx / 2, nx / 2, nx, dtype=dtype)
+    kz = (torch.sin(angles)[:, None, None, None, None] * z_readout[None, None, :, None, None]).expand(
+        -1, 1, -1, 1, nx
+    )
+    kx = (torch.cos(angles)[:, None, None, None, None] * x_readout[None, None, None, None, :]).expand(
+        -1, 1, nz, 1, -1
+    )
+    ky = torch.zeros((n_timepoints, 1, 1, 1, 1), dtype=dtype)
+    trajectory = KTrajectory(kz=kz, ky=ky, kx=kx)
+    return NonUniformFastFourierOp(
+        direction=(-3, -1),
+        recon_matrix=SpatialDimension(z=nz, y=ny, x=nx),
+        encoding_matrix=SpatialDimension(z=nz, y=ny, x=nx),
+        traj=trajectory,
+    )
+
+
 @COMMON_MR_TRAJECTORIES
 def test_non_uniform_fast_fourier_op_fwd_adj_property(
     img_shape, k_shape, nkx, nky, nkz, type_kx, type_ky, type_kz, type_k0, type_k1, type_k2
@@ -280,6 +306,27 @@ def test_subspace_non_uniform_fast_fourier_op_gram() -> None:
 
     subspace_gram = nufft_op.toeplitz(subspace=basis)
     assert isinstance(subspace_gram, SubspaceNonUniformFastFourierOpGramOp)
+
+    expanded = einops.einsum(basis, alpha, 'time coeff, coeff joint coil ... -> time joint coil ...')
+    (kspace,) = nufft_op(expanded)
+    (backprojected,) = nufft_op.H(kspace)
+    expected = einops.einsum(basis.conj(), backprojected, 'time coeff, time joint coil ... -> coeff joint coil ...')
+    (actual,) = subspace_gram(alpha)
+
+    torch.testing.assert_close(actual, expected, rtol=2e-3, atol=2e-3)
+
+
+def test_subspace_non_uniform_fast_fourier_op_gram_non_contiguous_directions() -> None:
+    """Test subspace Toeplitz Gram over non-contiguous z/x image axes."""
+    rng = RandomGenerator(seed=7)
+    n_timepoints, n_coefficients = 4, 2
+    image_shape = (6, 5, 7)
+
+    nufft_op = create_time_varying_zx_nufft_op(n_timepoints=n_timepoints, image_shape=image_shape)
+    basis = rng.complex64_tensor((n_timepoints, n_coefficients))
+    alpha = rng.complex64_tensor((n_coefficients, 1, 1, *image_shape))
+
+    subspace_gram = nufft_op.toeplitz(subspace=basis)
 
     expanded = einops.einsum(basis, alpha, 'time coeff, coeff joint coil ... -> time joint coil ...')
     (kspace,) = nufft_op(expanded)

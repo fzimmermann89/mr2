@@ -568,8 +568,7 @@ class SubspaceNonUniformFastFourierOpGramOp(LinearOperator, adjoint_as_backward=
             Optional density compensation or k-space weights. If provided, calculates
             the compressed normal operator corresponding to :math:`F^H W F`.
         subspace_dim
-            Dimension of the coefficient channel in the input/output tensors. Spatial
-            dimensions are assumed to remain trailing, matching the usual MR2 image layout.
+            Dimension of the coefficient channel in the input/output tensors.
         """
         super().__init__()
         self._dim = nufft_op._direction_zyx
@@ -625,6 +624,10 @@ class SubspaceNonUniformFastFourierOpGramOp(LinearOperator, adjoint_as_backward=
             subspace_kernel = term if subspace_kernel is None else subspace_kernel + term
 
         assert subspace_kernel is not None  # noqa: S101
+        kernel_shape = [1, 1, 1]
+        for direction, size in zip(self._dim, subspace_kernel.shape[2:], strict=True):
+            kernel_shape[direction] = size
+        subspace_kernel = subspace_kernel.reshape(*subspace_kernel.shape[:2], *kernel_shape)
         self._kernel = subspace_kernel * nufft_op.scale.item() ** 2
 
     @property
@@ -664,15 +667,14 @@ class SubspaceNonUniformFastFourierOpGramOp(LinearOperator, adjoint_as_backward=
             )
         x = x.movedim(subspace_dim, 0)
 
-        spatial_dims = tuple(range(x.ndim - len(self._dim), x.ndim))
         padded_shape = [2 * s for s in self._recon_shape]
-        spatial_crop: list[slice] = [slice(None)] * x.ndim
-        for d, s in zip(spatial_dims, self._recon_shape, strict=True):
+        spatial_crop: list[slice | EllipsisType] = [..., slice(None), slice(None), slice(None)]
+        for d, s in zip(self._dim, self._recon_shape, strict=True):
             spatial_crop[d] = slice(0, s)
 
-        x = torch.fft.fftn(x, s=padded_shape, dim=spatial_dims)
+        x = torch.fft.fftn(x, s=padded_shape, dim=self._dim)
         x = einops.einsum(self._kernel.to(x.dtype), x, 'coeff_out coeff_in ..., coeff_in ... -> coeff_out ...')
-        x = torch.fft.ifftn(x, dim=spatial_dims)
+        x = torch.fft.ifftn(x, dim=self._dim)
         x = x[tuple(spatial_crop)]
         out = x.clone().movedim(0, subspace_dim)
         return (out,)
@@ -683,9 +685,7 @@ class SubspaceNonUniformFastFourierOpGramOp(LinearOperator, adjoint_as_backward=
         Parameters
         ----------
         x
-            Subspace coefficient images. The coefficient axis is given by `subspace_dim`;
-            the selected spatial dimensions are trailing axes, e.g. `(coeff, z, y, x)`
-            for 3D or `(coeff, y, x)` for 2D when `subspace_dim=0`.
+            Subspace coefficient images. The coefficient axis is given by `subspace_dim`
 
         Returns
         -------
@@ -703,9 +703,8 @@ class SubspaceNonUniformFastFourierOpGramOp(LinearOperator, adjoint_as_backward=
         Parameters
         ----------
         x
-            Subspace coefficient images. The coefficient axis is given by `subspace_dim`;
-            the selected spatial dimensions are trailing axes, e.g. `(coeff, z, y, x)`
-            for 3D or `(coeff, y, x)` for 2D when `subspace_dim=0`.
+            Subspace coefficient images. The coefficient axis is given by `subspace_dim`
+
 
         Returns
         -------
