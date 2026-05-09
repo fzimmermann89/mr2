@@ -425,7 +425,7 @@ class NonUniformFastFourierOpGramOp(LinearOperator, adjoint_as_backward=True):
             Optional density compensation weights. If provided, calculates F^H W F.
         """
         super().__init__()
-        if not nufft_op._dimension_210:
+        if not nufft_op._direction_zyx:
             self._kernel = None
             return
 
@@ -571,7 +571,7 @@ class SubspaceNonUniformFastFourierOpGramOp(LinearOperator, adjoint_as_backward=
             Dimension of the coefficient channel in the input/output tensors.
         """
         super().__init__()
-        if not nufft_op._dimension_210:
+        if not nufft_op._direction_zyx:
             self._kernel = None
             return
 
