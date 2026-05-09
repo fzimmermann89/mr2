@@ -41,9 +41,8 @@ def create_time_varying_2d_nufft_op(
         int(trajectory.ky.max() - trajectory.ky.min() + 1),
         int(trajectory.kx.max() - trajectory.kx.min() + 1),
     )
-    direction = tuple(d for d, e in zip((-3, -2, -1), encoding_matrix.zyx, strict=False) if e > 1)
     return NonUniformFastFourierOp(
-        direction=direction,
+        direction=(-2, -1),
         recon_matrix=SpatialDimension(z=1, y=image_shape[0], x=image_shape[1]),
         encoding_matrix=encoding_matrix,
         traj=trajectory,
