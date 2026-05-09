@@ -17,7 +17,7 @@ class DifferentiableDictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]
     r"""Differentiable Dictionary Matching Operator.
 
     This operator can be used for dictionary matching, for example in
-    magnetic ressonance fingerprinting.
+    magnetic resonance fingerprinting.
 
     It performs absolute normalized dot product matching between a dictionary of signals,
     i.e. find the entry :math:`d^*` in the dictionary maximizing
@@ -33,7 +33,8 @@ class DifferentiableDictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]
     dot product matching and return the associated `x` values.
 
     .. note::
-            This operator is not differentiable, the input signal to match to should not require gradients.
+            The Gauss-Newton refinement step is differentiable in ``input_signal``.
+            The dictionary lookup itself (argmax) is non-differentiable.
     """
 
     def __init__(
