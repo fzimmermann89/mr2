@@ -69,10 +69,10 @@ def espirit(
     kernels = rearrange(vh, 'n (coils c b a) -> n coils c b a', coils=n_coils, c=c, b=b, a=a)
 
     # Get covariance matrix in image domain
-    aha = torch.zeros((n_coils, n_coils, *img_shape), dtype=coil_k_space.dtype, device=coil_k_space.device)
+    aha = torch.zeros((n_coils, n_coils, *img_shape.zyx), dtype=coil_k_space.dtype, device=coil_k_space.device)
 
     for kernel in kernels:
-        img_kernel = torch.fft.ifftn(kernel, s=img_shape, dim=(-3, -2, -1), norm='ortho')
+        img_kernel = torch.fft.ifftn(kernel, s=img_shape.zyx, dim=(-3, -2, -1), norm='ortho')
         img_kernel = torch.fft.ifftshift(img_kernel, dim=(-1, -2, -3))
         aha += torch.einsum('c z y x, d z y x->c d z y x ', img_kernel, img_kernel.conj())
 

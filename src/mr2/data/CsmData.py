@@ -120,7 +120,8 @@ class CsmData(IData, init=False):
             kspace_data,
             passed_dimensions=(-4, -3, -2, -1),  # coils, z, y, x
         )
-        return cls(header=IHeader.from_kheader(acs.header), data=csm_data)
+        csm = cls(header=IHeader.from_kheader(acs.header), data=csm_data)
+        return csm
 
     @classmethod
     def from_kdata_walsh(

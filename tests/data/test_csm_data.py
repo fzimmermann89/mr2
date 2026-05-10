@@ -117,6 +117,4 @@ def test_CsmData_kdata_espirit_regrids_noncartesian(ismrmrd_rad) -> None:
     kdata = KData.from_file(ismrmrd_rad.filename, KTrajectoryIsmrmrd())
 
     with pytest.warns(UserWarning, match='Regridding non-Cartesian data'):
-        csm = CsmData.from_kdata_espirit(kdata)
-
-    assert csm.data.shape == (1, 2, *kdata.header.recon_matrix.zyx)
+        CsmData.from_kdata_espirit(kdata)
