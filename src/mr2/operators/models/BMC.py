@@ -2,7 +2,6 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from dataclasses import dataclass
 
 import torch
 from torch.utils.checkpoint import checkpoint as activation_checkpoint
@@ -21,24 +20,22 @@ CHUNK_SIZE_SAME_FREQ = 128
 CHUNK_SIZE_DIFF_FREQ = 64
 
 
-@dataclass
 class MTSaturation(ABC, TensorAttributeMixin):
     """Base class for MT lineshape models."""
-
-    pool_index: int
-    """Index of the MT pool in the pool dimension."""
-
-    t2: torch.Tensor
-    """Transverse relaxation time in seconds."""
 
     @abstractmethod
     def __call__(self, delta_omega: torch.Tensor) -> torch.Tensor:
         r"""Evaluate \(G(\Delta)\) [s]."""
 
 
-@dataclass
 class LorentzianMT(MTSaturation):
     """Lorentzian lineshape for MT saturation."""
+
+    def __init__(self, pool_index: int, t2: torch.Tensor) -> None:
+        """Initialize the Lorentzian MT saturation model."""
+        super().__init__()
+        self.pool_index = pool_index
+        self.t2 = t2
 
     def __call__(self, delta_omega: torch.Tensor) -> torch.Tensor:
         r"""Evaluate \(G(\Delta)\) [s].
@@ -50,20 +47,25 @@ class LorentzianMT(MTSaturation):
 
         Returns
         -------
-        g
-            Lineshape value in seconds.
+            Lineshape value.
         """
         t2 = self.t2.to(delta_omega)
         x = delta_omega * t2
         return t2 / (1 + x * x)
 
 
-@dataclass
 class SuperLorentzianMT(MTSaturation):
     """Super-Lorentzian lineshape for MT saturation."""
 
-    samples: int = 101
+    samples: int
     """Quadrature samples for numerical integration."""
+
+    def __init__(self, pool_index: int, t2: torch.Tensor, samples: int = 101) -> None:
+        """Initialize the super-Lorentzian MT model."""
+        super().__init__()
+        self.samples = samples
+        self.pool_index = pool_index
+        self.t2 = t2
 
     def __call__(self, delta_omega: torch.Tensor) -> torch.Tensor:
         r"""Evaluate \(G(\Delta)\) [s].
@@ -72,8 +74,10 @@ class SuperLorentzianMT(MTSaturation):
         ----------
         delta_omega
             Detuning in rad/s.
-        t2
-            Transverse relaxation time in seconds.
+
+        Returns
+        -------
+            Lineshape value.
         """
         t2 = self.t2.to(delta_omega)
         u = torch.linspace(0.0, 1.0, self.samples, device=delta_omega.device, dtype=delta_omega.dtype)
@@ -833,7 +837,7 @@ class DelayBlock(BMCBlock):
         Parameters
         ----------
         duration
-            Duration in seconds. Shape ``(..., pools)``.
+            Duration in seconds.
         """
         super().__init__()
         self._duration = torch.as_tensor(duration)

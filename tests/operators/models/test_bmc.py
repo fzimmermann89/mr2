@@ -10,6 +10,7 @@ from mr2.operators.models.BMC import (
     BMCSequence,
     ConstantRFBlock,
     DelayBlock,
+    LorentzianMT,
     GradientBlock,
     LongitudinalReadoutBlock,
     Parameters,
@@ -477,6 +478,14 @@ def test_slice_selective_rf_block_preserves_isochromat_relative_b1_phase() -> No
     )
 
     torch.testing.assert_close(profile_state, rf_state.squeeze(-3))
+
+
+def test_mt_saturation_registers_t2_as_buffer() -> None:
+    """Test that MT saturation models initialize Module state before tensor assignment."""
+    mt = LorentzianMT(pool_index=1, t2=torch.tensor(0.01))
+    assert 't2' in mt._buffers
+    torch.testing.assert_close(mt.t2, torch.tensor(0.01))
+    torch.testing.assert_close(mt.to(dtype=torch.float64).t2, torch.tensor(0.01, dtype=torch.float64))
 
 
 @pytest.mark.parametrize('slice_fwhm', [4e-3, 7e-3])
