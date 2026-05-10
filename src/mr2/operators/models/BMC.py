@@ -23,6 +23,18 @@ CHUNK_SIZE_DIFF_FREQ = 64
 class MTSaturation(ABC, TensorAttributeMixin):
     """Base class for MT lineshape models."""
 
+    pool_index: int
+    """Index of the MT pool in the pool dimension."""
+
+    t2: torch.Tensor
+    """Transverse relaxation time in seconds."""
+
+    def __init__(self, pool_index: int, t2: torch.Tensor) -> None:
+        """Initialize the MT saturation model."""
+        super().__init__()
+        self.pool_index = pool_index
+        self.t2 = t2
+
     @abstractmethod
     def __call__(self, delta_omega: torch.Tensor) -> torch.Tensor:
         r"""Evaluate \(G(\Delta)\) [s]."""
@@ -33,9 +45,7 @@ class LorentzianMT(MTSaturation):
 
     def __init__(self, pool_index: int, t2: torch.Tensor) -> None:
         """Initialize the Lorentzian MT saturation model."""
-        super().__init__()
-        self.pool_index = pool_index
-        self.t2 = t2
+        super().__init__(pool_index=pool_index, t2=t2)
 
     def __call__(self, delta_omega: torch.Tensor) -> torch.Tensor:
         r"""Evaluate \(G(\Delta)\) [s].
@@ -62,10 +72,8 @@ class SuperLorentzianMT(MTSaturation):
 
     def __init__(self, pool_index: int, t2: torch.Tensor, samples: int = 101) -> None:
         """Initialize the super-Lorentzian MT model."""
-        super().__init__()
+        super().__init__(pool_index=pool_index, t2=t2)
         self.samples = samples
-        self.pool_index = pool_index
-        self.t2 = t2
 
     def __call__(self, delta_omega: torch.Tensor) -> torch.Tensor:
         r"""Evaluate \(G(\Delta)\) [s].
