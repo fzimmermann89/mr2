@@ -72,21 +72,22 @@ def espirit(
     aha = torch.zeros((n_coils, n_coils, *img_shape), dtype=coil_k_space.dtype, device=coil_k_space.device)
 
     for kernel in kernels:
-        img_kernel = torch.fft.ifftn(kernel, s=img_shape, dim=(-3, -2, -1))
+        img_kernel = torch.fft.ifftn(kernel, s=img_shape, dim=(-3, -2, -1), norm='ortho')
         img_kernel = torch.fft.ifftshift(img_kernel, dim=(-1, -2, -3))
         aha += torch.einsum('c z y x, d z y x->c d z y x ', img_kernel, img_kernel.conj())
 
-    aha *= aha[0, 0].numel() / kernels.shape[-1]
+    kernel_size = kernels.shape[-3] * kernels.shape[-2] * kernels.shape[-1]
+    aha *= aha[0, 0].numel() / kernel_size
 
     v = aha.sum(dim=0)
     for _ in range(n_iterations):
-        v /= v.norm(dim=0)
+        v /= v.norm(dim=0).clamp_min(1e-12)
         v = torch.einsum('abzyx,bzyx->azyx', aha, v)
     max_eig = v.norm(dim=0)
-    csm = v / max_eig
+    csm = v / max_eig.clamp_min(1e-12)
 
     # Normalize phase with respect to first channel
-    csm *= csm[0].conj() / csm[0].abs()
+    csm *= csm[0].conj() / csm[0].abs().clamp_min(1e-12)
 
     csm *= max_eig > crop_threshold
 

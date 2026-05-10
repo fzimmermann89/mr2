@@ -10,6 +10,7 @@ from typing_extensions import Self
 
 from mr2.data.enums import TrajType
 from mr2.data.IData import IData
+from mr2.data.IHeader import IHeader
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.utils.interpolate import apply_lowres
 from mr2.utils.smap import smap
@@ -119,7 +120,7 @@ class CsmData(IData, init=False):
             kspace_data,
             passed_dimensions=(-4, -3, -2, -1),  # coils, z, y, x
         )
-        return cls(header=acs.header, data=csm_data)
+        return cls(header=IHeader.from_kheader(acs.header), data=csm_data)
 
     @classmethod
     def from_kdata_walsh(

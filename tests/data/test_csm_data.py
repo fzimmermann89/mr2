@@ -89,6 +89,7 @@ def test_CsmData_kdata_inati(ismrmrd_cart_single_rep) -> None:
     csm_from_idata = CsmData.from_idata_inati(idata)
     torch.testing.assert_close(csm_from_kdata.data, csm_from_idata.data, rtol=1e-5, atol=1e-5)
 
+
 def test_CsmData_walsh_align_phase_matches_explicit_call(
     ellipse_phantom: EllipsePhantomTestData, random_kheader: KHeader
 ) -> None:
