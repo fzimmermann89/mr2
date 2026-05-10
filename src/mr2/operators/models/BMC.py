@@ -316,12 +316,10 @@ def system_rf_matrix(
     extra_dw = torch.as_tensor(extra_off_resonance, device=m0.device, dtype=m0.dtype)
 
     if parameters.relative_b1 is not None:
-        rb1 = parameters.relative_b1.to(amp)
-        if rb1.is_complex():
-            phase = phase + rb1.angle()
-            amp = amp * rb1.abs()
-        else:
-            amp = amp * rb1
+        if parameters.relative_b1.is_complex():
+            phase = phase + parameters.relative_b1.angle().to(phase)
+
+        amp = amp * parameters.relative_b1.abs().to(amp)
 
     if parameters.chemical_shift is not None:
         shift = parameters.chemical_shift.to(m0)
@@ -796,14 +794,15 @@ class SliceSelectiveRFBlock(BMCBlock):
         effective_rf_phase = self._block.rf_phase
         if parameters.relative_b1 is not None:
             rb1 = parameters.relative_b1.to(device=effective_rf_amplitude.device)
+            has_iso_axis = rb1.ndim > 0 and rb1.shape[-1] == self.n_iso
+            rb1 = rb1.unsqueeze(0) if has_iso_axis else rb1.unsqueeze(0).unsqueeze(-1)
             if rb1.is_complex():
-                effective_rf_amplitude = effective_rf_amplitude * rb1.abs()[..., None]
-                effective_rf_phase = (
-                    torch.as_tensor(self._block.rf_phase, device=state.device, dtype=state.real.dtype)
-                    + rb1.angle()[..., None]
-                )
+                effective_rf_amplitude = effective_rf_amplitude * rb1.abs().to(effective_rf_amplitude)
+                effective_rf_phase = torch.as_tensor(
+                    self._block.rf_phase, device=state.device, dtype=state.real.dtype
+                ) + rb1.angle().to(device=state.device, dtype=state.real.dtype)
             else:
-                effective_rf_amplitude = effective_rf_amplitude * rb1.to(effective_rf_amplitude)[..., None]
+                effective_rf_amplitude = effective_rf_amplitude * rb1.to(effective_rf_amplitude)
         effective_block = PiecewiseRFBlock(
             rf_amplitude=effective_rf_amplitude,
             rf_phase=effective_rf_phase,

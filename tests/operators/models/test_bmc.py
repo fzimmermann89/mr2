@@ -434,6 +434,51 @@ def test_slice_selective_rf_block_preserves_complex_relative_b1_phase() -> None:
     torch.testing.assert_close(profile_state, rf_state)
 
 
+def test_slice_selective_rf_block_preserves_isochromat_relative_b1_phase() -> None:
+    """Test that slice-selective RF aligns isochromat-wise complex B1 correctly."""
+    phase = torch.linspace(0.0, torch.pi / 4, 5)
+    parameters = Parameters(
+        equilibrium_magnetization=torch.tensor([1.0]),
+        t1=torch.tensor([1.2]),
+        t2=torch.tensor([0.08]),
+        exchange_rate=torch.tensor([[0.0]]),
+        chemical_shift=torch.tensor([0.0]),
+        relative_b1=torch.exp(1j * phase),
+    )
+    state = initial_state(parameters).expand(5, -1, -1).clone()
+    positions = SpatialDimension(
+        z=torch.linspace(-2e-3, 2e-3, 5),
+        y=torch.zeros(5),
+        x=torch.zeros(5),
+    )
+    amp = torch.tensor([0.3, 0.8, 1.0, 0.8, 0.3])
+    profile = SliceSmoothedRectangular(fwhm_rect=1.0, fwhm_gauss=0.0)
+
+    profile_state, _ = SliceSelectiveRFBlock(
+        rf_amplitude=amp,
+        slice_profile=profile,
+        positions=positions,
+        dt=2.5e-4,
+    )(parameters, state)
+
+    rf_state, _ = PiecewiseRFBlock(
+        rf_amplitude=amp[..., None],
+        rf_phase=phase[None, :],
+        dt=2.5e-4,
+    )(
+        Parameters(
+            equilibrium_magnetization=parameters.equilibrium_magnetization,
+            t1=parameters.t1,
+            t2=parameters.t2,
+            exchange_rate=parameters.exchange_rate,
+            chemical_shift=parameters.chemical_shift,
+        ),
+        state.unsqueeze(-3),
+    )
+
+    torch.testing.assert_close(profile_state, rf_state.squeeze(-3))
+
+
 @pytest.mark.parametrize('slice_fwhm', [4e-3, 7e-3])
 def test_slice_profile_approx_rf(slice_fwhm: float) -> None:
     """Test that the slice profile approximation matches the explicit RF block."""
@@ -502,6 +547,15 @@ def test_slice_rf_pulse_templates_match_flip_angle_and_zero_phase(pulse_cls: typ
     achieved_flip_angle = 2 * torch.pi * GYROMAGNETIC_RATIO_PROTON * dt * (rf * torch.exp(1j * phase)).sum()
     expected_flip_angle = torch.complex(flip_angle, torch.zeros_like(flip_angle))
     torch.testing.assert_close(achieved_flip_angle, expected_flip_angle, atol=1e-6, rtol=1e-6)
+
+
+@pytest.mark.cuda
+@pytest.mark.parametrize('pulse_cls', [GaussianRFPulse, SincRFPulse])
+def test_slice_rf_pulse_templates_follow_module_device_on_cuda(pulse_cls: type[SliceRFPulseBase]) -> None:
+    """Test that RF pulse templates create CUDA tensors when the module is on CUDA."""
+    pulse = pulse_cls().cuda()
+    rf = pulse(flip_angle=torch.pi / 3, duration=2e-3, dt=10e-6)
+    assert rf.is_cuda
 
 
 def test_gradient_to_extra_off_resonance() -> None:

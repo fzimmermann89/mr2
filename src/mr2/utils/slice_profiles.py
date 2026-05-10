@@ -108,9 +108,10 @@ class GaussianRFPulse(SliceRFPulseBase):
         self, flip_angle: torch.Tensor | float, duration: torch.Tensor | float, dt: torch.Tensor | float
     ) -> torch.Tensor:
         """Create a Gaussian RF waveform in Tesla."""
+        duration = torch.as_tensor(duration).to(self.fwhm_fraction)
+        dt = torch.as_tensor(dt).to(self.fwhm_fraction)
         samples = _n_samples(duration, dt)
-        duration = torch.as_tensor(duration)
-        time = torch.linspace(-0.5, 0.5, samples, dtype=duration.dtype, device=duration.device)
+        time = torch.linspace(-0.5, 0.5, samples, dtype=self.fwhm_fraction.dtype, device=self.fwhm_fraction.device)
         sigma = self.fwhm_fraction / (2 * (2 * log(2)) ** 0.5)
         waveform = torch.exp(-0.5 * (time / sigma) ** 2)
         return _scale_waveform_to_flip_angle(waveform, flip_angle, dt)
@@ -140,9 +141,10 @@ class SincRFPulse(SliceRFPulseBase):
         self, flip_angle: torch.Tensor | float, duration: torch.Tensor | float, dt: torch.Tensor | float
     ) -> torch.Tensor:
         """Create an apodized sinc RF waveform in Tesla."""
+        duration = torch.as_tensor(duration).to(self.time_bandwidth)
+        dt = torch.as_tensor(dt).to(self.time_bandwidth)
         samples = _n_samples(duration, dt)
-        duration = torch.as_tensor(duration)
-        time = torch.linspace(-0.5, 0.5, samples, dtype=duration.dtype, device=duration.device)
+        time = torch.linspace(-0.5, 0.5, samples, dtype=self.time_bandwidth.dtype, device=self.time_bandwidth.device)
         sinc = torch.sinc(self.time_bandwidth.to(time) * time)
         window = 1 - self.apodization.to(time) + self.apodization.to(time) * torch.cos(2 * torch.pi * time)
         waveform = sinc * window
