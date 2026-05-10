@@ -41,9 +41,6 @@ from mr2.utils.reshape import normalize_index, normalize_indices
 from mr2.utils.summarize import summarize_object
 from mr2.utils.typing import FileOrPath
 
-if TYPE_CHECKING:
-    from mr2.operators import LinearOperator
-
 RotationOrTensor = TypeVar('RotationOrTensor', bound=torch.Tensor | Rotation)
 
 KDIM_SORT_LABELS = (
