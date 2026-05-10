@@ -440,7 +440,7 @@ class KData(Dataclass):
         batch_dims: Sequence[int] | None = None,
         joint_dims: Sequence[int] | EllipsisType = ...,
         rotate: bool = False,
-        return_compression_op: Literal[True] = True,
+        return_compression_op: Literal[True] = ...,
     ) -> tuple[Self, 'LinearOperator']: ...
 
     def compress_coils(
@@ -553,7 +553,7 @@ class KData(Dataclass):
     def prewhiten(self, knoise: KNoise | torch.Tensor, scale_factor: float | torch.Tensor = 1.0) -> Self:
         """Calculate noise prewhitening matrix and decorrelate coils.
 
-        This is a convenience wrapper around :func:`mrpro.algorithms.prewhiten_kspace`.
+        This is a convenience wrapper around :func:`mr2.algorithms.prewhiten_kspace`.
 
         Parameters
         ----------
