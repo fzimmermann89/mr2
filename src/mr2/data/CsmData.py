@@ -153,7 +153,7 @@ class CsmData(IData, init=False):
         kdata: KData,
         noise: KNoise | None = None,
         smoothing_width: int | SpatialDimension[int] = 5,
-        n_iterations: int = 5,
+        n_iterations: int = 10,
         chunk_size_otherdim: int | None = None,
         downsampled_size: int | SpatialDimension[int] | None = None,
     ) -> Self:
@@ -199,7 +199,7 @@ class CsmData(IData, init=False):
         cls,
         idata: IData,
         smoothing_width: int | SpatialDimension[int] = 5,
-        n_iterations: int = 5,
+        n_iterations: int = 10,
         chunk_size_otherdim: int | None = None,
         downsampled_size: int | SpatialDimension[int] | None = None,
     ) -> Self:
