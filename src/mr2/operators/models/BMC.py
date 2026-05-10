@@ -14,6 +14,12 @@ from mr2.utils.slice_profiles import SliceProfileBase
 from mr2.utils.TensorAttributeMixin import TensorAttributeMixin
 from mr2.utils.unit_conversion import GYROMAGNETIC_RATIO_PROTON
 
+# These tune activation-checkpoint chunking to balance memory pressure against
+# kernel launch overhead for typical BMC batch tile sizes.
+WORK_THRESHOLD = 2_500_000
+CHUNK_SIZE_SAME_FREQ = 128
+CHUNK_SIZE_DIFF_FREQ = 64
+
 
 @dataclass
 class MTSaturation(ABC, TensorAttributeMixin):
@@ -104,7 +110,7 @@ class Parameters(Dataclass):
     exchange_rate: torch.Tensor
     """Exchange rate in 1/s.
     Shape ``(..., pools, pools)``
-    where element ``[..., i, j]`` is the ratefrom pool j to pool i."""
+    where element ``[..., i, j]`` is the rate from pool j to pool i."""
 
     chemical_shift: torch.Tensor | None = None
     """Chemical shift in Hz. Shape ``(..., pools)``."""
@@ -116,7 +122,11 @@ class Parameters(Dataclass):
     """Relative B1 scaling factor. Shape ``(...)`` (global per voxel/batch)."""
 
     mt_saturation: MTSaturation | None = None
-    """MT saturation model. Shape ``(..., pools)``. """
+    """MT lineshape / saturation model object or ``None``.
+
+    Represents the MT saturation behavior, including lineshape parameters such
+    as the affected pool index and transverse relaxation model.
+    """
 
     @property
     def n_pools(self) -> int:
@@ -653,7 +663,11 @@ class PiecewiseRFBlock(BMCBlock):
         for size in batch_shape:
             batch_size *= size
         work = time * batch_size * (3 * parameters.n_pools) ** 2
-        chunk_size = time if work <= 2_500_000 else (128 if same_frequency else 64)
+        chunk_size = (
+            time
+            if work <= WORK_THRESHOLD
+            else (CHUNK_SIZE_SAME_FREQ if same_frequency else CHUNK_SIZE_DIFF_FREQ)
+        )
 
         def run_chunk(
             state: torch.Tensor,
@@ -781,11 +795,19 @@ class SliceSelectiveRFBlock(BMCBlock):
 
         profile = self.slice_profile(self.positions.z.to(state))
         effective_rf_amplitude = self._block.rf_amplitude[..., None] * profile
+        effective_rf_phase = self._block.rf_phase
         if parameters.relative_b1 is not None:
-            effective_rf_amplitude = effective_rf_amplitude * parameters.relative_b1[..., None]
+            rb1 = parameters.relative_b1.to(device=effective_rf_amplitude.device)
+            if rb1.is_complex():
+                effective_rf_amplitude = effective_rf_amplitude * rb1.abs()[..., None]
+                effective_rf_phase = torch.as_tensor(
+                    self._block.rf_phase, device=state.device, dtype=state.real.dtype
+                ) + rb1.angle()[..., None]
+            else:
+                effective_rf_amplitude = effective_rf_amplitude * rb1.to(effective_rf_amplitude)[..., None]
         effective_block = PiecewiseRFBlock(
             rf_amplitude=effective_rf_amplitude,
-            rf_phase=self._block.rf_phase,
+            rf_phase=effective_rf_phase,
             rf_frequency=self._block.rf_frequency,
             dt=self._block.dt,
             extra_off_resonance=self._block.extra_off_resonance,

@@ -215,7 +215,6 @@ class BMsimTwoPulseWASABI(BMModel):
         sequence.append(SpoilBlock(post_pulse_delay))
         sequence.append(LongitudinalReadoutBlock(pool_index=readout_pool))
 
-        self.offsets = offsets
         self.sequence = sequence
 
 
@@ -391,6 +390,50 @@ def test_slice_selective_rf_flat_profile_matches_piecewise_rf_block() -> None:
     torch.testing.assert_close(profile_state, rf_state)
 
 
+def test_slice_selective_rf_block_preserves_complex_relative_b1_phase() -> None:
+    """Test that the slice-selective RF path preserves complex B1 phase."""
+    parameters = Parameters(
+        equilibrium_magnetization=torch.tensor([1.0]),
+        t1=torch.tensor([1.2]),
+        t2=torch.tensor([0.08]),
+        exchange_rate=torch.tensor([[0.0]]),
+        chemical_shift=torch.tensor([0.0]),
+        relative_b1=torch.exp(1j * torch.tensor(torch.pi / 4)),
+    )
+    state = initial_state(parameters).expand(5, -1, -1).clone()
+    positions = SpatialDimension(
+        z=torch.linspace(-2e-3, 2e-3, 5),
+        y=torch.zeros(5),
+        x=torch.zeros(5),
+    )
+    amp = torch.tensor([0.3, 0.8, 1.0, 0.8, 0.3])
+    profile = SliceSmoothedRectangular(fwhm_rect=1.0, fwhm_gauss=0.0)
+
+    profile_state, _ = SliceSelectiveRFBlock(
+        rf_amplitude=amp,
+        slice_profile=profile,
+        positions=positions,
+        dt=2.5e-4,
+    )(parameters, state)
+
+    rf_state, _ = PiecewiseRFBlock(
+        rf_amplitude=amp,
+        rf_phase=torch.full_like(amp, torch.pi / 4),
+        dt=2.5e-4,
+    )(
+        Parameters(
+            equilibrium_magnetization=parameters.equilibrium_magnetization,
+            t1=parameters.t1,
+            t2=parameters.t2,
+            exchange_rate=parameters.exchange_rate,
+            chemical_shift=parameters.chemical_shift,
+        ),
+        state,
+    )
+
+    torch.testing.assert_close(profile_state, rf_state)
+
+
 @pytest.mark.parametrize('slice_fwhm', [4e-3, 7e-3])
 def test_slice_profile_approx_rf(slice_fwhm: float) -> None:
     """Test that the slice profile approximation matches the explicit RF block."""
@@ -456,7 +499,7 @@ def test_slice_rf_pulse_templates_match_flip_angle_and_zero_phase(pulse_cls: typ
     torch.testing.assert_close(phase, torch.zeros_like(phase))  # no intrinsic phase
     torch.testing.assert_close(rf, pulse(flip_angle=flip_angle, duration=duration, dt=dt))
 
-    achieved_flip_angle = GYROMAGNETIC_RATIO_PROTON * dt * (rf * torch.exp(1j * phase)).sum()
+    achieved_flip_angle = 2 * torch.pi * GYROMAGNETIC_RATIO_PROTON * dt * (rf * torch.exp(1j * phase)).sum()
     expected_flip_angle = torch.complex(flip_angle, torch.zeros_like(flip_angle))
     torch.testing.assert_close(achieved_flip_angle, expected_flip_angle, atol=1e-6, rtol=1e-6)
 
