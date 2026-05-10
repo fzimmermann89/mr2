@@ -85,9 +85,9 @@ def walsh(
     csm = v / (v.norm(dim=-4, keepdim=True) + eps)
 
     if align_phase:
-        d_sum = torch.sum(coil_images, dim=(-3, -2, -1), keepdim=True)
-        d_sum /= d_sum.norm(dim=-4, keepdim=True) + eps
-        phase_map = torch.einsum('... c z y x, ... c z y x -> ... z y x', d_sum.conj(), csm).angle()
+        d_sum = torch.sum(coil_images, dim=(-3, -2, -1))
+        d_sum = d_sum / (d_sum.norm(dim=-1, keepdim=True) + eps)
+        phase_map = torch.einsum('... c, ... c z y x -> ... z y x', d_sum.conj(), csm).angle()
         csm = csm * torch.exp(-1j * phase_map).unsqueeze(-4)
 
     csm = torch.where(torch.isfinite(csm), csm, 0.0)
