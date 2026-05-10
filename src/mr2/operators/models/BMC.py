@@ -664,9 +664,7 @@ class PiecewiseRFBlock(BMCBlock):
             batch_size *= size
         work = time * batch_size * (3 * parameters.n_pools) ** 2
         chunk_size = (
-            time
-            if work <= WORK_THRESHOLD
-            else (CHUNK_SIZE_SAME_FREQ if same_frequency else CHUNK_SIZE_DIFF_FREQ)
+            time if work <= WORK_THRESHOLD else (CHUNK_SIZE_SAME_FREQ if same_frequency else CHUNK_SIZE_DIFF_FREQ)
         )
 
         def run_chunk(
@@ -800,9 +798,10 @@ class SliceSelectiveRFBlock(BMCBlock):
             rb1 = parameters.relative_b1.to(device=effective_rf_amplitude.device)
             if rb1.is_complex():
                 effective_rf_amplitude = effective_rf_amplitude * rb1.abs()[..., None]
-                effective_rf_phase = torch.as_tensor(
-                    self._block.rf_phase, device=state.device, dtype=state.real.dtype
-                ) + rb1.angle()[..., None]
+                effective_rf_phase = (
+                    torch.as_tensor(self._block.rf_phase, device=state.device, dtype=state.real.dtype)
+                    + rb1.angle()[..., None]
+                )
             else:
                 effective_rf_amplitude = effective_rf_amplitude * rb1.to(effective_rf_amplitude)[..., None]
         effective_block = PiecewiseRFBlock(

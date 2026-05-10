@@ -85,9 +85,7 @@ def _scale_waveform_to_flip_angle(
 ) -> torch.Tensor:
     flip_angle = torch.as_tensor(flip_angle, dtype=waveform.dtype, device=waveform.device)
     dt = torch.as_tensor(dt, dtype=waveform.dtype, device=waveform.device)
-    return waveform * (
-        flip_angle / (2 * pi * GYROMAGNETIC_RATIO_PROTON * dt * waveform.sum())
-    )
+    return waveform * (flip_angle / (2 * pi * GYROMAGNETIC_RATIO_PROTON * dt * waveform.sum()))
 
 
 class GaussianRFPulse(SliceRFPulseBase):
