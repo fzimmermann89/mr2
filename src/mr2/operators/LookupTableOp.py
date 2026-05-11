@@ -9,8 +9,9 @@ import torch
 from typing_extensions import TypeVarTuple, Unpack
 
 from mr2.operators.Operator import Operator
-from mr2.utils import normalize_index, unsqueeze_right
 from mr2.utils.interpolate import _interp_along_axis
+from mr2.utils.reshape import normalize_index, unsqueeze_right
+from mr2.utils.TensorList import TensorList
 
 Tin = TypeVarTuple('Tin')
 
@@ -70,12 +71,7 @@ class LookupTableOp(Operator[Unpack[Tin], tuple[torch.Tensor,]]):
             for minimum, maximum, n_steps in parameter_ranges
         ]
         grid_sizes = tuple(len(axis) for axis in grid_axes)
-        grid_axes_registered: list[torch.Tensor] = []
-        for i, axis in enumerate(grid_axes):
-            name = f'_grid_axis_{i}'
-            self.register_buffer(name, axis)
-            grid_axes_registered.append(getattr(self, name))
-        self._grid_axes = tuple(grid_axes_registered)
+        self._grid_axes = TensorList(grid_axes)
 
         mesh = torch.meshgrid(*grid_axes, indexing='ij')
         if self._scaling_position is None:
