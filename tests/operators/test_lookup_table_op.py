@@ -35,6 +35,26 @@ def test_lookup_table_op_interpolation() -> None:
     torch.testing.assert_close(result, expected, atol=5e-5, rtol=5e-5)
 
 
+def test_lookup_table_op_complex_interpolation() -> None:
+    """LookupTableOp interpolates complex-valued outputs."""
+
+    def model(p1: torch.Tensor, p2: torch.Tensor) -> tuple[torch.Tensor]:
+        return (torch.stack((1j * p1 + p2, p1 - 2j * p2), dim=0),)
+
+    operator = LookupTableOp(
+        model,
+        parameter_ranges=((0.0, 1.0, 3), (0.0, 2.0, 1001)),
+    )
+
+    p1 = torch.tensor([[[0.25], [0.75]]])
+    p2 = torch.tensor([[[0.5, 1.5]]])
+
+    (result,) = operator(p1, p2)
+    (expected,) = model(p1, p2)
+
+    torch.testing.assert_close(result, expected, atol=5e-5, rtol=5e-5)
+
+
 @pytest.mark.cuda
 def test_lookup_table_op_cuda() -> None:
     """LookupTableOp works on CUDA."""

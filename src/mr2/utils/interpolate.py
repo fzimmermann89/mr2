@@ -68,6 +68,9 @@ def _interp_along_axis(
     y0 = torch.take_along_dim(fp, gather_idx - 1, dim=sample_dim).squeeze(sample_dim)
     y1 = torch.take_along_dim(fp, gather_idx, dim=sample_dim).squeeze(sample_dim)
     weight = unsqueeze_right(weight.broadcast_to(context_shape), len(trailing_shape))
+    if y0.is_complex():
+        # torch.lerp does not support vectorized complex interpolation with real-valued weights.
+        return y0 + weight * (y1 - y0)
     return torch.lerp(y0, y1, weight)
 
 
