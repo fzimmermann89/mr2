@@ -101,5 +101,5 @@ def test_tensor_list_call() -> None:
     """Test TensorList is not callable."""
     tensor_list = TensorList()
 
-    with pytest.raises(RuntimeError, match='BufferList should not be called'):
+    with pytest.raises(RuntimeError, match='TensorList should not be called'):
         tensor_list()

@@ -110,4 +110,4 @@ class TensorList(torch.nn.Module, Sequence[torch.Tensor]):
 
     def __call__(self, *_args: object, **_kwargs: object) -> Never:
         """TensorList should not be called."""
-        raise RuntimeError('BufferList should not be called.')
+        raise RuntimeError('TensorList should not be called.')
