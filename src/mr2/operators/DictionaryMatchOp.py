@@ -7,6 +7,7 @@ import torch
 from typing_extensions import Self, TypeVarTuple, Unpack
 
 from mr2.operators.Operator import Operator
+from mr2.utils.TensorAttributeMixin import TensorList
 
 Tin = TypeVarTuple('Tin')
 
@@ -61,7 +62,7 @@ class DictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]):
         """
         super().__init__()
         self._f = generating_function
-        self.x: list[torch.Tensor] = []
+        self.x = TensorList()
         self.y = torch.tensor([])
         self._index_of_scaling_parameter = index_of_scaling_parameter
         self.inverse_norm_y = None if index_of_scaling_parameter is None else torch.tensor([])
@@ -96,13 +97,13 @@ class DictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]):
         y = y * inverse_norm_y
 
         if not self.x:
-            self.x = x_list
+            self.x = TensorList(x_list)
             self.y = y
             if self.inverse_norm_y is not None:
                 self.inverse_norm_y = inverse_norm_y
             return self
 
-        self.x = [torch.cat((old, new)) for old, new in zip(self.x, x_list, strict=True)]
+        self.x = TensorList([torch.cat((old, new)) for old, new in zip(self.x, x_list, strict=True)])
         self.y = torch.cat((self.y, y), dim=-1)
         if self.inverse_norm_y is not None:
             self.inverse_norm_y = torch.cat((self.inverse_norm_y, inverse_norm_y))
