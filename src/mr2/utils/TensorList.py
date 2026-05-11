@@ -2,10 +2,10 @@
 
 import operator
 from collections.abc import Iterable, Iterator, Sequence
-from typing import Never, overload
+from typing import overload
 
 import torch
-from typing_extensions import Self
+from typing_extensions import Never, Self
 
 
 class TensorList(torch.nn.Module, Sequence[torch.Tensor]):
