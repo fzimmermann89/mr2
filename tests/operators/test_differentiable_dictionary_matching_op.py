@@ -132,6 +132,59 @@ class TestDifferentiableDictionaryMatchOp:
 
     @pytest.mark.parametrize('dtype', [torch.float32, torch.complex64], ids=['float32', 'complex64'])
     @pytest.mark.parametrize('index_of_scaling_parameter', [None, 0], ids=['no_scale', 'scale'])
+    def test_single_prior_precision_applies_to_all_priors(
+        self,
+        dtype: torch.dtype,
+        index_of_scaling_parameter: int | None,
+    ):
+        """Single prior precision tensor is reused for every prior parameter."""
+        op, y, m0, t1 = _make_operator_and_signal(dtype, index_of_scaling_parameter)
+        prior = (torch.ones_like(m0) * 0.5, torch.ones_like(t1) * 0.5)
+        prior_precision = torch.tensor(10.0, dtype=dtype.to_real())
+
+        result_single = op(y, prior=prior, prior_precision=prior_precision)
+        result_tuple = op(y, prior=prior, prior_precision=(prior_precision, prior_precision))
+
+        for single, tuple_ in zip(result_single, result_tuple, strict=True):
+            torch.testing.assert_close(single, tuple_)
+
+    @pytest.mark.parametrize('dtype', [torch.float32, torch.complex64], ids=['float32', 'complex64'])
+    @pytest.mark.parametrize('index_of_scaling_parameter', [None, 0], ids=['no_scale', 'scale'])
+    def test_return_signal_matches_input_signal_for_dictionary_entries(
+        self,
+        dtype: torch.dtype,
+        index_of_scaling_parameter: int | None,
+    ):
+        """Returned signal approximation matches exact dictionary entries."""
+        op, y, m0, t1 = _make_operator_and_signal(dtype, index_of_scaling_parameter)
+        params, y_hat = op(y, return_signal=True)
+        m0_hat, t1_hat = params
+
+        torch.testing.assert_close(t1_hat, t1, atol=1e-4, rtol=0)
+        if index_of_scaling_parameter is not None:
+            torch.testing.assert_close(m0_hat, m0, atol=1e-3, rtol=0)
+        assert y_hat.shape == y.shape
+        assert y_hat.dtype == y.dtype
+        torch.testing.assert_close(y_hat, y, atol=1e-4, rtol=0)
+
+    @pytest.mark.parametrize('dtype', [torch.float32, torch.complex64], ids=['float32', 'complex64'])
+    @pytest.mark.parametrize('index_of_scaling_parameter', [None, 0], ids=['no_scale', 'scale'])
+    def test_return_signal_backward_in_input_signal(
+        self,
+        dtype: torch.dtype,
+        index_of_scaling_parameter: int | None,
+    ):
+        """Backward pass through returned signal approximation produces finite gradients."""
+        op, y, _, _ = _make_operator_and_signal(dtype, index_of_scaling_parameter)
+        y = y.detach().requires_grad_(True)
+        _, y_hat = op(y, return_signal=True)
+        loss = y_hat.real.float().square().mean()
+        loss.backward()
+        assert y.grad is not None
+        assert torch.isfinite(y.grad).all()
+
+    @pytest.mark.parametrize('dtype', [torch.float32, torch.complex64], ids=['float32', 'complex64'])
+    @pytest.mark.parametrize('index_of_scaling_parameter', [None, 0], ids=['no_scale', 'scale'])
     def test_differentiable_in_input_signal(
         self,
         dtype: torch.dtype,
