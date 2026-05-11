@@ -7,7 +7,7 @@ import torch
 from typing_extensions import Self, TypeVarTuple, Unpack
 
 from mr2.operators.Operator import Operator
-from mr2.utils.TensorAttributeMixin import TensorList
+from mr2.utils.TensorList import TensorList
 
 Tin = TypeVarTuple('Tin')
 

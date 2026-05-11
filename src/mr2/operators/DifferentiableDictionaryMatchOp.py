@@ -9,7 +9,7 @@ from typing_extensions import Self, TypeVarTuple, Unpack
 
 from mr2.operators.Operator import Operator
 from mr2.utils import normalize_index
-from mr2.utils.TensorAttributeMixin import TensorList
+from mr2.utils.TensorList import TensorList
 
 Tin = TypeVarTuple('Tin')
 
@@ -69,7 +69,7 @@ class DifferentiableDictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]
         self._f = generating_function
         self.x = TensorList()
         self.y = torch.tensor([])
-        self.partials: list[torch.Tensor] = []
+        self.partials = TensorList()
         self._index_of_scaling_parameter = index_of_scaling_parameter
         self.norm_y = torch.tensor([])
         self.batch_size = batch_size
@@ -124,13 +124,15 @@ class DifferentiableDictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]
         if not self.x:  # first append
             self.x = TensorList(x_list)
             self.y = cast(torch.Tensor, y)
-            self.partials = partials
+            self.partials = TensorList(partials)
             self.norm_y = cast(torch.Tensor, norm_y)
             return self
 
         self.x = TensorList([torch.cat((old, new)) for old, new in zip(self.x, x_list, strict=True)])
         self.y = torch.cat((self.y, y), dim=-1)
-        self.partials = [torch.cat((old, new), dim=-1) for old, new in zip(self.partials, partials, strict=True)]
+        self.partials = TensorList(
+            torch.cat((old, new), dim=-1) for old, new in zip(self.partials, partials, strict=True)
+        )
         self.norm_y = torch.cat((self.norm_y, norm_y))
         return self
 

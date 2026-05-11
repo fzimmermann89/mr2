@@ -4,8 +4,6 @@ from typing import Any
 
 import torch
 
-from mr2.utils.TensorList import TensorList
-
 
 class TensorAttributeMixin(torch.nn.Module):
     """Create tensor attributes as buffer."""
@@ -24,8 +22,5 @@ class TensorAttributeMixin(torch.nn.Module):
         """
         if isinstance(value, torch.Tensor) and not isinstance(value, torch.nn.Parameter) and not value.requires_grad:
             self.register_buffer(name, value)
-        elif isinstance(value, list | tuple) and len(value) and all(isinstance(v, torch.Tensor) for v in value):
-            tensor_list = TensorList(value)
-            super().__setattr__(name, tensor_list)
         else:
             super().__setattr__(name, value)
