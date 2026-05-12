@@ -104,7 +104,7 @@ def ncc3d(
     var_tgt = (weight_window * tgt_centered.square()).sum(dim=dims) / w_sum_squeezed
     var_pred = (weight_window * pred_centered.square()).sum(dim=dims) / w_sum_squeezed
 
-    ncc_map = cov / torch.sqrt((var_tgt * var_pred).clamp_min(0.0) + eps)
+    ncc_map = cov / (torch.sqrt(var_tgt * var_pred) + eps)
 
     if reduction == 'none':
         if window_size is not None:
