@@ -23,4 +23,4 @@ __all__ = [
     "spline_registration",
     "total_variation_denoising",
     "varimax",
-
+]
