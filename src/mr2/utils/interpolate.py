@@ -4,6 +4,7 @@ from collections.abc import Callable, Sequence
 from typing import Literal
 
 import torch
+from torchnd import linear_interpolation_nd, nearest_interpolation_nd
 
 from mr2.utils.reshape import normalize_index, normalize_indices, unsqueeze_right
 
@@ -115,7 +116,7 @@ def interp(x: torch.Tensor, xp: torch.Tensor, fp: torch.Tensor) -> torch.Tensor:
 
 
 def interpolate(
-    x: torch.Tensor, size: Sequence[int], dim: Sequence[int], mode: Literal['nearest', 'linear'] = 'linear'
+    x: torch.Tensor, size: Sequence[int], dim: Sequence[int], mode: Literal['nearest', 'linear', 'cubic'] = 'linear'
 ) -> torch.Tensor:
     """Interpolate the tensor x along the axes dim to the new size.
 
@@ -144,22 +145,26 @@ def interpolate(
     if all(x.shape[d] == s for s, d in zip(size, dim, strict=True)):
         return x
 
-    # torch.nn.functional.interpolate only available for real tensors
-    # moveaxis is not implemented for batched tensors, so vmap would fail, thus we use permute.
-    x_real = torch.view_as_real(x).permute(-1, *range(x.ndim)) if x.is_complex() else x
-    dim = [d + 1 for d in dim] if x.is_complex() else dim
+    match mode:
+        case 'linear':
+            return linear_interpolation_nd(x, size=size, dims=dim)
+        case 'nearest':
+            return nearest_interpolation_nd(x, size=size, dims=dim)
+        case 'cubic':
+            if len(dim) != 2:
+                raise ValueError('Cubic interpolation is only supported for two dimensions.')
+        case _:
+            raise ValueError("mode must be one of 'nearest', 'linear', or 'cubic'.")
 
-    for s, d in zip(size, dim, strict=True):
-        if s != x_real.shape[d]:
-            idx = list(range(x_real.ndim))
-            # swapping the last axis and the axis to filter over
-            idx[d], idx[-1] = idx[-1], idx[d]
-            x_real = x_real.permute(idx)
-            x_real = torch.nn.functional.interpolate(x_real.flatten(end_dim=-3), size=s, mode=mode).reshape(
-                *x_real.shape[:-1], -1
-            )
-            # for a single permutation, this undoes the permutation
-            x_real = x_real.permute(idx)
+    # torch.nn.functional.interpolate only available for real tensors.
+    x_real = torch.view_as_real(x).permute(-1, *range(x.ndim)) if x.is_complex() else x
+    dim = tuple(d + 1 for d in dim) if x.is_complex() else dim
+
+    x_real = x_real.moveaxis(dim, (-2, -1))
+    other_shape = x_real.shape[:-2]
+    x_real = x_real.reshape(-1, *x_real.shape[-2:]).unsqueeze(0)
+    x_real = torch.nn.functional.interpolate(x_real, size=size, mode='bicubic').squeeze(0)
+    x_real = x_real.reshape(*other_shape, *size).moveaxis((-2, -1), dim)
     return torch.view_as_complex(x_real.permute(*range(1, x.ndim + 1), 0).contiguous()) if x.is_complex() else x_real
 
 

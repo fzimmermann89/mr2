@@ -53,8 +53,8 @@ def test_hourglass_backward() -> None:
         cond_dim=32,
     ).cuda()
 
-    x = torch.zeros(1, 1, 16, requires_grad=True).cuda()
-    cond = torch.zeros(1, 32, requires_grad=True).cuda()
+    x = torch.zeros(1, 1, 16, device='cuda', requires_grad=True)
+    cond = torch.zeros(1, 32, device='cuda', requires_grad=True)
     y = hourglass(x, cond=cond)
     y.sum().backward()
     assert x.grad is not None, 'x.grad is None'

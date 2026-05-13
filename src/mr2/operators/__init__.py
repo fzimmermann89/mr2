@@ -12,6 +12,7 @@ from mr2.operators.ConvAnalysisDictionaryOp import ConvAnalysisDictionaryOp
 from mr2.operators.ConvSynthesisDictionaryOp import ConvSynthesisDictionaryOp
 from mr2.operators.DensityCompensationOp import DensityCompensationOp
 from mr2.operators.DictionaryMatchOp import DictionaryMatchOp
+from mr2.operators.DownSamplingOp import DownSamplingOp
 from mr2.operators.EinsumOp import EinsumOp
 from mr2.operators.FastFourierOp import FastFourierOp
 from mr2.operators.FiniteDifferenceOp import FiniteDifferenceOp
@@ -52,6 +53,7 @@ __all__ = [
     "DensityCompensationOp",
     "DictionaryMatchOp",
     "DifferentiableDictionaryMatchOp",
+    "DownSamplingOp",
     "EinsumOp",
     "ElementaryFunctional",
     "ElementaryProximableFunctional",
