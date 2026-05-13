@@ -1,5 +1,6 @@
 """Shifted Window Attention."""
 
+import re
 import warnings
 
 import torch
@@ -8,6 +9,8 @@ from torch.nn import Linear, Module
 
 from mr2.utils.reshape import ravel_multi_index
 from mr2.utils.sliding_window import sliding_window
+
+_SOFTMAX_WARNING = re.compile('.*softmax.*', re.I)
 
 
 class ShiftedWindowAttention(Module):
@@ -109,9 +112,9 @@ class ShiftedWindowAttention(Module):
             qkv=3,
         )
         bias = rearrange(self.relative_position_bias_table[self.rel_position_index], 'wd1 wd2 heads -> 1 heads wd1 wd2')
+        # Inductor in torch 2.6 warns for small batch*n_patches*n_heads about suboptimal softmax compilation.
         with warnings.catch_warnings():
-            # Inductor in torch 2.6 warns for small batch*n_patches*n_heads about suboptimal softmax compilation.
-            warnings.filterwarnings('ignore', message='.*softmax.*')
+            warnings.filters = [('ignore', _SOFTMAX_WARNING, UserWarning, None, 0), *warnings.filters]
             attention = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=bias)
         attention = rearrange(attention, '... head sequence channels->... sequence (head channels)')
         attention = attention.unflatten(-2, windowed.shape[-self.n_dim - 1 : -1])
