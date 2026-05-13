@@ -157,19 +157,14 @@ def interpolate(
             raise ValueError("mode must be one of 'nearest', 'linear', or 'cubic'.")
 
     # torch.nn.functional.interpolate only available for real tensors.
-    # moveaxis is not implemented for batched tensors, so vmap would fail; use permute instead.
     x_real = torch.view_as_real(x).permute(-1, *range(x.ndim)) if x.is_complex() else x
     dim = tuple(d + 1 for d in dim) if x.is_complex() else dim
 
-    other_dim = tuple(d for d in range(x_real.ndim) if d not in dim)
-    permutation = (*other_dim, *dim)
-    inverse_permutation = tuple(sorted(range(len(permutation)), key=permutation.__getitem__))
-    other_shape = tuple(x_real.shape[d] for d in other_dim)
-
-    x_real = x_real.permute(permutation)
-    x_real = x_real.flatten(end_dim=len(other_dim) - 1) if other_dim else x_real.unsqueeze(0)
-    x_real = torch.nn.functional.interpolate(x_real.unsqueeze(0), size=size, mode='bicubic').squeeze(0)
-    x_real = x_real.unflatten(0, other_shape).permute(inverse_permutation) if other_dim else x_real.squeeze(0)
+    x_real = x_real.moveaxis(dim, (-2, -1))
+    other_shape = x_real.shape[:-2]
+    x_real = x_real.reshape(-1, *x_real.shape[-2:]).unsqueeze(0)
+    x_real = torch.nn.functional.interpolate(x_real, size=size, mode='bicubic').squeeze(0)
+    x_real = x_real.reshape(*other_shape, *size).moveaxis((-2, -1), dim)
     return torch.view_as_complex(x_real.permute(*range(1, x.ndim + 1), 0).contiguous()) if x.is_complex() else x_real
 
 
