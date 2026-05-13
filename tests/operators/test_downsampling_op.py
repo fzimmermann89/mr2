@@ -9,41 +9,50 @@ from mr2.utils import RandomGenerator
 
 from tests import autodiff_test, dotproduct_adjointness_test, forward_mode_autodiff_of_linear_operator_test
 
-TESTCASES = pytest.mark.parametrize(
-    ('input_shape', 'arguments', 'output_shape'),
+
+@pytest.mark.parametrize(
+    ('dim', 'domain_shape', 'range_shape', 'input_shape', 'output_shape'),
     [
-        ((2, 3, 16), {'dim': -1, 'domain_shape': (16,), 'range_shape': (7,)}, (2, 3, 7)),
-        ((2, 12, 3, 14), {'dim': (1, 3), 'domain_shape': (12, 14), 'range_shape': (6, 7)}, (2, 6, 3, 7)),
-        (
-            (2, 3, 4, 5, 6),
-            {'dim': (1, 2, 3, 4), 'domain_shape': (3, 4, 5, 6), 'range_shape': (4, 3, 4, 5)},
-            (2, 4, 3, 4, 5),
-        ),
+        (-1, (16,), (7,), (2, 3, 16), (2, 3, 7)),
+        ((1, 3), (12, 14), (6, 7), (2, 12, 3, 14), (2, 6, 3, 7)),
+        ((1, 2, 3, 4), (3, 4, 5, 6), (4, 3, 4, 5), (2, 3, 4, 5, 6), (2, 4, 3, 4, 5)),
     ],
 )
-
-
-@TESTCASES
 def test_downsampling_op_adjointness(
-    input_shape: Sequence[int], arguments: dict[str, object], output_shape: Sequence[int]
+    dim: Sequence[int] | int,
+    domain_shape: Sequence[int],
+    range_shape: Sequence[int],
+    input_shape: Sequence[int],
+    output_shape: Sequence[int],
 ) -> None:
     """Test adjointness and shape of DownSamplingOp."""
     rng = RandomGenerator(seed=0)
     u = rng.complex64_tensor(size=input_shape)
     v = rng.complex64_tensor(size=output_shape)
-    operator = DownSamplingOp(**arguments)
+    operator = DownSamplingOp(dim=dim, domain_shape=domain_shape, range_shape=range_shape)
     dotproduct_adjointness_test(operator, u, v)
 
 
-@TESTCASES
+@pytest.mark.parametrize(
+    ('dim', 'domain_shape', 'range_shape', 'input_shape', 'output_shape'),
+    [
+        (-1, (16,), (7,), (2, 3, 16), (2, 3, 7)),
+        ((1, 3), (12, 14), (6, 7), (2, 12, 3, 14), (2, 6, 3, 7)),
+        ((1, 2, 3, 4), (3, 4, 5, 6), (4, 3, 4, 5), (2, 3, 4, 5, 6), (2, 4, 3, 4, 5)),
+    ],
+)
 def test_downsampling_op_autodiff(
-    input_shape: Sequence[int], arguments: dict[str, object], output_shape: Sequence[int]
+    dim: Sequence[int] | int,
+    domain_shape: Sequence[int],
+    range_shape: Sequence[int],
+    input_shape: Sequence[int],
+    output_shape: Sequence[int],
 ) -> None:
     """Test autodiff works for DownSamplingOp."""
     rng = RandomGenerator(seed=1)
     u = rng.complex64_tensor(size=input_shape)
     v = rng.complex64_tensor(size=output_shape)
-    operator = DownSamplingOp(**arguments)
+    operator = DownSamplingOp(dim=dim, domain_shape=domain_shape, range_shape=range_shape)
     autodiff_test(operator, u)
     forward_mode_autodiff_of_linear_operator_test(operator, u, v)
 
