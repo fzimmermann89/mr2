@@ -22,6 +22,8 @@ else:
         """Dummy class for older PyTorch versions."""
 
 
+torch._dynamo.config.recompile_limit = max(torch._dynamo.config.recompile_limit, 64)
+
 _compiled_flex_attention = torch.compile(
     lambda q, k, v, mask: flex_attention(q, k, v, block_mask=mask),
     dynamic=False,
