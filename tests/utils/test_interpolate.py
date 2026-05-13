@@ -29,6 +29,30 @@ def test_interpolate_nearest(data: torch.Tensor, data_dtype: torch.dtype) -> Non
     torch.testing.assert_close(result, data.to(dtype=data_dtype))
 
 
+@pytest.mark.parametrize('data_dtype', [torch.float32, torch.float64, torch.complex64, torch.complex128])
+def test_interpolate_cubic(data_dtype: torch.dtype) -> None:
+    """Cubic interpolation works for two-dimensional interpolation."""
+    data = torch.randn(2, 3, 8, 9, dtype=data_dtype)
+    result = interpolate(data, size=(12, 13), dim=(-2, -1), mode='cubic')
+    assert result.shape == (2, 3, 12, 13)
+    assert result.dtype == data_dtype
+
+
+@pytest.mark.parametrize('data_dtype', [torch.float32, torch.complex64])
+def test_interpolate_cubic_2d(data_dtype: torch.dtype) -> None:
+    """Cubic interpolation works if all dimensions are interpolated."""
+    data = torch.randn(8, 9, dtype=data_dtype)
+    result = interpolate(data, size=(12, 13), dim=(0, 1), mode='cubic')
+    assert result.shape == (12, 13)
+    assert result.dtype == data_dtype
+
+
+def test_interpolate_cubic_requires_two_dimensions() -> None:
+    """Cubic interpolation is limited to two dimensions."""
+    with pytest.raises(ValueError, match='two dimensions'):
+        interpolate(torch.randn((2, 2, 2)), dim=(-1,), size=(3,), mode='cubic')
+
+
 def test_interpolate_size_dim_mismatch() -> None:
     """Test mismatch between size and dim."""
     with pytest.raises(ValueError, match='matching length'):
