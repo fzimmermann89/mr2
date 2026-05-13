@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 from itertools import pairwise
-from typing import cast
+from typing import Literal, cast, overload
 
 import torch
 from typing_extensions import Self, TypeVarTuple, Unpack
@@ -42,7 +42,7 @@ class DifferentiableDictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]
         self,
         generating_function: Callable[[Unpack[Tin]], tuple[torch.Tensor,]],
         index_of_scaling_parameter: int | None = None,
-        batch_size: int = 1024 * 1024,
+        batch_size: int = 64 * 1024,
     ):
         """Initialize DictionaryMatchOp.
 
@@ -136,13 +136,34 @@ class DifferentiableDictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]
         self.norm_y = torch.cat((self.norm_y, norm_y))
         return self
 
+    @overload
     def __call__(
         self,
         input_signal: torch.Tensor,
         *,
         prior: tuple[Unpack[Tin]] | None = None,
-        prior_precision: tuple[Unpack[Tin]] | None = None,
-    ) -> tuple[Unpack[Tin]]:
+        prior_precision: tuple[Unpack[Tin]] | torch.Tensor | None = None,
+        return_signal: Literal[False] = False,
+    ) -> tuple[Unpack[Tin]]: ...
+
+    @overload
+    def __call__(
+        self,
+        input_signal: torch.Tensor,
+        *,
+        prior: tuple[Unpack[Tin]] | None = None,
+        prior_precision: tuple[Unpack[Tin]] | torch.Tensor | None = None,
+        return_signal: Literal[True] = ...,
+    ) -> tuple[tuple[Unpack[Tin]], torch.Tensor]: ...
+
+    def __call__(
+        self,
+        input_signal: torch.Tensor,
+        *,
+        prior: tuple[Unpack[Tin]] | None = None,
+        prior_precision: tuple[Unpack[Tin]] | torch.Tensor | None = None,
+        return_signal: bool = False,
+    ) -> tuple[Unpack[Tin]] | tuple[tuple[Unpack[Tin]], torch.Tensor]:
         """Perform dot-product matching.
 
         Performs dictionary matching, optionally with a prior, followed by a
@@ -161,10 +182,12 @@ class DifferentiableDictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]
             Prior means, one tensor per returned parameter. Each tensor must be
             broadcastable to the batch/image shape ``input_signal.shape[1:]``.
         prior_precision
-            Diagonal prior precisions, one tensor per returned parameter. Each tensor
-            must be broadcastable to ``input_signal.shape[1:]`` and contain finite,
-            non-negative values. ``prior`` and ``prior_precision`` must be provided
-            together.
+            Diagonal prior precisions, one tensor per returned parameter, or a single
+            tensor to use for all parameters. Each tensor must be broadcastable to
+            ``input_signal.shape[1:]`` and contain finite, non-negative values.
+            ``prior`` and ``prior_precision`` must be provided together.
+        return_signal
+            If True, return the signal approximation as well.
 
         Returns
         -------
@@ -172,14 +195,18 @@ class DifferentiableDictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]
             that best matched the input signal(s). Each tensor in the tuple corresponds
             to a parameter, and their shapes will match the batch dimensions of `input_signal`.
         """
-        return super(Operator, self).__call__(input_signal, prior=prior, prior_precision=prior_precision)
+        return super(Operator, self).__call__(
+            input_signal, prior=prior, prior_precision=prior_precision, return_signal=return_signal
+        )
 
-    def forward(
+    def forward(  # type: ignore[override]
         self,
         input_signal: torch.Tensor,
+        *,
         prior: tuple[Unpack[Tin]] | None = None,
-        prior_precision: tuple[Unpack[Tin]] | None = None,
-    ) -> tuple[Unpack[Tin]]:
+        prior_precision: tuple[Unpack[Tin]] | torch.Tensor | None = None,
+        return_signal: bool = False,
+    ) -> tuple[tuple[Unpack[Tin]], torch.Tensor] | tuple[Unpack[Tin]]:
         """Apply forward of DictionaryMatchOp.
 
         .. note::
@@ -209,6 +236,8 @@ class DifferentiableDictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]
             if len(prior) != n_x or not all(isinstance(p, torch.Tensor) for p in prior):
                 raise ValueError('Prior must be a tuple of tensors matching the number of parameters.')
             prior_ = tuple(p for p in prior if isinstance(p, torch.Tensor))
+            if isinstance(prior_precision, torch.Tensor):
+                prior_precision = cast(tuple[Unpack[Tin]], (prior_precision,) * n_x)
             if len(prior_precision) != n_x or not all(
                 isinstance(lam, torch.Tensor)
                 and torch.isfinite(lam).all()
@@ -284,8 +313,12 @@ class DifferentiableDictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]
             lhs = lhs + torch.diag_embed(lam).to(j.dtype)
             rhs = rhs + lam * torch.stack([(p_k - x_k) for p_k, x_k in zip(prior_flat, x, strict=True)], dim=1)
         delta = torch.linalg.solve(lhs, rhs)
-        result: list[torch.Tensor] = [
+        result = [
             (x + (d if x.is_complex() else d.real)).reshape(batch_shape)
             for x, d in zip(x, delta.unbind(1), strict=True)
         ]
-        return cast(tuple[Unpack[Tin]], tuple(result))
+        params = cast(tuple[Unpack[Tin]], tuple(result))
+        if return_signal:
+            y_approx = (y + (j @ delta.unsqueeze(-1)).squeeze(-1)).mT.reshape(input_signal.shape)
+            return params, y_approx
+        return params
