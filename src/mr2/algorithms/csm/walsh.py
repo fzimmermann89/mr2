@@ -101,5 +101,6 @@ def walsh(
     norm = csm.norm(dim=-4, keepdim=True)
     fallback = torch.zeros_like(csm)
     fallback[..., 0, :, :, :] = 1
-    csm = torch.where(norm > eps, csm / norm.clamp_min(eps), fallback)
-    return torch.where(torch.isfinite(csm), csm, fallback)
+    valid = torch.isfinite(norm) & (norm > eps)
+    csm = csm / norm.clamp_min(eps)
+    return torch.where(valid.expand_as(csm), csm, fallback)
