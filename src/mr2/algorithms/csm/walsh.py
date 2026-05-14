@@ -2,7 +2,7 @@
 
 import torch
 
-from mr2.algorithms.csm.extrapolate import extrapolate_csm, normalize_csm
+from mr2.algorithms.csm.extrapolate import extrapolate_csm
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.utils.filters import uniform_filter
 
@@ -96,6 +96,10 @@ def walsh(
 
     if extrapolate:
         confidence = coil_images.abs().square().sum(dim=-4).sqrt()
-        return extrapolate_csm(csm, confidence, smoothing_width)
+        csm = extrapolate_csm(csm, confidence, smoothing_width)
 
-    return normalize_csm(csm)
+    norm = csm.norm(dim=-4, keepdim=True)
+    fallback = torch.zeros_like(csm)
+    fallback[..., 0, :, :, :] = 1
+    csm = torch.where(norm > eps, csm / norm.clamp_min(eps), fallback)
+    return torch.where(torch.isfinite(csm), csm, fallback)

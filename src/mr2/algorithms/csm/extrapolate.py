@@ -50,14 +50,4 @@ def extrapolate_csm(
         filled = torch.where(valid, csm, filled_filtered)
         confidence = confidence_filtered
 
-    return normalize_csm(filled)
-
-
-def normalize_csm(csm: torch.Tensor) -> torch.Tensor:
-    """Normalize CSMs across coils and fall back to the first coil in zero-norm regions."""
-    eps = 1e-12
-    norm = csm.norm(dim=-4, keepdim=True)
-    fallback = torch.zeros_like(csm)
-    fallback[..., 0, :, :, :] = 1
-    csm = torch.where(norm > eps, csm / norm.clamp_min(eps), fallback)
-    return torch.where(torch.isfinite(csm), csm, fallback)
+    return torch.where(torch.isfinite(filled), filled, 0.0)
