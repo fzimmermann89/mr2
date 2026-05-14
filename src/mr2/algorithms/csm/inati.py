@@ -3,6 +3,7 @@
 import torch
 from einops import einsum
 
+from mr2.algorithms.csm.extrapolate import extrapolate_csm, normalize_csm
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.utils.filters import uniform_filter
 
@@ -11,6 +12,7 @@ def inati(
     coil_img: torch.Tensor,
     smoothing_width: SpatialDimension[int] | int,
     n_iterations: int = 10,
+    extrapolate: bool = False,
 ) -> torch.Tensor:
     """Calculate a coil sensitivity map (csm) using the iterative Inati method [INA2014]_.
 
@@ -46,6 +48,8 @@ def inati(
         Size of the smoothing kernel.
     n_iterations
         Number of iterations to refine the maps.
+    extrapolate
+        If `True`, extrapolate the estimated CSMs into low-signal regions.
 
     Returns
     -------
@@ -93,4 +97,8 @@ def inati(
         combined_img *= torch.exp(1j * phase)
         csm *= torch.exp(-1j * phase).unsqueeze(-4)
 
-    return csm
+    if extrapolate:
+        confidence = coil_img.abs().square().sum(dim=-4).sqrt()
+        return extrapolate_csm(csm, confidence, smoothing_width)
+
+    return normalize_csm(csm)
