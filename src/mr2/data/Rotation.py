@@ -66,7 +66,7 @@ from mr2.utils.vmf import sample_vmf
 
 AXIS_ORDER = 'zyx'  # This can be modified
 QUAT_AXIS_ORDER = AXIS_ORDER + 'w'  # Do not modify
-assert QUAT_AXIS_ORDER[:3] == AXIS_ORDER, 'Quaternion axis order has to match axis order'  # noqa: S101
+assert QUAT_AXIS_ORDER[:3] == AXIS_ORDER, 'Quaternion axis order has to match axis order'
 
 
 def _compose_quaternions_single(p: torch.Tensor, q: torch.Tensor) -> torch.Tensor:

@@ -55,7 +55,7 @@ class Parameters(Dataclass):
     def device(self) -> torch.device:
         """Device of the parameters."""
         device = super().device
-        assert device is not None  # mypy # noqa: S101
+        assert device is not None  # mypy
         return device
 
     @property
@@ -833,7 +833,7 @@ class EPGSequence(torch.nn.ModuleList, EPGBlock):
         """
         signals: list[torch.Tensor] = []
         for block in self:
-            assert isinstance(block, EPGBlock)  # mypy # noqa: S101
+            assert isinstance(block, EPGBlock)  # mypy
             states, signal = block(parameters, states)
             signals.extend(signal)
         return states, tuple(signals)

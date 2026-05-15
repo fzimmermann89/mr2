@@ -1148,7 +1148,7 @@ class BMCSequence(torch.nn.ModuleList, BMCBlock):
         zero_c: torch.Tensor | None = None
         outputs: list[torch.Tensor] = []
         for block in self:
-            assert isinstance(block, BMCBlock)  # noqa: S101
+            assert isinstance(block, BMCBlock)
             if isinstance(block, DelayBlock | SpoilBlock):
                 if zero_matrix is None or zero_c is None:
                     zero_matrix, zero_c = system_matrix(parameters, 0.0, 0.0, 0.0)

@@ -109,7 +109,7 @@ class NonUniformFastFourierOp(LinearOperator, adjoint_as_backward=True):
             if (n_recon_matrix := len(recon_matrix)) != (n_nufft_dir := len(self._direction_zyx)):
                 raise ValueError(f'recon_matrix should have {n_nufft_dir} entries but has {n_recon_matrix}')
             im_size = tuple(recon_matrix[i] for i in direction_index)
-        assert len(im_size) == 1 or len(im_size) == 2 or len(im_size) == 3  # mypy  # noqa: S101
+        assert len(im_size) == 1 or len(im_size) == 2 or len(im_size) == 3  # mypy
 
         if isinstance(encoding_matrix, SpatialDimension):
             k_size = tuple([int(encoding_matrix.zyx[d]) for d in self._direction_zyx])
@@ -624,7 +624,7 @@ class SubspaceNonUniformFastFourierOpGramOp(LinearOperator, adjoint_as_backward=
             term = unsqueeze_right(coeff_outer, current.ndim) * current
             subspace_kernel = term if subspace_kernel is None else subspace_kernel + term
 
-        assert subspace_kernel is not None  # noqa: S101
+        assert subspace_kernel is not None
         kernel_shape = [1, 1, 1]
         for direction, size in zip(self._dim, subspace_kernel.shape[2:], strict=True):
             kernel_shape[direction] = size

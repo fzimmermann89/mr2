@@ -14,6 +14,72 @@ from mr2.utils.TensorList import TensorList
 Tin = TypeVarTuple('Tin')
 
 
+@torch.compile
+def _dictionary_match_scores(
+    signal_real: torch.Tensor,
+    signal_imag: torch.Tensor | None,
+    dictionary_real: torch.Tensor,
+    dictionary_imag: torch.Tensor | None,
+    x_real: tuple[torch.Tensor, ...],
+    x_imag: tuple[torch.Tensor | None, ...],
+    prior_real: tuple[torch.Tensor, ...],
+    prior_imag: tuple[torch.Tensor | None, ...],
+    prior_precision: tuple[torch.Tensor, ...],
+    norm_y: torch.Tensor | None,
+    norm_y_sq: torch.Tensor | None,
+    scale_prior_real: torch.Tensor | None,
+    scale_prior_imag: torch.Tensor | None,
+    scale_precision: torch.Tensor | None,
+) -> torch.Tensor:
+    """Compute dictionary scores using real-valued matmuls."""
+    # TorchInductor does not generate efficient code for complex matmuls.
+    # Keep the compiled search kernel real-valued and reconstruct the complex
+    # inner product signal @ dictionary.conj() explicitly.
+    similarity_real = signal_real @ dictionary_real
+    similarity_imag = None
+    if dictionary_imag is not None:
+        similarity_imag = -signal_real @ dictionary_imag
+    if signal_imag is not None:
+        if dictionary_imag is not None:
+            similarity_real = similarity_real + signal_imag @ dictionary_imag
+        signal_imag_part = signal_imag @ dictionary_real
+        similarity_imag = signal_imag_part if similarity_imag is None else similarity_imag + signal_imag_part
+
+    if scale_precision is None:
+        scores = similarity_real.square()
+        if similarity_imag is not None:
+            scores = scores + similarity_imag.square()
+    else:
+        assert norm_y is not None
+        assert norm_y_sq is not None
+        assert scale_prior_real is not None
+        numerator_real = similarity_real * norm_y + scale_precision[:, None] * scale_prior_real[:, None]
+        scores = numerator_real.square()
+        if similarity_imag is not None or scale_prior_imag is not None:
+            if similarity_imag is None:
+                assert scale_prior_imag is not None
+                numerator_imag = scale_precision[:, None] * scale_prior_imag[:, None]
+            elif scale_prior_imag is None:
+                numerator_imag = similarity_imag * norm_y
+            else:
+                numerator_imag = similarity_imag * norm_y + scale_precision[:, None] * scale_prior_imag[:, None]
+            scores = scores + numerator_imag.square()
+        scores = scores / (norm_y_sq[None, :] + scale_precision[:, None])
+
+    for x_real_k, x_imag_k, prior_real_k, prior_imag_k, precision_k in zip(
+        x_real, x_imag, prior_real, prior_imag, prior_precision, strict=True
+    ):
+        parameter_distance = (x_real_k[None, :] - prior_real_k[:, None]).square()
+        if x_imag_k is not None and prior_imag_k is not None:
+            parameter_distance = parameter_distance + (x_imag_k[None, :] - prior_imag_k[:, None]).square()
+        elif x_imag_k is not None:
+            parameter_distance = parameter_distance + x_imag_k[None, :].square()
+        elif prior_imag_k is not None:
+            parameter_distance = parameter_distance + prior_imag_k[:, None].square()
+        scores = scores - precision_k[:, None] * parameter_distance
+    return scores
+
+
 class DifferentiableDictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]):
     r"""Differentiable Dictionary Matching Operator.
 
@@ -94,7 +160,8 @@ class DifferentiableDictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]
         if self._index_of_scaling_parameter is not None:
             scaling_position = normalize_index(len(x), self._index_of_scaling_parameter)
             x_stored = (*x[:scaling_position], *x[scaling_position + 1 :])  # type: ignore[arg-type]
-            primals = (*x[:scaling_position], torch.tensor(1.0), *x[scaling_position + 1 :])  # type: ignore[arg-type]
+            scale = cast(torch.Tensor, x[scaling_position]).new_tensor(1.0)
+            primals = (*x[:scaling_position], scale, *x[scaling_position + 1 :])  # type: ignore[arg-type]
         else:
             x_stored = x  # type: ignore[assignment]
             primals = x  # type: ignore[assignment]
@@ -107,7 +174,7 @@ class DifferentiableDictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]
             if scaling_position is not None:
                 tangents = (
                     *tangents[:scaling_position],
-                    torch.tensor(0.0),
+                    scale.new_zeros(()),
                     *tangents[scaling_position:],
                 )
             (y,), (dy_i,), *_ = torch.func.jvp(self._f, primals, tangents)
@@ -224,7 +291,7 @@ class DifferentiableDictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]
             n_x = len(self.x)
             scaling_position = None
 
-        norm_y = self.norm_y
+        norm_y = self.norm_y.to(dtype.to_real())
         norm_y_sq = norm_y.square()
         batch_shape = input_signal.shape[1:]
         prior_flat: list[torch.Tensor] = []
@@ -252,39 +319,58 @@ class DifferentiableDictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]
             prior_flat = [p.broadcast_to(batch_shape).flatten() for p in prior_]
             precision_flat = [lam.broadcast_to(batch_shape).to(dtype.to_real()).flatten() for lam in prior_precision_]
 
-        signal = input_signal.flatten(1).mT  # (batch, m)
+        signal = input_signal.flatten(1).mT.to(dtype)  # (batch, m)
+        signal_real = signal.real.contiguous()
+        signal_imag = signal.imag.contiguous() if signal.is_complex() else None
+        dictionary = self.y.to(dtype)
+        dictionary_real = dictionary.real.contiguous()
+        dictionary_imag = dictionary.imag.contiguous() if dictionary.is_complex() else None
+        x_stored = tuple(self.x) if prior_flat else ()
+        x_stored_real = tuple(x_k.real for x_k in x_stored)
+        x_stored_imag = tuple(x_k.imag if x_k.is_complex() else None for x_k in x_stored)
         idx_chunks: list[torch.Tensor] = []
 
-        if prior_flat:
-            with torch.no_grad():
-                for start, stop in pairwise(range(0, signal.shape[0] + self.batch_size, self.batch_size)):
-                    signal_chunk = signal[start:stop]
-                    prior_chunk = [p[start:stop] for p in prior_flat]
-                    precision_chunk = [lam[start:stop] for lam in precision_flat]
+        with torch.no_grad():
+            for start, stop in pairwise(range(0, signal.shape[0] + self.batch_size, self.batch_size)):
+                signal_real_chunk = signal_real[start:stop]
+                signal_imag_chunk = signal_imag[start:stop] if signal_imag is not None else None
 
-                    similarity = signal_chunk.to(dtype) @ self.y.conj().to(dtype)
-                    if scaling_position is not None:
-                        scale_precision = precision_chunk[scaling_position]
-                        numerator = (similarity * norm_y) + scale_precision[:, None] * prior_chunk[scaling_position][
-                            :, None
-                        ]
-                        scores = numerator.abs().square() / (norm_y_sq[None, :] + scale_precision[:, None])
-                    else:
-                        scores = similarity.abs().square()
+                prior_chunk = tuple(p[start:stop] for p in prior_flat)
+                precision_chunk = tuple(lam[start:stop] for lam in precision_flat)
 
-                    prior_chunk_stored = [prior_chunk[i] for i in range(n_x) if i != scaling_position]
-                    precision_chunk_stored = [precision_chunk[i] for i in range(n_x) if i != scaling_position]
-                    for x_k, p_k, lam_k in zip(self.x, prior_chunk_stored, precision_chunk_stored, strict=True):
-                        scores = scores - lam_k[:, None] * (x_k[None, :] - p_k[:, None]).abs().square()
+                if not prior_flat or scaling_position is None:
+                    prior_chunk_stored = prior_chunk
+                    precision_chunk_stored = precision_chunk
+                    scale_prior_real = scale_prior_imag = scale_precision = None
+                else:
+                    prior_chunk_stored = tuple(prior_chunk[i] for i in range(n_x) if i != scaling_position)
+                    precision_chunk_stored = tuple(precision_chunk[i] for i in range(n_x) if i != scaling_position)
+                    scale_prior = prior_chunk[scaling_position]
+                    scale_prior_real = scale_prior.real
+                    scale_prior_imag = scale_prior.imag if scale_prior.is_complex() else None
+                    scale_precision = precision_chunk[scaling_position]
 
-                    idx_chunks.append(scores.argmax(dim=1))
+                prior_chunk_stored_real = tuple(p.real for p in prior_chunk_stored)
+                prior_chunk_stored_imag = tuple(p.imag if p.is_complex() else None for p in prior_chunk_stored)
 
-        else:  # no prior
-            with torch.no_grad():
-                for signal_chunk in signal.split(self.batch_size, dim=0):
-                    similarity = signal_chunk.to(dtype) @ self.y.conj().to(dtype)
-                    scores = similarity.abs().square()
-                    idx_chunks.append(scores.argmax(dim=1))
+                scores = _dictionary_match_scores(
+                    signal_real_chunk,
+                    signal_imag_chunk,
+                    dictionary_real,
+                    dictionary_imag,
+                    x_stored_real,
+                    x_stored_imag,
+                    prior_chunk_stored_real,
+                    prior_chunk_stored_imag,
+                    precision_chunk_stored,
+                    norm_y if scale_precision is not None else None,
+                    norm_y_sq if scale_precision is not None else None,
+                    scale_prior_real,
+                    scale_prior_imag,
+                    scale_precision,
+                )
+
+                idx_chunks.append(scores.argmax(dim=1))
 
         idx = torch.cat(idx_chunks)
         y = (self.y[:, idx] * norm_y[idx]).mT
