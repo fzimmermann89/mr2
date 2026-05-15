@@ -14,6 +14,7 @@ from typing_extensions import Self
 from mr2.data import enums
 from mr2.data.AcqInfo import AcqInfo
 from mr2.data.Dataclass import Dataclass
+from mr2.data.EncodingLimits import EncodingLimits, Limits
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.data.traj_calculators.KTrajectoryCalculator import KTrajectoryCalculator
 from mr2.utils.unit_conversion import (
@@ -217,7 +218,9 @@ class KHeader(Dataclass):
                 parameters['protocol_name'] = header.measurementInformation.protocolName
 
             if header.measurementInformation.patientPosition is not None:
-                parameters['patient_position'] = enums.PatientPosition(header.measurementInformation.patientPosition.value)
+                parameters['patient_position'] = enums.PatientPosition(
+                    header.measurementInformation.patientPosition.value
+                )
 
         if header.acquisitionSystemInformation is not None:
             if header.acquisitionSystemInformation.systemVendor is not None:
@@ -311,11 +314,21 @@ class KHeader(Dataclass):
         recon_matrix = ismrmrdschema.matrixSizeType(x=self.recon_matrix.x, y=self.recon_matrix.y, z=self.recon_matrix.z)
         recon_space = ismrmrdschema.encodingSpaceType(matrixSize=recon_matrix, fieldOfView_mm=recon_fov)
 
+        def limits_from_acq_idx(acq_idx_tensor: torch.Tensor) -> Limits:
+            return Limits(int(acq_idx_tensor.min().item()), int(acq_idx_tensor.max().item()), 0)
+
+        encoding_limits = EncodingLimits(
+            **{
+                field.name: limits_from_acq_idx(getattr(self.acq_info.idx, field.name))
+                for field in dataclasses.fields(self.acq_info.idx)
+            }
+        )
+
         # Encoding
         encoding = ismrmrdschema.encodingType(
             encodedSpace=encoding_space,
             reconSpace=recon_space,
-            encodingLimits=ismrmrdschema.encodingLimitsType(),
+            encodingLimits=encoding_limits.to_ismrmrd_encoding_limits_type(),
             trajectory=ismrmrdschema.trajectoryType(self.trajectory_type.value),
         )
 
