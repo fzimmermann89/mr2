@@ -160,7 +160,8 @@ class DifferentiableDictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]
         if self._index_of_scaling_parameter is not None:
             scaling_position = normalize_index(len(x), self._index_of_scaling_parameter)
             x_stored = (*x[:scaling_position], *x[scaling_position + 1 :])  # type: ignore[arg-type]
-            primals = (*x[:scaling_position], torch.tensor(1.0), *x[scaling_position + 1 :])  # type: ignore[arg-type]
+            scale = x[scaling_position].new_tensor(1.0)
+            primals = (*x[:scaling_position], scale, *x[scaling_position + 1 :])  # type: ignore[arg-type]
         else:
             x_stored = x  # type: ignore[assignment]
             primals = x  # type: ignore[assignment]
@@ -173,7 +174,7 @@ class DifferentiableDictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]
             if scaling_position is not None:
                 tangents = (
                     *tangents[:scaling_position],
-                    torch.tensor(0.0),
+                    scale.new_zeros(()),
                     *tangents[scaling_position:],
                 )
             (y,), (dy_i,), *_ = torch.func.jvp(self._f, primals, tangents)
