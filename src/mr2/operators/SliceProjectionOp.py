@@ -179,7 +179,7 @@ class SliceProjectionOp(LinearOperator):
         if slice_shift_tensor.device.type != 'cpu':
             raise ValueError('slice_shift must be on cpu')
         batch_shapes = torch.broadcast_shapes(slice_rotation.shape, slice_shift_tensor.shape, slice_profile_array.shape)
-        assert isinstance(batch_shapes, torch.Size)  # noqa: S101 # mypy
+        assert isinstance(batch_shapes, torch.Size)  # mypy
         rotation_quats = torch.broadcast_to(slice_rotation.as_quat(), (*batch_shapes, 4)).reshape(-1, 4)
         slice_rotation = Rotation(rotation_quats, normalize=False, copy=False)
         slice_shift_tensor = torch.broadcast_to(slice_shift_tensor, batch_shapes).flatten()
