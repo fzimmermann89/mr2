@@ -85,7 +85,7 @@ class DictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]):
         if self._index_of_scaling_parameter is not None:
             scaling_position = self._index_of_scaling_parameter % len(x)
             # replace the scaling argument with 1 in call
-            scale = x[scaling_position].new_tensor(1)
+            scale = cast(torch.Tensor, x[scaling_position]).new_tensor(1)
             (y,) = self._f(*x[:scaling_position], scale, *x[scaling_position + 1 :])  # type: ignore[call-arg]
             # but drop it in the dictionary
             x_list = [x.flatten() for x in torch.broadcast_tensors(*x[:scaling_position], *x[scaling_position + 1 :])]

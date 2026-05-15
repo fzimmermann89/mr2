@@ -160,7 +160,7 @@ class DifferentiableDictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]
         if self._index_of_scaling_parameter is not None:
             scaling_position = normalize_index(len(x), self._index_of_scaling_parameter)
             x_stored = (*x[:scaling_position], *x[scaling_position + 1 :])  # type: ignore[arg-type]
-            scale = x[scaling_position].new_tensor(1.0)
+            scale = cast(torch.Tensor, x[scaling_position]).new_tensor(1.0)
             primals = (*x[:scaling_position], scale, *x[scaling_position + 1 :])  # type: ignore[arg-type]
         else:
             x_stored = x  # type: ignore[assignment]
