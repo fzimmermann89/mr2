@@ -2,6 +2,7 @@
 
 import torch
 
+from mr2.algorithms.csm.extrapolate import extrapolate_csm
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.utils.filters import uniform_filter
 
@@ -10,6 +11,7 @@ def walsh(
     coil_images: torch.Tensor,
     smoothing_width: SpatialDimension[int] | int,
     align_phase: bool = True,
+    extrapolate: bool = False,
 ) -> torch.Tensor:
     """Calculate a coil sensitivity map (csm) using Walsh's method [WAL2000]_.
 
@@ -50,6 +52,8 @@ def walsh(
         Width of the smoothing filter.
     align_phase
         If True, resolve the phase ambiguity of eigenvectors relative to the data [INA2013]_.
+    extrapolate
+        If `True`, extrapolate the estimated CSMs into low-signal regions.
 
     Returns
     -------
@@ -90,5 +94,13 @@ def walsh(
         phase_map = torch.einsum('... c, ... c z y x -> ... z y x', d_sum.conj(), csm).angle()
         csm = csm * torch.exp(-1j * phase_map).unsqueeze(-4)
 
-    csm = torch.where(torch.isfinite(csm), csm, 0.0)
-    return csm
+    if extrapolate:
+        confidence = coil_images.abs().square().sum(dim=-4).sqrt()
+        csm = extrapolate_csm(csm, confidence, smoothing_width)
+
+    norm = csm.norm(dim=-4, keepdim=True)
+    fallback = torch.zeros_like(csm)
+    fallback[..., 0, :, :, :] = 1
+    valid = torch.isfinite(norm) & (norm > eps)
+    csm = csm / norm.clamp_min(eps)
+    return torch.where(valid.expand_as(csm), csm, fallback)
