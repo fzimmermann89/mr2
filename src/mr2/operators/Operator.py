@@ -58,12 +58,32 @@ class Operator(Generic[Unpack[Tin], Tout], ABC, TensorAttributeMixin, torch.nn.M
     def __add__(self, other: Operator[Unpack[Tin], Tout]) -> Operator[Unpack[Tin], Tout]: ...
     @overload
     def __add__(
+        self: Operator[Unpack[Tin], tuple[torch.Tensor]],
+        other: Operator[Unpack[Tin], tuple[torch.Tensor, ...]],
+    ) -> Operator[Unpack[Tin], tuple[torch.Tensor, ...]]: ...
+    @overload
+    def __add__(
+        self: Operator[Unpack[Tin], tuple[torch.Tensor]],
+        other: mr2.operators.ProximableFunctionalSeparableSum,
+    ) -> Operator[Unpack[Tin], tuple[torch.Tensor]]: ...
+    @overload
+    def __add__(
         self: Operator[Unpack[Tin], tuple[Unpack[Tin]]], other: torch.Tensor | complex
     ) -> Operator[Unpack[Tin], tuple[Unpack[Tin]]]: ...
 
     def __add__(
-        self, other: Operator[Unpack[Tin], Tout] | torch.Tensor | complex | mr2.operators.ZeroOp
-    ) -> Operator[Unpack[Tin], Tout] | Operator[Unpack[Tin], tuple[Unpack[Tin]]]:
+        self,
+        other: Operator[Unpack[Tin], Tout]
+        | Operator[Unpack[Tin], tuple[torch.Tensor, ...]]
+        | mr2.operators.ProximableFunctionalSeparableSum
+        | torch.Tensor
+        | complex
+        | mr2.operators.ZeroOp,
+    ) -> (
+        Operator[Unpack[Tin], Tout]
+        | Operator[Unpack[Tin], tuple[torch.Tensor, ...]]
+        | Operator[Unpack[Tin], tuple[Unpack[Tin]]]
+    ):
         """Operator addition.
 
         Returns ``lambda x: self(x) + other(x)`` if other is a operator,
@@ -123,6 +143,70 @@ class Operator(Generic[Unpack[Tin], Tout], ABC, TensorAttributeMixin, torch.nn.M
         Returns ``lambda x: other*x - self(x)``
         """
         return (-1.0) * self + other
+
+    @overload
+    def __or__(
+        self: Operator[torch.Tensor, tuple[torch.Tensor]],
+        other: Operator[torch.Tensor, tuple[torch.Tensor]],
+    ) -> mr2.operators.OperatorStack: ...
+
+    @overload
+    def __or__(
+        self: Operator[torch.Tensor, tuple[torch.Tensor]],
+        other: mr2.operators.OperatorStack,
+    ) -> mr2.operators.OperatorStack: ...
+
+    def __or__(
+        self: Operator[torch.Tensor, tuple[torch.Tensor]],
+        other: Operator[torch.Tensor, tuple[torch.Tensor]] | mr2.operators.OperatorStack,
+    ) -> mr2.operators.OperatorStack:
+        """Horizontal stacking of two single-input operators.
+
+        ``A|B`` creates an `~mr2.operators.OperatorStack` with one row and two columns,
+        such that ``(A|B)(x1, x2)`` equals ``A(x1) + B(x2)`` (tuple-wise).
+        """
+        if isinstance(other, mr2.operators.OperatorStack):
+            if (rows := other.shape[0]) > 1:
+                raise ValueError(
+                    f'Shape mismatch in horizontal stacking: cannot stack Operator and stack with {rows} rows.'
+                )
+            return mr2.operators.OperatorStack([[self, *other._operators[0]]])
+        elif isinstance(other, Operator) and not isinstance(other, mr2.operators.OperatorStack):
+            return mr2.operators.OperatorStack([[self, other]])
+        else:
+            return NotImplemented
+
+    @overload
+    def __mod__(
+        self: Operator[torch.Tensor, tuple[torch.Tensor]],
+        other: Operator[torch.Tensor, tuple[torch.Tensor]],
+    ) -> mr2.operators.OperatorStack: ...
+
+    @overload
+    def __mod__(
+        self: Operator[torch.Tensor, tuple[torch.Tensor]],
+        other: mr2.operators.OperatorStack,
+    ) -> mr2.operators.OperatorStack: ...
+
+    def __mod__(
+        self: Operator[torch.Tensor, tuple[torch.Tensor]],
+        other: Operator[torch.Tensor, tuple[torch.Tensor]] | mr2.operators.OperatorStack,
+    ) -> mr2.operators.OperatorStack:
+        """Vertical stacking of two single-input operators.
+
+        ``A%B`` creates an `~mr2.operators.OperatorStack` with two rows and one column,
+        such that ``(A%B)(x)`` equals ``(*A(x), *B(x))``.
+        """
+        if isinstance(other, mr2.operators.OperatorStack):
+            if (cols := other.shape[1]) > 1:
+                raise ValueError(
+                    f'Shape mismatch in vertical stacking: cannot stack Operator and stack with {cols} columns.'
+                )
+            return mr2.operators.OperatorStack([[self], *other._operators])
+        elif isinstance(other, Operator) and not isinstance(other, mr2.operators.OperatorStack):
+            return mr2.operators.OperatorStack([[self], [other]])
+        else:
+            return NotImplemented
 
 
 class OperatorComposition(Operator[Unpack[Tin2], Tout]):
