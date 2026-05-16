@@ -354,7 +354,7 @@ class LinearOperatorMatrix(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torc
         norm = norms.square().sum(0).sqrt().amax(0)
         return norm
 
-    def __or__(self, other: LinearOperator | LinearOperatorMatrix) -> Self:
+    def __or__(self, other: LinearOperator | LinearOperatorMatrix) -> Self:  # type: ignore[override]
         """Horizontal stacking."""
         if isinstance(other, LinearOperator):
             if (rows := self.shape[0]) > 1:
@@ -371,7 +371,7 @@ class LinearOperatorMatrix(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torc
             operators = [[*self_row, *other_row] for self_row, other_row in zip(self, other, strict=True)]
             return self.__class__(operators)
 
-    def __ror__(self, other: LinearOperator) -> Self:
+    def __ror__(self, other: LinearOperator) -> Self:  # type: ignore[override]
         """Horizontal stacking."""
         if (rows := self.shape[0]) > 1:
             raise ValueError(
