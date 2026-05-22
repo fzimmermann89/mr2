@@ -11,7 +11,7 @@ from mr2.utils.pad_or_crop import pad_or_crop
 from mr2.utils.split_idx import split_idx
 from mr2.utils.sliding_window import sliding_window
 from mr2.utils.summarize import summarize_object, summarize_values
-from mr2.utils.reshape import broadcast_right, broadcasted_rearrange, unsqueeze_left, unsqueeze_right, reduce_view, reshape_broadcasted, ravel_multi_index, unsqueeze_tensors_left, unsqueeze_tensors_right, unsqueeze_at, unsqueeze_tensors_at, broadcasted_concatenate, normalize_index, normalize_indices
+from mr2.utils.reshape import broadcast_right, broadcast_shapes_except, broadcasted_rearrange, unsqueeze_left, unsqueeze_right, reduce_view, reshape_broadcasted, ravel_multi_index, unsqueeze_tensors_left, unsqueeze_tensors_right, unsqueeze_at, unsqueeze_tensors_at, broadcasted_concatenate, normalize_index, normalize_indices
 from mr2.utils.TensorAttributeMixin import TensorAttributeMixin
 from mr2.utils.TensorList import TensorList
 from mr2.utils.interpolate import interp, interpolate, apply_lowres
@@ -27,6 +27,7 @@ __all__ = [
     "TensorList",
     "apply_lowres",
     "broadcast_right",
+    "broadcast_shapes_except",
     "broadcasted_concatenate",
     "broadcasted_rearrange",
     "fill_range_",

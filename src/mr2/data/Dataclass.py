@@ -18,7 +18,7 @@ from typing_extensions import Any, Protocol, Self, TypeVar, dataclass_transform,
 
 from mr2.utils.indexing import HasIndex, Indexer
 from mr2.utils.reduce_repeat import reduce_repeat
-from mr2.utils.reshape import broadcasted_concatenate, broadcasted_rearrange, normalize_index
+from mr2.utils.reshape import broadcast_shapes_except, broadcasted_concatenate, broadcasted_rearrange, normalize_index
 from mr2.utils.summarize import summarize_object
 from mr2.utils.typing import TorchIndexerType
 
@@ -50,6 +50,16 @@ class HasConcatenate(Protocol):
 
     def concatenate(self, *others: Self, dim: int) -> Self:
         """Concatenate other instances to self."""
+
+
+@runtime_checkable
+class HasExpand(Protocol):
+    """Objects that support view-like broadcasting via an `expand` method."""
+
+    @property
+    def shape(self) -> torch.Size: ...
+
+    def expand(self, *shape: int) -> Self: ...
 
 
 class InconsistentDeviceError(RuntimeError):
@@ -1012,14 +1022,17 @@ class Dataclass:
     def concatenate(self, *others: Self, dim: int) -> Self:
         """Concatenate other instances to the current instance.
 
-        Only tensor-like fields will be concatenated in the specified dimension.
-        List fields will be concatenated as a list.
-        Other fields will be ignored.
+        Tensor-like fields are broadcast against each other in non-concat
+        dimensions and concatenated along `dim`. Nested objects that support
+        both `concatenate` and `expand` (e.g. `Rotation`) are first expanded
+        to the per-object broadcast shape, so a field that is broadcast
+        across siblings still gets the parent's concat size. List fields are
+        joined into a new list. Other fields are left untouched.
 
         Parameters
         ----------
         others
-            other instance to concatnate.
+            other instance to concatenate.
         dim
             The dimension to concatenate along.
 
@@ -1027,19 +1040,32 @@ class Dataclass:
         -------
             The concatenated dataclass.
         """
+        objects = (self, *others)
+        target_shapes = broadcast_shapes_except([obj.shape for obj in objects], dim)
+        dim = normalize_index(len(target_shapes[0]), dim)
+
         new = shallowcopy(self)
-        shapes = [self.shape, *[other.shape for other in others]]
         for field in dataclasses.fields(new):
-            value_self = getattr(new, field.name)
-            value_others = [getattr(other, field.name) for other in others]
-            if all(isinstance(v, list) for v in (value_self, *value_others)):
-                for v in value_others:
-                    value_self.extend(v)
-            elif all(isinstance(v, torch.Tensor) for v in (value_self, *value_others)):
-                tensors = [t.broadcast_to(s) for t, s in zip((value_self, *value_others), shapes, strict=True)]
-                setattr(new, field.name, broadcasted_concatenate(tensors, dim=dim))
-            elif isinstance(value_self, HasConcatenate):
-                setattr(new, field.name, value_self.concatenate(*value_others, dim=dim))
+            values = [getattr(obj, field.name) for obj in objects]
+            head, *tail = values
+
+            if all(isinstance(v, list) for v in values):
+                # build a new list to avoid mutating the shallow-copied attribute
+                setattr(new, field.name, [item for v in values for item in v])
+
+            elif all(isinstance(v, torch.Tensor) for v in values):
+                expanded = [v.broadcast_to(shape) for v, shape in zip(values, target_shapes, strict=True)]
+                setattr(new, field.name, broadcasted_concatenate(expanded, dim=dim))
+
+            elif isinstance(head, HasConcatenate) and all(isinstance(v, HasExpand) for v in values):
+                # Expand siblings to the parent broadcast shape so concat picks up dims
+                # introduced by other fields (e.g. a Rotation broadcast against a larger tensor).
+                expanded = [v.expand(*shape) for v, shape in zip(values, target_shapes, strict=True)]
+                setattr(new, field.name, expanded[0].concatenate(*expanded[1:], dim=dim))
+
+            elif isinstance(head, HasConcatenate):
+                setattr(new, field.name, head.concatenate(*tail, dim=dim))
+
         new._reduce_repeats_(recurse=True)
         return new
 
