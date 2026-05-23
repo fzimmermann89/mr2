@@ -2132,7 +2132,10 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
             else:
                 newshape.extend(s)
         return self.__class__(
-            self._quaternions.expand(*newshape, 4), inversion=self._is_improper.expand(newshape), copy=True
+            self._quaternions.expand(*newshape, 4),
+            inversion=self._is_improper.expand(newshape),
+            normalize=False,
+            copy=False,
         )
 
     def unsqueeze(self, dim: int) -> Self:
