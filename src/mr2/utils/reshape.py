@@ -511,8 +511,8 @@ def broadcast_shapes_except(
     padded = [(1,) * (ndim - len(shape)) + tuple(shape) for shape in shapes]
     dim = normalize_index(ndim, dim)
 
-    common = torch.broadcast_shapes(*(shape[:dim] + (1,) + shape[dim + 1 :] for shape in padded))
-    return [tuple(common[:dim]) + (shape[dim],) + tuple(common[dim + 1 :]) for shape in padded]
+    common = torch.broadcast_shapes(*((*shape[:dim], 1, *shape[dim + 1 :]) for shape in padded))
+    return [(*common[:dim], shape[dim], *common[dim + 1 :]) for shape in padded]
 
 
 def broadcasted_concatenate(tensors: Sequence[torch.Tensor], dim: int, reduce_views: bool = True) -> torch.Tensor:

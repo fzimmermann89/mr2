@@ -57,9 +57,11 @@ class HasExpand(Protocol):
     """Objects that support view-like broadcasting via an `expand` method."""
 
     @property
-    def shape(self) -> torch.Size: ...
+    def shape(self) -> torch.Size:
+        """Batch shape of the object."""
 
-    def expand(self, *shape: int) -> Self: ...
+    def expand(self, *shape: int) -> Self:
+        """Return a view broadcast to ``shape``."""
 
 
 class InconsistentDeviceError(RuntimeError):
