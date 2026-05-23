@@ -8,6 +8,7 @@ import torch
 from mr2.utils import (
     RandomGenerator,
     broadcast_right,
+    broadcast_shapes_except,
     broadcasted_rearrange,
     normalize_index,
     normalize_indices,
@@ -280,6 +281,20 @@ def test_unsqueeze_tensors_ndim() -> None:
     assert unsqueezed[1].shape == (5, 2, 1, 1, 1)
     assert torch.equal(unsqueezed[0].squeeze(), tensor1)
     assert torch.equal(unsqueezed[1].squeeze(), tensor2)
+
+
+@pytest.mark.parametrize(
+    ('shapes', 'dim', 'expected'),
+    [
+        ([(2, 1, 4), (3, 5, 4)], 0, [(2, 5, 4), (3, 5, 4)]),
+        ([(12, 1, 1, 1, 1), (1, 1, 1, 1)], 0, [(12, 1, 1, 1, 1), (1, 1, 1, 1, 1)]),
+        ([(2, 1, 4), (3, 5, 4)], -3, [(2, 5, 4), (3, 5, 4)]),
+    ],
+    ids=['same_rank', 'different_ranks', 'negative_dim'],
+)
+def test_broadcast_shapes_except(shapes: list[tuple[int, ...]], dim: int, expected: list[tuple[int, ...]]) -> None:
+    """Test broadcast_shapes_except."""
+    assert broadcast_shapes_except(shapes, dim) == expected
 
 
 def test_broadcasted_rearrange() -> None:
