@@ -1838,3 +1838,12 @@ def test_cuda_concatenate() -> None:
     r1 = Rotation.random(2, random_state=0, device='cuda')
     r2 = Rotation.random(2, random_state=1, device='cuda')
     assert Rotation.concatenate([r1, r2]).device.type == 'cuda'
+
+
+@pytest.mark.cuda
+def test_cuda_random_vmf() -> None:
+    """random_vmf materializes outputs on the requested CUDA device."""
+    mean_axis = torch.tensor([0.0, 0.0, 1.0], device='cuda')
+    rotation = Rotation.random_vmf(num=8, mean_axis=mean_axis, kappa=5.0, sigma=math.inf, device='cuda')
+    assert rotation.device.type == 'cuda'
+    assert rotation.as_quat().device.type == 'cuda'
