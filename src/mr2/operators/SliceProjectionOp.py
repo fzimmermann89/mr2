@@ -116,11 +116,7 @@ class SliceProjectionOp(LinearOperator):
         Different settings for different volume batches are NOT supported, consider creating multiple
         operators if required.
 
-        Note
-        ----
-        All parameters must be on cpu when creating the operator. Preparation of the operator on
-        the GPU would be slower than transferring the parameters to the CPU, creation, then transferring
-        the operator back to the GPU.
+
 
 
         Parameters
@@ -153,10 +149,16 @@ class SliceProjectionOp(LinearOperator):
             slice_profile = SliceSmoothedRectangular(slice_profile, 0.0)
         slice_profile_array = np.array(slice_profile)
 
+        slice_shift_tensor = cast(Tensor, torch.atleast_1d(torch.as_tensor(slice_shift)))
+
         if slice_rotation is None:
-            slice_rotation = Rotation.identity()
-        elif slice_rotation.device.type != 'cpu':
-            raise ValueError('slice_rotation must be on cpu')
+            device = slice_shift_tensor.device
+            slice_rotation = Rotation.identity(device=device)
+        else:
+            device = slice_rotation.device
+            if isinstance(slice_shift, Tensor) and slice_shift_tensor.device != device:
+                raise ValueError('slice_shift and slice_rotation must be on the same device')
+            slice_shift_tensor = slice_shift_tensor.to(device)
 
         max_shape = max(input_shape.z, input_shape.y, input_shape.x)
         if output_shape is None:
@@ -165,16 +167,16 @@ class SliceProjectionOp(LinearOperator):
         def _find_width(slice_profile: TensorFunction) -> int:
             # figure out how far along the profile we have to consider values
             # clip up to 0.01 of intensity on both sides
-            test_values = torch.linspace(-max_shape, max_shape, 4 * max_shape + 1)
+            test_values = torch.linspace(-max_shape, max_shape, 4 * max_shape + 1, device=device)
             profile = slice_profile(test_values)
             cdf = torch.cumsum(profile, -1) / profile.sum()
             left = test_values[(cdf > 0.01).int().argmax()]
             right = test_values[(cdf > 0.99).int().argmax()]
             return int(max(left.abs().item(), right.abs().item())) + 1
 
-        def _at_least_width_1(slice_profile: TensorFunction):
-            test_values = torch.linspace(-0.5, 0.5, 100)
-            return (slice_profile(test_values) > 1e-6).all()
+        def _at_least_width_1(slice_profile: TensorFunction) -> bool:
+            test_values = torch.linspace(-0.5, 0.5, 100, device=device)
+            return bool((slice_profile(test_values) > 1e-6).all().item())
 
         if not np.vectorize(_at_least_width_1)(slice_profile_array).all():
             raise ValueError(
@@ -182,27 +184,27 @@ class SliceProjectionOp(LinearOperator):
                 ' i.e. the profile should be greater then 1e-6 in (-0.5, 0.5)'
             )
 
-        slice_shift_tensor = cast(torch.Tensor, torch.atleast_1d(torch.as_tensor(slice_shift)))
-        if slice_shift_tensor.device.type != 'cpu':
-            raise ValueError('slice_shift must be on cpu')
         batch_shapes = torch.broadcast_shapes(slice_rotation.shape, slice_shift_tensor.shape, slice_profile_array.shape)
         assert isinstance(batch_shapes, torch.Size)  # mypy
         slice_rotation = slice_rotation.expand(*batch_shapes).reshape(-1)
         slice_shift_tensor = torch.broadcast_to(slice_shift_tensor, batch_shapes).flatten()
         widths = np.broadcast_to(np.vectorize(_find_width)(slice_profile_array), batch_shapes).ravel()
         slice_profile_array = np.broadcast_to(slice_profile_array, batch_shapes).ravel()
-        matrices = [
-            SliceProjectionOp.projection_matrix(
-                input_shape,
-                output_shape,
-                offset=torch.tensor([shift, 0.0, 0.0]),
-                slice_function=f,
-                rotation=rot,
-                w=int(w),
-            )
-            for rot, shift, f, w in zip(slice_rotation, slice_shift_tensor, slice_profile_array, widths, strict=True)
-        ]
-        matrix = SliceProjectionOp.join_matrices(matrices)
+        matrix = SliceProjectionOp.join_matrices(
+            [
+                SliceProjectionOp.projection_matrix(
+                    input_shape,
+                    output_shape,
+                    offset=torch.stack([shift, shift.new_zeros(()), shift.new_zeros(())]),
+                    slice_function=f,
+                    rotation=rot,
+                    w=int(w),
+                )
+                for rot, shift, f, w in zip(
+                    slice_rotation, slice_shift_tensor, slice_profile_array, widths, strict=True
+                )
+            ]
+        )
 
         # in csr format the matmul is faster, but saving one for forward and adjoint takes more memory
         with warnings.catch_warnings():
@@ -263,6 +265,13 @@ class SliceProjectionOp(LinearOperator):
                 matrix = matrix_adjoint.H
             case (matrix, matrix_adjoint):
                 ...
+        assert matrix is not None
+
+        if matrix.device != x.device:
+            raise RuntimeError(
+                f'Input is on {x.device}, but projection matrix is on {matrix.device}. '
+                'Move input/operator to the same device.'
+            )
 
         # For the (unusual case) of batched volumes, we will apply for each element in series
         xflat = torch.atleast_2d(einops.rearrange(x, '... x y z -> (...) (x y z)'))
@@ -300,6 +309,13 @@ class SliceProjectionOp(LinearOperator):
                 matrix = matrix_adjoint.H
             case (matrix, matrix_adjoint):
                 ...
+        assert matrix_adjoint is not None
+
+        if matrix_adjoint.device != x.device:
+            raise RuntimeError(
+                f'Input is on {x.device}, but adjoint projection matrix is on {matrix_adjoint.device}. '
+                'Move input/operator to the same device.'
+            )
 
         # For the (unusual case) of batched volumes, we will apply for each element in series
         n_batchdim = len(self._range_shape) - 3
@@ -328,18 +344,26 @@ class SliceProjectionOp(LinearOperator):
         matrices
             List of sparse matrices to join by stacking them as a block diagonal matrix
         """
+        if len(matrices) == 0:
+            raise ValueError('at least one matrix is required')
+
+        first = matrices[0]
+
         values = []
         target = []
         source = []
         for i, m in enumerate(matrices):
-            if not m.shape == matrices[0].shape:
+            if m.shape != first.shape:
                 raise ValueError('all matrices should have the same shape')
+            if m.device != first.device:
+                raise ValueError('all matrices should be on the same device')
+            if m.dtype != first.dtype:
+                raise ValueError('all matrices should have the same dtype')
             c = m.coalesce()  # we want unique indices
             (ctarget, csource) = c.indices()
             values.append(c.values())
             source.append(csource)
-            ctarget = ctarget + i * m.shape[0]
-            target.append(ctarget)
+            target.append(ctarget + i * m.shape[0])
 
         with warnings.catch_warnings():
             # beta status in pytorch causes a warning to be printed
@@ -347,8 +371,9 @@ class SliceProjectionOp(LinearOperator):
             matrix = torch.sparse_coo_tensor(
                 indices=torch.stack([torch.cat(target), torch.cat(source)]),
                 values=torch.cat(values),
-                dtype=torch.float32,
-                size=(len(matrices) * m.shape[0], m.shape[1]),
+                size=(len(matrices) * first.shape[0], first.shape[1]),
+                device=first.device,
+                dtype=first.dtype,
             )
         return matrix
 
@@ -399,21 +424,24 @@ class SliceProjectionOp(LinearOperator):
         )
         pixel_coord_y_x_zyx = torch.stack(
             [
-                (input_shape.z / 2 - 0.5) * torch.ones(y, x),  # z coordinates
+                torch.full((y, x), input_shape.z / 2 - 0.5, device=offset.device),  # z coordinates
                 *torch.meshgrid(
-                    torch.arange(start_y, start_y + y),  # y coordinates
-                    torch.arange(start_x, start_x + x),  # x coordinates
+                    torch.arange(start_y, start_y + y, device=offset.device),  # y coordinates
+                    torch.arange(start_x, start_x + x, device=offset.device),  # x coordinates
                     indexing='ij',
                 ),
             ],
             dim=-1,
         )  # coordinates of the 2d output pixels in the coordinate system of the input volume, so shape (y,x,3)
-        if offset is not None:
-            pixel_coord_y_x_zyx = pixel_coord_y_x_zyx + offset
+        pixel_coord_y_x_zyx = pixel_coord_y_x_zyx + offset
         if rotation_center is None:
             # default rotation center is the center of the volume, i.e. for 4 pixels
             # 0 1 2 3 it is between 0 and 1
-            rotation_center = torch.tensor([input_shape.z / 2 - 0.5, input_shape.y / 2 - 0.5, input_shape.x / 2 - 0.5])
+            rotation_center = torch.tensor(
+                [input_shape.z / 2 - 0.5, input_shape.y / 2 - 0.5, input_shape.x / 2 - 0.5], device=offset.device
+            )
+        else:
+            rotation_center = rotation_center.to(device=offset.device)
         pixel_rotated_y_x_zyx = rotation(pixel_coord_y_x_zyx - rotation_center) + rotation_center
 
         # We cast a ray from the pixel normal to the plane in both directions
@@ -421,16 +449,19 @@ class SliceProjectionOp(LinearOperator):
         ray = rotation(
             torch.stack(
                 [
-                    torch.arange(-w, w + 1),  # z
-                    torch.zeros(2 * w + 1),  # y
-                    torch.zeros(2 * w + 1),  # x
+                    torch.arange(-w, w + 1, device=offset.device),  # z
+                    torch.zeros(2 * w + 1, device=offset.device),  # y
+                    torch.zeros(2 * w + 1, device=offset.device),  # x
                 ],
                 dim=-1,
             )
         )
         # In all possible directions for each point along the line we consider the eight neighboring points
         # by adding all possible combinations of 0 and 1 to the point and flooring
-        offsets = torch.tensor(list(itertools.product([0, 1], repeat=3)))
+        offsets = torch.tensor(
+            list(itertools.product([0, 1], repeat=3)),
+            device=offset.device,
+        )
         # all points that influence a pixel
         # x,y,8-neighbors,(2*w+1)-raylength,3-dimensions input_shape.xinput_shape.yinput_shape.z)
         points_influencing_pixel = (
@@ -452,7 +483,7 @@ class SliceProjectionOp(LinearOperator):
         source = einops.rearrange(
             points_influencing_pixel,
             'y x neighbors raylength zyxdim -> (y x) (neighbors raylength) zyxdim',
-        ).int()
+        ).long()
 
         # mask of only potential source points inside the source volume
         mask = (
@@ -469,7 +500,9 @@ class SliceProjectionOp(LinearOperator):
 
         source_index = ravel_multi_index(source[mask].unbind(-1), (input_shape.z, input_shape.y, input_shape.x))
 
-        target_index = torch.repeat_interleave(torch.arange(y * x), mask.sum(-1))
+        target_index = torch.repeat_interleave(
+            torch.arange(y * x, device=offset.device, dtype=torch.long), mask.sum(-1)
+        )
 
         with warnings.catch_warnings():
             # beta status in pytorch causes a warning to be printed
@@ -479,20 +512,18 @@ class SliceProjectionOp(LinearOperator):
                 indices=torch.stack((target_index, source_index)),
                 values=weight.reshape(y * x, -1)[mask],
                 size=(y * x, input_shape.z * input_shape.y * input_shape.x),
-                dtype=torch.float32,
+                device=offset.device,
             ).coalesce()
 
             # To avoid giving more weight to points that are duplicated in our ray
             # logic and got summed in the coalesce operation, we normalize by the number
             # of duplicates. This is equivalent to the sum of the weights of the duplicates.
             # Count duplicates...
-
-            ones = torch.ones_like(source_index).float()
             ones = torch.sparse_coo_tensor(
                 indices=torch.stack((target_index, source_index)),
-                values=ones,
+                values=torch.ones_like(source_index, device=offset.device),
                 size=(y * x, input_shape.z * input_shape.y * input_shape.x),
-                dtype=torch.float32,
+                device=offset.device,
             )
             # Coalesce sums the values of duplicate indices
             ones = ones.coalesce()
