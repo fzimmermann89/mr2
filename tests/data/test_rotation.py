@@ -1691,3 +1691,150 @@ def test_unqueeze_last() -> None:
     assert r2.shape == (1, 2, 3, 1)
     assert r2[..., 0].approx_equal(r).all()
     assert r._quaternions is not r2._quaternions
+
+
+@pytest.mark.cuda
+def test_cuda_quat_roundtrip() -> None:
+    """from_quat / as_quat preserve device."""
+    quat = torch.tensor([0.0, 0.0, 0.0, 1.0], device='cuda')
+    rotation = Rotation.from_quat(quat)
+    result = rotation.as_quat()
+    assert rotation.device.type == 'cuda'
+    assert result.device.type == 'cuda'
+    torch.testing.assert_close(result, quat)
+
+
+@pytest.mark.cuda
+def test_cuda_matrix_roundtrip() -> None:
+    """from_matrix / as_matrix preserve device."""
+    rotation = Rotation.random(4, random_state=0, device='cuda')
+    matrix = rotation.as_matrix()
+    rotation2 = Rotation.from_matrix(matrix)
+    assert matrix.device.type == 'cuda'
+    assert rotation2.device.type == 'cuda'
+    assert rotation.approx_equal(rotation2).all()
+
+
+@pytest.mark.cuda
+def test_cuda_rotvec_roundtrip() -> None:
+    """from_rotvec / as_rotvec preserve device, including python-list reflection flags."""
+    rotvec = torch.tensor([[0.1, 0.0, 0.0], [0.2, 0.0, 0.0]], device='cuda')
+    rotation = Rotation.from_rotvec(rotvec, reflection=[False, True])
+    result = rotation.as_rotvec(improper='ignore')
+    assert rotation.device.type == 'cuda'
+    assert result.device.type == 'cuda'
+
+
+@pytest.mark.cuda
+def test_cuda_euler_roundtrip() -> None:
+    """from_euler / as_euler preserve device."""
+    angles = torch.tensor([0.1, 0.2, 0.3], device='cuda')
+    rotation = Rotation.from_euler('xyz', angles)
+    result = rotation.as_euler('xyz')
+    assert rotation.device.type == 'cuda'
+    assert result.device.type == 'cuda'
+    torch.testing.assert_close(result, angles)
+
+
+@pytest.mark.cuda
+def test_cuda_directions_roundtrip() -> None:
+    """from_directions / as_directions preserve device."""
+    rotation = Rotation.random(random_state=0, device='cuda')
+    bx, by, bz = rotation.as_directions()
+    rotation2 = Rotation.from_directions(bx, by, bz)
+    assert bx.x.device.type == 'cuda'
+    assert rotation2.device.type == 'cuda'
+    assert rotation.approx_equal(rotation2)
+
+
+@pytest.mark.cuda
+def test_cuda_apply_tensor() -> None:
+    """Applying a CUDA rotation to a tensor or python list returns CUDA output."""
+    rotation = Rotation.identity(device='cuda')
+    assert rotation(torch.tensor([1.0, 2.0, 3.0], device='cuda')).device.type == 'cuda'
+    assert rotation([1.0, 2.0, 3.0]).device.type == 'cuda'
+
+
+@pytest.mark.cuda
+def test_cuda_apply_spatialdimension() -> None:
+    """Applying a CUDA rotation to a SpatialDimension (scalar floats) returns CUDA tensors."""
+    rotation = Rotation.identity(device='cuda')
+    result = rotation(SpatialDimension(1.0, 2.0, 3.0))
+    assert isinstance(result, SpatialDimension)
+    assert result.x.device.type == 'cuda'
+
+
+@pytest.mark.cuda
+def test_cuda_matmul() -> None:
+    """Composing two CUDA rotations preserves device."""
+    r1 = Rotation.random(3, random_state=0, device='cuda')
+    r2 = Rotation.random(3, random_state=1, device='cuda')
+    assert (r1 @ r2).device.type == 'cuda'
+
+
+@pytest.mark.cuda
+def test_cuda_inv() -> None:
+    """inv preserves device and composes back to identity."""
+    rotation = Rotation.random(4, random_state=0, device='cuda')
+    inverse = rotation.inv()
+    assert inverse.device.type == 'cuda'
+    torch.testing.assert_close((rotation @ inverse).magnitude().cpu(), torch.zeros(4))
+
+
+@pytest.mark.cuda
+def test_cuda_pow() -> None:
+    """Integer powers preserve device, including the n=0 identity shortcut."""
+    rotation = Rotation.random(3, random_state=0, device='cuda')
+    assert (rotation**0).device.type == 'cuda'
+    assert (rotation**1).device.type == 'cuda'
+    assert (rotation**2).device.type == 'cuda'
+
+
+@pytest.mark.cuda
+def test_cuda_magnitude() -> None:
+    """magnitude returns a CUDA tensor."""
+    rotation = Rotation.random(3, random_state=0, device='cuda')
+    assert rotation.magnitude().device.type == 'cuda'
+
+
+@pytest.mark.cuda
+def test_cuda_reflect() -> None:
+    """reflect preserves device."""
+    rotation = Rotation.random(3, random_state=0, device='cuda')
+    assert rotation.reflect().device.type == 'cuda'
+
+
+@pytest.mark.cuda
+def test_cuda_invert_axes() -> None:
+    """invert_axes preserves device."""
+    rotation = Rotation.random(3, random_state=0, device='cuda')
+    assert rotation.invert_axes().device.type == 'cuda'
+
+
+@pytest.mark.cuda
+def test_cuda_mean() -> None:
+    """mean stays on CUDA, with both default weights and python-list weights."""
+    rotation = Rotation.random(4, random_state=0, device='cuda')
+    assert rotation.mean().device.type == 'cuda'
+    assert rotation.mean(weights=[1.0, 2.0, 3.0, 4.0]).device.type == 'cuda'
+
+
+@pytest.mark.cuda
+def test_cuda_align_vectors() -> None:
+    """align_vectors stays on CUDA, with both default weights and python-list weights."""
+    a = torch.eye(3, device='cuda')
+    b = torch.eye(3, device='cuda')
+    rot1, rssd1 = Rotation.align_vectors(a, b)
+    rot2, rssd2 = Rotation.align_vectors(a, b, weights=[1.0, 1.0, 1.0])
+    assert rot1.device.type == 'cuda'
+    assert rssd1.device.type == 'cuda'
+    assert rot2.device.type == 'cuda'
+    assert rssd2.device.type == 'cuda'
+
+
+@pytest.mark.cuda
+def test_cuda_concatenate() -> None:
+    """Concatenating CUDA rotations preserves device."""
+    r1 = Rotation.random(2, random_state=0, device='cuda')
+    r2 = Rotation.random(2, random_state=1, device='cuda')
+    assert Rotation.concatenate([r1, r2]).device.type == 'cuda'
