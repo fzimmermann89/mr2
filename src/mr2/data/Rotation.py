@@ -1850,7 +1850,7 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         *,
         return_sensitivity: Literal[False] = False,
         allow_improper: bool = ...,
-    ) -> tuple[Rotation, float]: ...
+    ) -> tuple[Rotation, torch.Tensor]: ...
 
     @overload
     @classmethod
@@ -1862,7 +1862,7 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         *,
         return_sensitivity: Literal[True],
         allow_improper: bool = ...,
-    ) -> tuple[Rotation, float, torch.Tensor]: ...
+    ) -> tuple[Rotation, torch.Tensor, torch.Tensor]: ...
 
     @classmethod
     def align_vectors(
@@ -1873,7 +1873,7 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         *,
         return_sensitivity: bool = False,
         allow_improper: bool = False,
-    ) -> tuple[Rotation, float] | tuple[Rotation, float, torch.Tensor]:
+    ) -> tuple[Rotation, torch.Tensor] | tuple[Rotation, torch.Tensor, torch.Tensor]:
         R"""Estimate a rotation to optimally align two sets of vectors.
 
         Find a rotation between frames A and B which best aligns a set of
