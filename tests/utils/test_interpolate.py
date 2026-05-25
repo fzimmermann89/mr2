@@ -79,18 +79,12 @@ def test_interpolate_area(data: torch.Tensor, data_dtype: torch.dtype, size: int
 
 @pytest.mark.parametrize('data_dtype', [torch.float32, torch.float64, torch.complex64, torch.complex128])
 @pytest.mark.parametrize('size', [10, 20, 30])
-def test_interpolate_bicubic(data: torch.Tensor, data_dtype: torch.dtype, size: int) -> None:
-    """Bicubic interpolation should return expected shape and dtype in 2D."""
+def test_interpolate_cubic_bicubic_backend(data: torch.Tensor, data_dtype: torch.dtype, size: int) -> None:
+    """Cubic interpolation should return expected shape and dtype in 2D."""
     data = data[..., 0, :, :].to(dtype=data_dtype).repeat(2, 3, 4, 3)
-    result = interpolate(data, size=(size, size), dim=(-2, -1), mode='bicubic')
+    result = interpolate(data, size=(size, size), dim=(-2, -1), mode='cubic')
     assert result.shape == (2, 3, size, size)
     assert result.dtype == data_dtype
-
-
-def test_interpolate_bicubic_requires_2d() -> None:
-    """Bicubic mode should only work with exactly two interpolation dimensions."""
-    with pytest.raises(ValueError, match='exactly 2 interpolation dimensions'):
-        interpolate(torch.zeros((2, 3, 4, 5, 6)), size=(2, 3, 4), dim=(-3, -2, -1), mode='bicubic')
 
 
 def test_interpolate_area_requires_1_to_3d() -> None:
@@ -105,13 +99,13 @@ def test_interpolate_area_requires_1_to_3d() -> None:
 
 
 def test_interpolate_align_corners_mode_validation() -> None:
-    """align_corners should only be accepted for linear and bicubic modes."""
+    """align_corners should only be accepted for linear and cubic modes."""
     with pytest.raises(ValueError, match='align_corners is only supported'):
         interpolate(torch.zeros((2, 3, 4, 5)), size=(2, 3), dim=(-2, -1), mode='area', align_corners=True)
 
 
-@pytest.mark.parametrize('mode', ['nearest', 'linear', 'area', 'bicubic'])
-def test_interpolate_vmap_2d(data: torch.Tensor, mode: Literal['nearest', 'linear', 'area', 'bicubic']) -> None:
+@pytest.mark.parametrize('mode', ['nearest', 'linear', 'area', 'cubic'])
+def test_interpolate_vmap_2d(data: torch.Tensor, mode: Literal['nearest', 'linear', 'area', 'cubic']) -> None:
     """Interpolate should support vmap for 2D modes."""
     data = data.to(torch.float32).repeat(5, 1, 1, 1, 1)
     vmapped = torch.vmap(lambda tensor: interpolate(tensor, size=(6, 7), dim=(-2, -1), mode=mode))

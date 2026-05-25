@@ -48,10 +48,10 @@ def test_spline_registration(device: str, ellipse_phantom) -> None:
     rng = RandomGenerator(1)
     control_points_y = rng.float32_tensor(
         (1, (image_dimensions.y - 1) // 32 + 4, (image_dimensions.x - 1) // 32 + 4), low=-10, high=10
-    )
+    ).to(device=fixed.device)
     control_points_x = rng.float32_tensor(
         (1, (image_dimensions.y - 1) // 32 + 4, (image_dimensions.x - 1) // 32 + 4), low=-10, high=10
-    )
+    ).to(device=fixed.device)
     spline_operator = GridSamplingOp.from_bspline(
         None,
         control_points_y,
@@ -99,7 +99,7 @@ def test_register_images(ellipse_phantom) -> None:
     )
 
     control_points_y, control_points_x = rng.float32_tensor(
-        (2, 1, (image_dimensions.y - 1) // 8 + 4, (image_dimensions.x - 1) // 8 + 4), low=-0, high=0
+        (2, 1, (image_dimensions.y - 1) // 8 + 4, (image_dimensions.x - 1) // 8 + 4), low=-0.1, high=0.1
     )
 
     spline_operator = GridSamplingOp.from_bspline(

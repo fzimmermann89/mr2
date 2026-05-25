@@ -648,13 +648,13 @@ def test_grid_sampling_op_matmul_composition() -> None:
 
 def test_grid_sampling_op_matmul_composition_3d_2d() -> None:
     """Test composition of 3D and 2D GridSamplingOp."""
-    image = torch.zeros(2, 3, 8, 9, 10)
-    image[..., 2:6, 2:7, 3:8] = 1
-
     affine_3d = torch.zeros(2, 3, 4)
     affine_3d[..., 0, 0] = 1
     affine_3d[..., 1, 1] = 1
     affine_3d[..., 2, 2] = 1
+    affine_3d[..., 0, 3] = 0.1
+    affine_3d[..., 1, 3] = -0.05
+    affine_3d[..., 2, 3] = 0.08
     operator_3d = GridSamplingOp.from_affine(
         affine_3d,
         input_shape=SpatialDimension(8, 9, 10),
@@ -666,6 +666,8 @@ def test_grid_sampling_op_matmul_composition_3d_2d() -> None:
     affine_2d = torch.zeros(2, 2, 3)
     affine_2d[..., 0, 0] = 1
     affine_2d[..., 1, 1] = 1
+    affine_2d[..., 0, 2] = -0.07
+    affine_2d[..., 1, 2] = 0.04
     operator_2d = GridSamplingOp.from_affine(
         affine_2d,
         input_shape=SpatialDimension(1, 9, 10),
@@ -675,20 +677,29 @@ def test_grid_sampling_op_matmul_composition_3d_2d() -> None:
     )
 
     joint_operator = operator_3d @ operator_2d
-    (moved_2d,) = operator_2d(image)
-    (moved_sequential,) = operator_3d(moved_2d)
-    (moved_joint,) = joint_operator(image)
-    torch.testing.assert_close(moved_joint, moved_sequential, atol=1e-5, rtol=1e-5)
+    expected_grid = torch.stack(
+        (
+            (operator_3d.grid[..., 0] + affine_2d[..., None, None, None, 0, 2]).clamp(-1.0, 1.0),
+            (operator_3d.grid[..., 1] + affine_2d[..., None, None, None, 1, 2]).clamp(-1.0, 1.0),
+            operator_3d.grid[..., 2],
+        ),
+        dim=-1,
+    )
+    torch.testing.assert_close(
+        joint_operator.grid[..., 1:-1, 1:-1, 1:-1, :],
+        expected_grid[..., 1:-1, 1:-1, 1:-1, :],
+        atol=1e-5,
+        rtol=1e-5,
+    )
 
 
 def test_grid_sampling_op_matmul_composition_2d_3d() -> None:
     """Test composition of 2D and 3D GridSamplingOp."""
-    image = torch.zeros(2, 3, 8, 9, 10)
-    image[..., 2:6, 2:7, 3:8] = 1
-
     affine_2d = torch.zeros(2, 2, 3)
     affine_2d[..., 0, 0] = 1
     affine_2d[..., 1, 1] = 1
+    affine_2d[..., 0, 2] = 0.06
+    affine_2d[..., 1, 2] = -0.03
     operator_2d = GridSamplingOp.from_affine(
         affine_2d,
         input_shape=SpatialDimension(1, 9, 10),
@@ -701,6 +712,9 @@ def test_grid_sampling_op_matmul_composition_2d_3d() -> None:
     affine_3d[..., 0, 0] = 1
     affine_3d[..., 1, 1] = 1
     affine_3d[..., 2, 2] = 1
+    affine_3d[..., 0, 3] = -0.09
+    affine_3d[..., 1, 3] = 0.05
+    affine_3d[..., 2, 3] = 0.02
     operator_3d = GridSamplingOp.from_affine(
         affine_3d,
         input_shape=SpatialDimension(8, 9, 10),
@@ -710,10 +724,20 @@ def test_grid_sampling_op_matmul_composition_2d_3d() -> None:
     )
 
     joint_operator = operator_2d @ operator_3d
-    (moved_3d,) = operator_3d(image)
-    (moved_sequential,) = operator_2d(moved_3d)
-    (moved_joint,) = joint_operator(image)
-    torch.testing.assert_close(moved_joint, moved_sequential, atol=1e-5, rtol=1e-5)
+    expected_grid = torch.stack(
+        (
+            (operator_3d.grid[..., 0] + affine_2d[..., None, None, None, 0, 2]).clamp(-1.0, 1.0),
+            (operator_3d.grid[..., 1] + affine_2d[..., None, None, None, 1, 2]).clamp(-1.0, 1.0),
+            operator_3d.grid[..., 2],
+        ),
+        dim=-1,
+    )
+    torch.testing.assert_close(
+        joint_operator.grid[..., 1:-1, 1:-1, 1:-1, :],
+        expected_grid[..., 1:-1, 1:-1, 1:-1, :],
+        atol=1e-5,
+        rtol=1e-5,
+    )
 
 
 @pytest.mark.cuda

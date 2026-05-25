@@ -429,7 +429,7 @@ class GridSamplingOp(LinearOperator):
                 torch.stack(
                     (
                         (1.0 - t) ** 3,  # == (-t**3+3*t**2-3*t+1)
-                        (3 * tt - 6 * tt + 4),
+                        (3 * ttt - 6 * tt + 4),
                         -3 * ttt + 3 * tt + 3 * t + 1,
                         ttt,
                     ),
