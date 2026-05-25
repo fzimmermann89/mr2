@@ -96,6 +96,7 @@ class SliceProjectionOp(LinearOperator):
     def __init__(
         self,
         input_shape: SpatialDimension[int],
+        output_shape: SpatialDimension[int] | None = None,
         slice_rotation: Rotation | None = None,
         slice_shift: float | Tensor = 0.0,
         slice_profile: TensorFunction | np.ndarray | NestedSequence[TensorFunction] | float = 2.0,
@@ -126,6 +127,10 @@ class SliceProjectionOp(LinearOperator):
         ----------
         input_shape
             Shape of the 3D volume to sample from. `(z, y, x)`
+        output_shape
+            Shape of the resulting 2D slice. Only `y` and `x` are used.
+            If `None`, the output slice uses the largest input dimension in-plane,
+            preserving the previous behavior.
         slice_rotation
             Rotation that describes the orientation of the plane. If `None`,
             an identity rotation is used.
@@ -154,6 +159,8 @@ class SliceProjectionOp(LinearOperator):
             raise ValueError('slice_rotation must be on cpu')
 
         max_shape = max(input_shape.z, input_shape.y, input_shape.x)
+        if output_shape is None:
+            output_shape = SpatialDimension(1, max_shape, max_shape)
 
         def _find_width(slice_profile: TensorFunction) -> int:
             # figure out how far along the profile we have to consider values
@@ -180,15 +187,14 @@ class SliceProjectionOp(LinearOperator):
             raise ValueError('slice_shift must be on cpu')
         batch_shapes = torch.broadcast_shapes(slice_rotation.shape, slice_shift_tensor.shape, slice_profile_array.shape)
         assert isinstance(batch_shapes, torch.Size)  # mypy
-        rotation_quats = torch.broadcast_to(slice_rotation.as_quat(), (*batch_shapes, 4)).reshape(-1, 4)
-        slice_rotation = Rotation(rotation_quats, normalize=False, copy=False)
+        slice_rotation = slice_rotation.expand(*batch_shapes).reshape(-1)
         slice_shift_tensor = torch.broadcast_to(slice_shift_tensor, batch_shapes).flatten()
         widths = np.broadcast_to(np.vectorize(_find_width)(slice_profile_array), batch_shapes).ravel()
         slice_profile_array = np.broadcast_to(slice_profile_array, batch_shapes).ravel()
         matrices = [
             SliceProjectionOp.projection_matrix(
                 input_shape,
-                SpatialDimension(1, max_shape, max_shape),
+                output_shape,
                 offset=torch.tensor([shift, 0.0, 0.0]),
                 slice_function=f,
                 rotation=rot,
@@ -215,7 +221,7 @@ class SliceProjectionOp(LinearOperator):
             else:
                 raise ValueError("optimize_for must be one of 'forward', 'adjoint', 'both'")
 
-        self._range_shape: tuple[int] = (*batch_shapes, 1, max_shape, max_shape)
+        self._range_shape: tuple[int] = (*batch_shapes, 1, output_shape.y, output_shape.x)
         self._domain_shape = input_shape.zyx
 
     def __call__(self, x: Tensor) -> tuple[Tensor]:
