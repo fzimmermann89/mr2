@@ -1,6 +1,7 @@
 """Class for Density Compensation Operator."""
 
 import torch
+from typing_extensions import Self
 
 from mr2.data.DcfData import DcfData
 from mr2.operators.EinsumOp import EinsumOp
@@ -42,3 +43,18 @@ class DensityCompensationOp(EinsumOp):
             Density compensated k-space data.
         """
         return super().__call__(x)
+
+    def sqrt(self) -> Self:
+        r"""Element-wise square root of the operator.
+
+        Since the DCF is real and non-negative, the result :math:`W` is self-adjoint and
+        satisfies :math:`W^H W = W^2 = D`. Useful for left-preconditioning the data term.
+
+        Raises
+        ------
+        ValueError
+            If the DCF contains negative values.
+        """
+        if (self.matrix < 0).any():
+            raise ValueError('DensityCompensationOp.sqrt() requires non-negative DCF values.')
+        return type(self)(self.matrix.sqrt())
