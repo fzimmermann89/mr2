@@ -716,7 +716,7 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
             inversion_ = reflection_ ^ inversion_
             scales = torch.cos(0.5 * angles) / angles
             reflected_quaternions = torch.cat((scales * rotvec_, -torch.sin(angles / 2)), -1)
-            quaternions = torch.where(reflection_, reflected_quaternions, quaternions)
+            quaternions = torch.where(reflection_.unsqueeze(-1), reflected_quaternions, quaternions)
 
         return cls(quaternions, normalize=False, copy=False, inversion=inversion_, reflection=False)
 
