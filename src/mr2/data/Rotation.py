@@ -1671,7 +1671,7 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
 
         indexer_quat = (*indexer, slice(None)) if isinstance(indexer, tuple) else (indexer, slice(None))
         quaternions = self._quaternions[indexer_quat]
-        inversion = self._is_improper[indexer]
+        inversion = self._is_improper.expand(self.shape)[indexer]
         return type(self)(quaternions, normalize=False, inversion=inversion)
 
     def __iter__(self) -> Iterator[Self]:
@@ -2109,7 +2109,9 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
             else:
                 newshape.extend(s)
         return self.__class__(
-            self._quaternions.reshape(*newshape, 4), inversion=self._is_improper.reshape(newshape), copy=True
+            self._quaternions.reshape(*newshape, 4),
+            inversion=self._is_improper.expand(self.shape).reshape(newshape),
+            copy=True,
         )
 
     def permute(self, dims: Sequence[int]) -> Self:
@@ -2125,7 +2127,7 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         permuted
             The permuted Rotation object.
         """
-        inversion = self._is_improper.permute(*dims)
+        inversion = self._is_improper.expand(self.shape).permute(*dims)
         # negative dimensions should ignore the internal dimension
         quaternions = self._quaternions.permute(*[d - 1 if d < 0 else d for d in dims], -1)
         return self.__class__(quaternions, inversion=inversion, copy=True)
