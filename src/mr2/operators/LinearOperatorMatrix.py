@@ -216,13 +216,13 @@ class LinearOperatorMatrix(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torc
 
     def __rmatmul__(self, other: LinearOperator) -> Self:  # type: ignore[misc]
         """Composition of operators."""
-        operators = [[op @ other for op in row] for row in self._operators]
+        operators = [[other @ op for op in row] for row in self._operators]
         return self.__class__(operators)
 
     def __matmul__(self, other: LinearOperator | Self) -> Self:  # type: ignore[override]
         """Composition of operators."""
         if isinstance(other, LinearOperator):
-            operators = [[other @ op for op in row] for row in self._operators]
+            operators = [[op @ other for op in row] for row in self._operators]
             return self.__class__(operators)
         elif isinstance(other, LinearOperatorMatrix):
             if self.shape[1] != other.shape[0]:
@@ -351,7 +351,9 @@ class LinearOperatorMatrix(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torc
                 for row in self._operators
             ]
         )
-        norm = norms.square().sum(0).sqrt().amax(0)
+        norm = torch.linalg.matrix_norm(norms.movedim((0, 1), (-2, -1)), ord=2)
+        while norm.ndim > 0:
+            norm = norm.amax(0)
         return norm
 
     def __or__(self, other: LinearOperator | LinearOperatorMatrix) -> Self:
