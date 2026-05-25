@@ -4,6 +4,7 @@ from collections.abc import Callable, Sequence
 from typing import Literal
 
 import torch
+from torchnd import linear_interpolation_nd, nearest_interpolation_nd
 
 from mr2.utils.reshape import normalize_index, normalize_indices, unsqueeze_right
 
@@ -118,7 +119,7 @@ def interpolate(
     x: torch.Tensor,
     size: Sequence[int],
     dim: Sequence[int],
-    mode: Literal['nearest', 'linear', 'area', 'bicubic'] = 'linear',
+    mode: Literal['nearest', 'linear', 'area', 'cubic', 'bicubic'] = 'linear',
     *,
     align_corners: bool | None = None,
 ) -> torch.Tensor:
@@ -135,7 +136,7 @@ def interpolate(
     mode
         Interpolation mode.
     align_corners
-        Forwarded to ``torch.nn.functional.interpolate`` for linear and bicubic modes.
+        Forwarded to interpolation backends for linear, cubic, and bicubic modes.
 
     Returns
     -------
@@ -151,47 +152,44 @@ def interpolate(
     if all(x.shape[d] == s for s, d in zip(size, dim, strict=True)):
         return x
 
-    if mode == 'bicubic' and len(dim) != 2:
-        raise ValueError(f"mode='bicubic' requires exactly 2 interpolation dimensions, got {len(dim)}.")
-    if mode == 'area' and len(dim) not in (1, 2, 3):
-        raise ValueError(f"mode='area' requires 1-3 interpolation dimensions, got {len(dim)}.")
-    if align_corners is not None and mode not in ('linear', 'bicubic'):
-        raise ValueError("align_corners is only supported for 'linear' and 'bicubic' modes.")
-    # torch.nn.functional.interpolate only available for real tensors
-    # moveaxis is not implemented for batched tensors, so vmap would fail, thus we use permute.
+    if align_corners is not None and mode not in ('linear', 'cubic', 'bicubic'):
+        raise ValueError("align_corners is only supported for 'linear', 'cubic', and 'bicubic' modes.")
+
+    match mode:
+        case 'linear':
+            return linear_interpolation_nd(x, size=size, dims=dim, align_corners=align_corners or False)
+        case 'nearest':
+            return nearest_interpolation_nd(x, size=size, dims=dim)
+        case 'area':
+            if len(dim) not in (1, 2, 3):
+                raise ValueError(f"mode='area' requires 1-3 interpolation dimensions, got {len(dim)}.")
+        case 'cubic':
+            if len(dim) != 2:
+                raise ValueError('Cubic interpolation is only supported for two dimensions.')
+        case 'bicubic':
+            if len(dim) != 2:
+                raise ValueError(f"mode='bicubic' requires exactly 2 interpolation dimensions, got {len(dim)}.")
+        case _:
+            raise ValueError("mode must be one of 'nearest', 'linear', 'area', 'cubic', or 'bicubic'.")
+
+    # torch.nn.functional.interpolate only available for real tensors.
     x_real = torch.view_as_real(x).permute(-1, *range(x.ndim)) if x.is_complex() else x
     dim = [d + 1 for d in dim] if x.is_complex() else list(dim)
 
-    if mode in ('nearest', 'linear', 'area', 'bicubic') and 1 <= len(dim) <= 3:
-        interpolation_mode: str = mode
-        if mode == 'linear':
-            interpolation_mode = ('linear', 'bilinear', 'trilinear')[len(dim) - 1]
-        non_spatial_axes = [axis for axis in range(x_real.ndim) if axis not in dim]
-        permutation = [*non_spatial_axes, *dim]
-        inverse_permutation = [0] * x_real.ndim
-        for new_axis, old_axis in enumerate(permutation):
-            inverse_permutation[old_axis] = new_axis
-        x_permuted = x_real.permute(permutation)
-        x_flat = x_permuted.reshape(-1, 1, *x_permuted.shape[-len(dim) :])
-        x_interp = torch.nn.functional.interpolate(
-            x_flat, size=size, mode=interpolation_mode, align_corners=align_corners
-        )
-        x_real = x_interp.reshape(*x_permuted.shape[: -len(dim)], *size).permute(inverse_permutation)
-    elif mode in ('nearest', 'linear'):
-        for s, d in zip(size, dim, strict=True):
-            if s != x_real.shape[d]:
-                idx = list(range(x_real.ndim))
-                # swapping the last axis and the axis to filter over
-                idx[d], idx[-1] = idx[-1], idx[d]
-                x_real = x_real.permute(idx)
-                x_real = torch.nn.functional.interpolate(
-                    x_real.flatten(end_dim=-3), size=s, mode=mode, align_corners=align_corners
-                ).reshape(*x_real.shape[:-1], -1)
-                # for a single permutation, this undoes the permutation
-                x_real = x_real.permute(idx)
-    else:
-        raise ValueError(f'Interpolation mode {mode} not supported.')
-
+    non_spatial_axes = [axis for axis in range(x_real.ndim) if axis not in dim]
+    permutation = [*non_spatial_axes, *dim]
+    inverse_permutation = [0] * x_real.ndim
+    for new_axis, old_axis in enumerate(permutation):
+        inverse_permutation[old_axis] = new_axis
+    x_permuted = x_real.permute(permutation)
+    x_flat = x_permuted.reshape(-1, 1, *x_permuted.shape[-len(dim) :])
+    x_interp = torch.nn.functional.interpolate(
+        x_flat,
+        size=size,
+        mode='bicubic' if mode in ('cubic', 'bicubic') else 'area',
+        align_corners=align_corners,
+    )
+    x_real = x_interp.reshape(*x_permuted.shape[: -len(dim)], *size).permute(inverse_permutation)
     return torch.view_as_complex(x_real.permute(*range(1, x.ndim + 1), 0).contiguous()) if x.is_complex() else x_real
 
 

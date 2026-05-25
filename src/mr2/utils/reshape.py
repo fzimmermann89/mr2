@@ -484,6 +484,37 @@ def expand_dim(tensor: torch.Tensor, dim: int, size: int) -> torch.Tensor:
     return tensor.expand(new_shape)
 
 
+def broadcast_shapes_except(
+    shapes: Sequence[Sequence[int]],
+    dim: int,
+) -> list[tuple[int, ...]]:
+    """Broadcast shapes against each other, except along one dimension.
+
+    Inputs are first left-padded with ones to a common number of dimensions
+    (matching PyTorch right-aligned broadcasting). All dimensions except `dim`
+    are then broadcast normally. Each output shape keeps its input's original
+    size along `dim`.
+
+    Parameters
+    ----------
+    shapes
+        Shapes to broadcast.
+    dim
+        Dimension to exclude from broadcasting. Negative values are normalized
+        relative to the common (left-padded) number of dimensions.
+
+    Returns
+    -------
+        A list of per-input target shapes that agree in every dimension except `dim`.
+    """
+    ndim = max(len(shape) for shape in shapes)
+    padded = [(1,) * (ndim - len(shape)) + tuple(shape) for shape in shapes]
+    dim = normalize_index(ndim, dim)
+
+    common = torch.broadcast_shapes(*((*shape[:dim], 1, *shape[dim + 1 :]) for shape in padded))
+    return [(*common[:dim], shape[dim], *common[dim + 1 :]) for shape in padded]
+
+
 def broadcasted_concatenate(tensors: Sequence[torch.Tensor], dim: int, reduce_views: bool = True) -> torch.Tensor:
     """Concatenate tensors while preserving broadcasting.
 

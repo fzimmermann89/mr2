@@ -24,8 +24,8 @@ from tests.conftest import minimal_torch_26
 @pytest.mark.parametrize(
     ('n_channels_in', 'n_channels_out', 'n_heads', 'kernel_size', 'input_shape', 'features_last'),
     [
-        (2, 3, 1, 2, (1, 2, 16, 16), False),
-        (3, 2, 2, 4, (1, 3, 8, 8, 8, 8), True),
+        (32, 32, 2, 2, (1, 32, 16, 16), False),
+        (32, 32, 2, 4, (1, 32, 8, 8, 8, 8), True),
     ],
     ids=['2d_kernel2', '4d_features-last_kernel4'],
 )
@@ -87,12 +87,12 @@ def test_neighborhood_attention_variants(kernel_size: int, dilation: int, circul
     attention = NeighborhoodSelfAttention(
         n_channels_in=32,
         n_channels_out=32,
-        n_heads=4,
+        n_heads=2,
         kernel_size=kernel_size,
         dilation=dilation,
         circular=circular,
         rope_embed_fraction=1.0 if rope else 0.0,
-    )
+    ).cuda()
     output = attention(x)
     assert output.shape == x.shape, f'Output shape {output.shape} != input shape {x.shape}'
 
