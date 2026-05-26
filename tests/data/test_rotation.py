@@ -862,6 +862,17 @@ def test_getitem() -> None:
     torch.testing.assert_close(r[:-1].as_matrix(), mat[0].unsqueeze(0))
 
 
+def test_getitem_with_broadcasted_inversion() -> None:
+    quat = Rotation.random((1, 2), random_state=0, improper=False).as_quat()
+    inversion = torch.tensor([[False], [True], [False]])
+    r = Rotation(quat, normalize=False, inversion=inversion)
+
+    selected = r[1]
+    assert selected.shape == (2,)
+    torch.testing.assert_close(selected.as_quat(improper='ignore'), quat.expand(3, 2, 4)[1])
+    assert torch.equal(selected.is_improper, inversion.expand(3, 2)[1])
+
+
 def test_getitem_single() -> None:
     with pytest.raises(TypeError, match='not subscriptable'):
         Rotation.identity()[0]
@@ -1633,6 +1644,20 @@ def test_permute() -> None:
     torch.testing.assert_close(permuted.as_matrix(), r.as_matrix().permute(2, 0, 1, 3, 4))
     reverted = permuted.permute((1, 2, 0))
     torch.testing.assert_close(r.as_matrix(), reverted.as_matrix())
+
+
+def test_reshape_and_permute_with_broadcasted_inversion() -> None:
+    quat = Rotation.random((1, 2), random_state=0, improper=False).as_quat()
+    inversion = torch.tensor([[False], [True], [False]])
+    r = Rotation(quat, normalize=False, inversion=inversion)
+
+    reshaped = r.reshape(2, 3)
+    assert reshaped.shape == (2, 3)
+    torch.testing.assert_close(reshaped.as_matrix(), r.as_matrix().reshape(2, 3, 3, 3))
+
+    permuted = r.permute((1, 0))
+    assert permuted.shape == (2, 3)
+    torch.testing.assert_close(permuted.as_matrix(), r.as_matrix().permute(1, 0, 2, 3))
 
 
 def test_expand() -> None:

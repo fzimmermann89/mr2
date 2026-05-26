@@ -1670,8 +1670,9 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
             raise TypeError('Single rotation is not subscriptable.')
 
         indexer_quat = (*indexer, slice(None)) if isinstance(indexer, tuple) else (indexer, slice(None))
-        quaternions = self._quaternions[indexer_quat]
-        inversion = self._is_improper.expand(self.shape)[indexer]
+        batch_shape = torch.broadcast_shapes(self._quaternions.shape[:-1], self._is_improper.shape)
+        quaternions = self._quaternions.expand(*batch_shape, 4)[indexer_quat]
+        inversion = self._is_improper.expand(batch_shape)[indexer]
         return type(self)(quaternions, normalize=False, inversion=inversion)
 
     def __iter__(self) -> Iterator[Self]:
@@ -2108,9 +2109,10 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
                 newshape.append(s)
             else:
                 newshape.extend(s)
+        batch_shape = torch.broadcast_shapes(self._quaternions.shape[:-1], self._is_improper.shape)
         return self.__class__(
-            self._quaternions.reshape(*newshape, 4),
-            inversion=self._is_improper.expand(self._quaternions.shape[:-1]).reshape(*newshape),
+            self._quaternions.expand(*batch_shape, 4).reshape(*newshape, 4),
+            inversion=self._is_improper.expand(batch_shape).reshape(*newshape),
             copy=True,
         )
 
@@ -2127,9 +2129,12 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         permuted
             The permuted Rotation object.
         """
-        inversion = self._is_improper.expand(self.shape).permute(*dims)
+        batch_shape = torch.broadcast_shapes(self._quaternions.shape[:-1], self._is_improper.shape)
+        inversion = self._is_improper.expand(batch_shape).permute(*dims)
         # negative dimensions should ignore the internal dimension
-        quaternions = self._quaternions.permute(*[d - 1 if d < 0 else d for d in dims], -1)
+        batch_ndim = len(batch_shape)
+        quaternion_dims = [d if d >= 0 else batch_ndim + d for d in dims]
+        quaternions = self._quaternions.expand(*batch_shape, 4).permute(*quaternion_dims, -1)
         return self.__class__(quaternions, inversion=inversion, copy=True)
 
     def expand(self, *shape: int | Sequence[int]) -> Self:
