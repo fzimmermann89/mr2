@@ -83,7 +83,7 @@ def pdhg(
     If neither primal nor dual step size are supplied, they are both chosen as :math:`1/||K||_2`.
     If only one of them is supplied, the other is chosen such that
 
-        :math:`\tau \sigma = 1/||K||_2`,
+        :math:`\tau \sigma = 1/||K||_2^2`,
 
     where :math:`1/||K||_2` denotes the operator-norm of :math:`K`.
     Note that the computation of the operator-norm can be computationally expensive and
@@ -143,6 +143,13 @@ def pdhg(
             operator_matrix = operator
         n_rows, n_columns = operator_matrix.shape
 
+    if len(initial_values) != n_columns:
+        raise ValueError('initial_values length must match number of columns')
+    if initial_relaxed is not None and len(initial_relaxed) != n_columns:
+        raise ValueError('initial_relaxed length must match number of columns')
+    if initial_duals is not None and len(initial_duals) != n_rows:
+        raise ValueError('initial_duals length must match number of rows')
+
     # We always use a separable sum for homogeneous handling, even if it is just a ZeroFunctional
     if f is None:
         f_sum: ProximableFunctionalSeparableSum = ProximableFunctionalSeparableSum(*(ZeroFunctional(),) * n_rows)
@@ -167,15 +174,19 @@ def pdhg(
     if primal_stepsize is None or dual_stepsize is None:
         # choose primal and dual step size such that their product is 1/|operator|**2
         # to ensure convergence
+        safety_factor = 0.95
+
         operator_norm = operator_matrix.operator_norm(*[torch.randn_like(v) for v in initial_values]).amax()
+        norm_sq = operator_norm.square()
+
         if primal_stepsize is None and dual_stepsize is None:
-            primal_stepsize_ = dual_stepsize_ = 1.0 / operator_norm
+            primal_stepsize_ = dual_stepsize_ = safety_factor / operator_norm
         elif primal_stepsize is None and dual_stepsize is not None:
-            primal_stepsize_ = 1 / (operator_norm * dual_stepsize)
             dual_stepsize_ = torch.as_tensor(dual_stepsize)
+            primal_stepsize_ = safety_factor / (norm_sq * dual_stepsize_)
         elif dual_stepsize is None and primal_stepsize is not None:
-            dual_stepsize_ = 1 / (operator_norm * primal_stepsize)
             primal_stepsize_ = torch.as_tensor(primal_stepsize)
+            dual_stepsize_ = safety_factor / (norm_sq * primal_stepsize_)
     else:
         primal_stepsize_ = torch.as_tensor(primal_stepsize)
         dual_stepsize_ = torch.as_tensor(dual_stepsize)
@@ -183,22 +194,20 @@ def pdhg(
     primals_relaxed = initial_values if initial_relaxed is None else initial_relaxed
     duals = (0 * operator_matrix)(*initial_values) if initial_duals is None else initial_duals
 
-    if len(duals) != n_rows:
-        raise ValueError('if dual variable is supplied, it should be a tuple of same length as the tuple of g')
-
     primals = initial_values
     for i in range(max_iterations):
         duals = tuple(
-            dual + dual_stepsize_ * step for dual, step in zip(duals, operator_matrix(*primals_relaxed), strict=False)
+            dual + dual_stepsize_ * step for dual, step in zip(duals, operator_matrix(*primals_relaxed), strict=True)
         )
         duals = f_sum.prox_convex_conj(*duals, sigma=dual_stepsize_)
 
         primals_new = tuple(
-            primal - primal_stepsize_ * step for primal, step in zip(primals, operator_matrix.H(*duals), strict=False)
+            primal - primal_stepsize_ * step for primal, step in zip(primals, operator_matrix.H(*duals), strict=True)
         )
         primals_new = g_sum.prox(*primals_new, sigma=primal_stepsize_)
         primals_relaxed = tuple(
-            torch.lerp(primal, primal_new, relaxation) for primal, primal_new in zip(primals, primals_new, strict=False)
+            torch.lerp(primal, primal_new, 1 + relaxation)
+            for primal, primal_new in zip(primals, primals_new, strict=False)
         )
 
         # check if the solution is already accurate enough
