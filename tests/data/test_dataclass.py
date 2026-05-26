@@ -436,7 +436,8 @@ def test_dataclass_concatenate_rotation_and_spatial_dimension() -> None:
     assert c.data.shape == (24, 1, 1, 1, 2)
     assert c.orientation.shape == (24, 1, 1, 1, 1)
     assert c.spatial_dimension == SpatialDimension(1, 2, 3)
-    assert torch.equal(c.data.flatten(), torch.arange(24, dtype=torch.float32))
+    expected = torch.cat((a.data, b.data.expand(-1, -1, -1, -1, 2)), dim=0)
+    assert torch.equal(c.data, expected)
 
 
 def test_dataclass_equal() -> None:
