@@ -200,7 +200,29 @@ def test_linearoperatormatrix_norm_cols():
     matrix = random_linearoperatormatrix((1, 3), (3, 10), rng)
     vector = rng.complex64_tensor((3, 10))
     result = matrix.operator_norm(*vector)
-    expected = max(op.operator_norm(v, dim=None) for op, v in zip(matrix._operators[0], vector, strict=False))
+    expected = (
+        sum(op.operator_norm(v, dim=None) ** 2 for op, v in zip(matrix._operators[0], vector, strict=False)) ** 0.5
+    )
+    torch.testing.assert_close(result, expected)
+
+
+def test_linearoperatormatrix_norm_preserves_batch_shape():
+    """Test norm of LinearOperatorMatrix preserves operator-norm batch dimensions."""
+    rng = RandomGenerator(0)
+    matrix = random_linearoperatormatrix((2, 2), (2, 3, 10), rng)
+    vector = rng.complex64_tensor((2, 2, 10))
+    result = matrix.operator_norm(*vector, dim=(-1,))
+    expected = torch.linalg.matrix_norm(
+        torch.stack(
+            [
+                torch.stack(
+                    [op.operator_norm(v, dim=(-1,)) for op, v in zip(row, vector, strict=True)],
+                )
+                for row in matrix._operators
+            ]
+        ).movedim((0, 1), (-2, -1)),
+        ord=2,
+    )
     torch.testing.assert_close(result, expected)
 
 
