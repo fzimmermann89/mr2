@@ -9,8 +9,10 @@ from math import log, sqrt
 
 import torch
 
+from mr2.utils.RandomGenerator import RandomGenerator
 
-def sample_vmf(mu: torch.Tensor, kappa: float, n_samples: int) -> torch.Tensor:
+
+def sample_vmf(mu: torch.Tensor, kappa: float, n_samples: int, rng: RandomGenerator | None = None) -> torch.Tensor:
     """
     Generate samples from the von Mises-Fisher distribution.
 
@@ -26,6 +28,8 @@ def sample_vmf(mu: torch.Tensor, kappa: float, n_samples: int) -> torch.Tensor:
         For large kappa, the distribution is close to a normal distribution with variance 1/kappa.
     n_samples
         Number of samples to generate.
+    rng
+        Random generator used for sampling. If `None`, a fresh generator with a random seed is used.
 
     Returns
     -------
@@ -35,27 +39,24 @@ def sample_vmf(mu: torch.Tensor, kappa: float, n_samples: int) -> torch.Tensor:
     total_samples = n_samples * mu_[..., 0].numel()
     mu_ = mu_.expand((n_samples, *mu_.shape))
     dim = mu_.shape[-1]
+    rng = RandomGenerator(device=mu_.device) if rng is None else rng
 
     b = (dim - 1) / (sqrt(4.0 * kappa**2 + (dim - 1) ** 2) + 2 * kappa)
     x = (1.0 - b) / (1.0 + b)
     c = kappa * x + (dim - 1) * log(1 - x**2)
 
-    beta_dist = torch.distributions.Beta((dim - 1) / 2.0, (dim - 1) / 2.0)
-    uniform_dist = torch.distributions.Uniform(0, 1)
-    normal_dist = torch.distributions.Normal(0, 1)
-
     ws: list[torch.Tensor] = []
 
     while sum(len(w) for w in ws) < total_samples:
         # rejection sampling
-        z = beta_dist.sample(torch.Size((total_samples,)))
+        z = rng.beta_tensor((total_samples,), (dim - 1) / 2.0, (dim - 1) / 2.0, dtype=mu_.dtype, device=mu_.device)
         w = (1.0 - (1.0 + b) * z) / (1.0 - (1.0 - b) * z)
-        u = uniform_dist.sample(torch.Size((total_samples,)))
+        u = rng.rand_tensor((total_samples,), mu_.dtype, device=mu_.device)
         accepted = kappa * w + (dim - 1) * torch.log(1.0 - x * w) - c >= torch.log(u)
         ws.append(w[accepted])
     weights = torch.cat(ws)[:total_samples].reshape(mu_.shape[:-1])
 
-    v = normal_dist.sample(mu_.shape)
+    v = rng.randn_tensor(mu_.shape, mu_.dtype, device=mu_.device)
     orthogonal_vectors = v - (mu_ * v).sum(-1, keepdim=True) * mu_ / mu_.norm(dim=-1, keepdim=True)
     orthonormal_vectors = orthogonal_vectors / orthogonal_vectors.norm(dim=-1, keepdim=True)
     samples = orthonormal_vectors * (1.0 - weights**2).sqrt().unsqueeze(-1) + weights.unsqueeze(-1) * mu_

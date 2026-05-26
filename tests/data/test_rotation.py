@@ -624,7 +624,7 @@ def test_as_euler_degenerate_symmetric_axes(seq_tuple: Sequence[str], intrinsic:
 
 
 def test_inv() -> None:
-    rnd = np.random.RandomState(0)
+    rnd = RandomGenerator(0)
     n = 10
     p = Rotation.random(num=n, random_state=rnd)
     q = p.inv()
@@ -642,7 +642,7 @@ def test_inv() -> None:
 
 
 def test_inv_single_rotation() -> None:
-    rnd = np.random.RandomState(0)
+    rnd = RandomGenerator(0)
     p = Rotation.random(random_state=rnd)
     q = p.inv()
 
@@ -726,7 +726,7 @@ def test_magnitude_single_rotation() -> None:
 
 
 def test_approx_equal() -> None:
-    rng = np.random.RandomState(0)
+    rng = RandomGenerator(0)
     p = Rotation.random(10, random_state=rng)
     q = Rotation.random(10, random_state=rng)
     r = p @ q.inv()
@@ -885,7 +885,7 @@ def test_setitem_single() -> None:
 
 
 def test_setitem_slice() -> None:
-    rng = np.random.RandomState(seed=0)
+    rng = RandomGenerator(0)
     r1 = Rotation.random(10, random_state=rng)
     r2 = Rotation.random(5, random_state=rng)
     r1[1:6] = r2
@@ -893,7 +893,7 @@ def test_setitem_slice() -> None:
 
 
 def test_setitem_integer() -> None:
-    rng = np.random.RandomState(seed=0)
+    rng = RandomGenerator(0)
     r1 = Rotation.random(10, random_state=rng)
     r2 = Rotation.random(random_state=rng)
     r1[1] = r2
@@ -917,7 +917,7 @@ def test_n_rotations() -> None:
 
 
 def test_random_rotation_shape() -> None:
-    rnd = np.random.RandomState(0)
+    rnd = RandomGenerator(0)
     assert Rotation.random(random_state=rnd).as_quat().shape == (4,)
     assert Rotation.random(None, random_state=rnd).as_quat().shape == (4,)
     assert Rotation.random(1, random_state=rnd).as_quat().shape == (1, 4)
@@ -935,8 +935,9 @@ def test_align_vectors_no_rotation() -> None:
 
 
 def test_align_vectors_no_noise() -> None:
+    rot_rng = RandomGenerator(0)
     rnd = np.random.RandomState(0)
-    c = Rotation.random(random_state=rnd)
+    c = Rotation.random(random_state=rot_rng)
     b = torch.tensor(rnd.normal(size=(5, 3)))
     a = c(b)
 
@@ -980,9 +981,10 @@ def test_align_vectors_scaled_weights() -> None:
 
 
 def test_align_vectors_noise() -> None:
+    rot_rng = RandomGenerator(0)
     rnd = np.random.RandomState(0)
     n_vectors = 100
-    rot = Rotation.random(random_state=rnd)
+    rot = Rotation.random(random_state=rot_rng)
     vectors = torch.tensor(rnd.normal(size=(n_vectors, 3)), dtype=torch.float32)
     result = rot(vectors)
 
@@ -1595,11 +1597,7 @@ def test_apply_torch() -> None:
 def test_random_vmf_uniform() -> None:
     """Test random rotations with a uniform distribution"""
     mean = torch.tensor([0, 0, 1.0])
-    # vmf does not support a seed, as torch.distribution do not support it
-    prev_rng_state = torch.random.get_rng_state()
-    torch.manual_seed(0)
-    r = Rotation.random_vmf(10000, mean, kappa=0, sigma=math.inf)
-    torch.random.set_rng_state(prev_rng_state)
+    r = Rotation.random_vmf(10000, mean, kappa=0, sigma=math.inf, random_state=0)
     assert r.shape == (10000,)
     assert r.mean().magnitude() < 0.1
 
@@ -1607,13 +1605,34 @@ def test_random_vmf_uniform() -> None:
 def test_random_vmf_peaked() -> None:
     """Test random rotations with a peaked distribution"""
     mean = torch.tensor([0.0, 1.0, 0.0])
-    # vmf does not support a seed, as torch.distribution do not support it
-    prev_rng_state = torch.random.get_rng_state()
-    torch.manual_seed(0)
-    r = Rotation.random_vmf(5000, mean, kappa=50, sigma=20)
-    torch.random.set_rng_state(prev_rng_state)
+    r = Rotation.random_vmf(5000, mean, kappa=50, sigma=20, random_state=0)
     assert r.shape == (5000,)
     torch.testing.assert_close(torch.linalg.cross(r.mean().as_rotvec(), mean), torch.zeros(3), atol=3e-3, rtol=0)
+
+
+def test_random_vmf_seed_reproducible() -> None:
+    """random_vmf should be reproducible for integer seeds."""
+    mean = torch.tensor([0.0, 0.0, 1.0])
+    r1 = Rotation.random_vmf(16, mean, kappa=5.0, sigma=1.0, random_state=0)
+    r2 = Rotation.random_vmf(16, mean, kappa=5.0, sigma=1.0, random_state=0)
+    r3 = Rotation.random_vmf(16, mean, kappa=5.0, sigma=1.0, random_state=1)
+    torch.testing.assert_close(r1.as_quat(), r2.as_quat())
+    assert not r1.approx_equal(r3).all()
+
+
+def test_random_vmf_randomstate_progression() -> None:
+    """RandomGenerator instances should progress across repeated calls."""
+    mean = torch.tensor([1.0, 0.0, 0.0])
+    rng = RandomGenerator(0)
+    r1 = Rotation.random_vmf(10, mean, kappa=10.0, sigma=2.0, random_state=rng)
+    r2 = Rotation.random_vmf(10, mean, kappa=10.0, sigma=2.0, random_state=rng)
+
+    rng_replay = RandomGenerator(0)
+    r1_replay = Rotation.random_vmf(10, mean, kappa=10.0, sigma=2.0, random_state=rng_replay)
+    r2_replay = Rotation.random_vmf(10, mean, kappa=10.0, sigma=2.0, random_state=rng_replay)
+
+    torch.testing.assert_close(r1.as_quat(), r1_replay.as_quat())
+    torch.testing.assert_close(r2.as_quat(), r2_replay.as_quat())
 
 
 def test_apply_improper() -> None:

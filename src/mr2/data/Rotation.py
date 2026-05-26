@@ -54,10 +54,10 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from einops import rearrange
 from einops._backends import AbstractBackend
-from scipy._lib._util import check_random_state
 from typing_extensions import Self, Unpack, overload
 
 from mr2.data.SpatialDimension import SpatialDimension
+from mr2.utils import RandomGenerator
 from mr2.utils.indexing import Indexer
 from mr2.utils.reduce_repeat import reduce_repeat
 from mr2.utils.reshape import broadcasted_rearrange, normalize_indices
@@ -273,8 +273,6 @@ def _quaternion_to_euler(quaternion: torch.Tensor, seq: str, extrinsic: bool):
     angles += (angles < -torch.pi) * 2 * torch.pi
     angles -= (angles > torch.pi) * 2 * torch.pi
     return angles
-
-
 def _align_vectors(
     a: torch.Tensor,
     b: torch.Tensor,
@@ -1298,7 +1296,7 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
     def random(
         cls,
         num: int | Sequence[int] | None = None,
-        random_state: int | np.random.RandomState | np.random.Generator | None = None,
+        random_state: int | RandomGenerator | None = None,
         improper: bool | Literal['random'] = False,
         *,
         device: torch.device | str | None = None,
@@ -1311,12 +1309,11 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
             Number of random rotations to generate. If `None`, then a
             single rotation is generated.
         random_state
-            If `random_state` is `None`, the `~numpy.random.RandomState`
-            singleton is used.
-            If `random_state` is an int, a new `RandomState` instance is used,
-            seeded with `random_state`.
-            If `random_state` is already a  `Generator` or `RandomState` instance
-            then that instance is used.
+            If `random_state` is `None`, a fresh internal random generator is used.
+            If `random_state` is an int, a new `RandomGenerator` instance is created
+            with that seed.
+            If `random_state` is already a `RandomGenerator` instance then that
+            instance is used directly, and repeated calls advance its state.
         improper
             if `True`, only improper rotations are generated. If False, only proper rotations are generated.
             if "random", then a random mix of proper and improper rotations are generated.
@@ -1329,18 +1326,20 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
             Contains a single rotation if `num` is `None`. Otherwise contains a
             stack of `num` rotations.
         """
-        generator: np.random.RandomState = check_random_state(random_state)
-
-        if num is None:
-            random_sample = torch.as_tensor(generator.normal(size=4), dtype=torch.float32, device=device)
-        elif isinstance(num, int):
-            random_sample = torch.as_tensor(generator.normal(size=(num, 4)), dtype=torch.float32, device=device)
+        if random_state is None:
+            rng = RandomGenerator(device=device)
+        elif isinstance(random_state, RandomGenerator):
+            rng = random_state
         else:
-            random_sample = torch.as_tensor(generator.normal(size=(*num, 4)), dtype=torch.float32, device=device)
+            rng = RandomGenerator(seed=random_state, device=device)
+        if num is None:
+            random_sample = rng.randn_tensor((4,), torch.float32, device=device)
+        elif isinstance(num, int):
+            random_sample = rng.randn_tensor((num, 4), torch.float32, device=device)
+        else:
+            random_sample = rng.randn_tensor((*num, 4), torch.float32, device=device)
         if improper == 'random':
-            inversion: torch.Tensor | bool = torch.as_tensor(
-                generator.choice([True, False], size=random_sample.shape[:-1]), dtype=torch.bool, device=device
-            )
+            inversion: torch.Tensor | bool = rng.bool_tensor(random_sample.shape[:-1]).to(device=device)
         elif isinstance(improper, bool):
             inversion = improper
         else:
@@ -1354,6 +1353,7 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         mean_axis: torch.Tensor | None = None,
         kappa: float = 0.0,
         sigma: float = math.inf,
+        random_state: int | RandomGenerator | None = None,
         *,
         device: torch.device | str | None = None,
     ):
@@ -1376,6 +1376,12 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
             Use `math.inf` if a uniform distribution is desired.
         num
             number of samples to generate. If `None`, a single rotation is generated.
+        random_state
+            If `random_state` is `None`, a fresh internal random generator is used.
+            If `random_state` is an int, a new `RandomGenerator` instance is created
+            with that seed.
+            If `random_state` is already a `RandomGenerator` instance then that
+            instance is used directly, and repeated calls advance its state.
         device
             Device on which to materialize the generated rotations. If `None`, the device of `mean_axis` is used
 
@@ -1387,11 +1393,17 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         """
         n = 1 if num is None else num
         mu = torch.as_tensor((1.0, 0.0, 0.0) if mean_axis is None else mean_axis, device=device)
-        rot_axes = sample_vmf(mu=mu, kappa=kappa, n_samples=n)
-        if sigma == math.inf:
-            rot_angle = torch.rand(n, *mu.shape[:-1], dtype=mu.dtype, device=mu.device) * 2 * math.pi
+        if random_state is None:
+            rng = RandomGenerator(device=mu.device)
+        elif isinstance(random_state, RandomGenerator):
+            rng = random_state
         else:
-            rot_angle = (torch.randn(n, *mu.shape[:-1], dtype=mu.dtype, device=mu.device) * sigma) % (2 * math.pi)
+            rng = RandomGenerator(seed=random_state, device=mu.device)
+        rot_axes = sample_vmf(mu=mu, kappa=kappa, n_samples=n, rng=rng)
+        if sigma == math.inf:
+            rot_angle = rng.rand_tensor((n, *mu.shape[:-1]), mu.dtype, device=mu.device) * 2 * math.pi
+        else:
+            rot_angle = (rng.randn_tensor((n, *mu.shape[:-1]), mu.dtype, device=mu.device) * sigma) % (2 * math.pi)
         return cls.from_rotvec(rot_axes * rot_angle.unsqueeze(-1))
 
     def __mul__(self, other: Rotation) -> Self:
