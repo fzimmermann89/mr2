@@ -3,6 +3,7 @@
 from mr2.algorithms import csm, dcf, optimizers, reconstruction
 from mr2.algorithms.image_registration import (
     affine_registration,
+    correlation_registration,
     register_images,
     spline_registration,
 )
@@ -16,6 +17,7 @@ __all__ = [
     "csm",
     "dcf",
     "optimizers",
+    "correlation_registration",
     "prewhiten_kspace",
     "reconstruction",
     "register_images",

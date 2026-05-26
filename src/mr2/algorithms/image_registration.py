@@ -11,7 +11,114 @@ from mr2.operators.FiniteDifferenceOp import FiniteDifferenceOp
 from mr2.operators.functionals.L2NormSquared import L2NormSquared
 from mr2.operators.functionals.NCC import NCC
 from mr2.operators.GridSamplingOp import GridSamplingOp
+from mr2.utils.filters import gaussian_filter
 from mr2.utils.interpolate import interpolate
+
+
+def correlation_registration(
+    fixed: torch.Tensor,
+    moving: torch.Tensor,
+    *,
+    mask: torch.Tensor | None = None,
+    smooth_mask_sigma: float = 1.5,
+) -> SpatialDimension[torch.Tensor]:
+    """Estimate a 2D or 3D shift between fixed and moving images using FFT-based normalized cross-correlation.
+
+    Parameters
+    ----------
+    fixed
+        Fixed image with shape ``(*other, coils, z, y, x)``.
+    moving
+        Moving image with shape ``(*other, coils, z, y, x)``.
+        Complex-valued inputs are registered phase-sensitively; pass magnitude images to ignore phase.
+    mask
+        Optional mask/weight tensor. Outside values are suppressed in both fixed and moving.
+        The mask is smoothed before it is applied to avoid correlation peaks at hard mask edges.
+    smooth_mask_sigma
+        Standard deviation of the Gaussian smoothing applied to the mask in voxel units.
+
+    Returns
+    -------
+        Estimated voxel shift to apply to ``moving`` to align it to ``fixed``.
+        For 2D inputs (``z == 1``), the returned z-shift is zero.
+    """
+    eps = 1e-8
+    if fixed.shape != moving.shape:
+        raise ValueError(f'fixed and moving must have same shape, got {fixed.shape=} and {moving.shape=}.')
+    if fixed.ndim < 5:
+        raise ValueError(f'Expected at least 5 dimensions ``(*batch, channels, z, y, x)``, got {fixed.ndim}.')
+    if smooth_mask_sigma <= 0:
+        raise ValueError(f'smooth_mask_sigma must be positive, got {smooth_mask_sigma}.')
+
+    dim = 2 if fixed.shape[-3] == 1 else 3
+    spatial_dims = tuple(range(-dim, 0))
+    batch_shape = fixed.shape[:-4]
+
+    fixed_flat = fixed.flatten(end_dim=-5)
+    moving_flat = moving.flatten(end_dim=-5)
+    spatial_shape = fixed_flat.shape[-dim:]
+    padded_shape = tuple(2 * size for size in spatial_shape)
+    normalization_dims = tuple(range(1, fixed_flat.ndim))
+
+    if mask is None:
+        mask_flat = torch.ones_like(fixed_flat[:, :1], dtype=torch.float32)
+    else:
+        mask_flat = mask.flatten(end_dim=-5)
+        if mask_flat.shape[-3:] != fixed_flat.shape[-3:]:
+            raise ValueError(
+                'mask must have the same spatial shape as fixed and moving, got '
+                f'{mask.shape[-3:]=} and {fixed.shape[-3:]=}.'
+            )
+        mask_flat = torch.broadcast_to(mask_flat, fixed_flat[:, :1].shape).to(dtype=torch.float32)
+        mask_flat = gaussian_filter(mask_flat, smooth_mask_sigma, dim=spatial_dims)
+        mask_flat = mask_flat / mask_flat.amax(dim=spatial_dims, keepdim=True).clamp_min(eps)
+        mask_flat = mask_flat.clamp_(0.0, 1.0)
+
+    mask_per_channel = mask_flat.expand_as(fixed_flat)
+    weight_sum = (2.0 * mask_per_channel.sum(dim=normalization_dims, keepdim=True)).clamp_min(eps)
+    joint_mean = (
+        (fixed_flat * mask_per_channel).sum(dim=normalization_dims, keepdim=True)
+        + (moving_flat * mask_per_channel).sum(dim=normalization_dims, keepdim=True)
+    ) / weight_sum
+    fixed_weighted = (fixed_flat - joint_mean) * mask_per_channel
+    moving_weighted = (moving_flat - joint_mean) * mask_per_channel
+
+    joint_scale = torch.maximum(
+        fixed_weighted.abs().amax(dim=normalization_dims, keepdim=True),
+        moving_weighted.abs().amax(dim=normalization_dims, keepdim=True),
+    ).clamp_min(eps)
+    fixed_weighted = fixed_weighted / joint_scale
+    moving_weighted = moving_weighted / joint_scale
+
+    fixed_fft = torch.fft.fftn(fixed_weighted, s=padded_shape, dim=spatial_dims)
+    moving_fft = torch.fft.fftn(moving_weighted, s=padded_shape, dim=spatial_dims)
+    mask_fft = torch.fft.fftn(mask_flat, s=padded_shape, dim=spatial_dims)
+
+    numerator = torch.fft.ifftn((fixed_fft * moving_fft.conj()).sum(dim=1, keepdim=True), dim=spatial_dims).real
+
+    fixed_energy_fft = torch.fft.fftn(fixed_weighted.abs().square().sum(dim=1, keepdim=True), s=padded_shape, dim=spatial_dims)
+    moving_energy_fft = torch.fft.fftn(moving_weighted.abs().square().sum(dim=1, keepdim=True), s=padded_shape, dim=spatial_dims)
+    fixed_energy = torch.fft.ifftn(fixed_energy_fft * mask_fft.conj(), dim=spatial_dims).real
+    moving_energy = torch.fft.ifftn(mask_fft * moving_energy_fft.conj(), dim=spatial_dims).real
+    correlation = numerator / (fixed_energy.clamp_min(0.0) * moving_energy.clamp_min(0.0)).sqrt().clamp_min(eps)
+    overlap = torch.fft.ifftn(mask_fft * mask_fft.conj(), dim=spatial_dims).real
+    min_overlap = 0.5 * overlap.amax(dim=spatial_dims, keepdim=True)
+    correlation = torch.where(overlap >= min_overlap, correlation, -torch.inf)
+    correlation = correlation.squeeze(1)
+    max_index = correlation.reshape(correlation.shape[0], -1).argmax(dim=-1)
+    peak_index = torch.stack(torch.unravel_index(max_index, padded_shape), dim=-1)
+    peak_shift = peak_index.to(dtype=torch.float32)
+    peak_shift = torch.where(
+        peak_shift >= peak_shift.new_tensor(spatial_shape),
+        peak_shift - peak_shift.new_tensor(padded_shape),
+        peak_shift,
+    )
+    peak_shift = peak_shift.unflatten(0, batch_shape)
+
+    if dim == 2:
+        zero_shift = torch.zeros_like(peak_shift[..., 0])
+        return SpatialDimension(z=zero_shift, y=peak_shift[..., 0], x=peak_shift[..., 1])
+    return SpatialDimension(z=peak_shift[..., 0], y=peak_shift[..., 1], x=peak_shift[..., 2])
 
 
 def affine_registration(
