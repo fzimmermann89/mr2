@@ -254,6 +254,8 @@ class SliceInterpolate(SliceProfileBase):
             raise ValueError('positions and values must be one-dimensional.')
         if positions.shape != values.shape:
             raise ValueError('positions and values must have the same shape.')
+        if positions.numel() < 2:
+            raise ValueError('positions and values must contain at least two samples.')
         sorter = torch.argsort(positions)
         positions = positions[sorter]
         values = values[sorter]
