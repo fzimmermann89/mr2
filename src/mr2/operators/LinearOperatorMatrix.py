@@ -216,13 +216,13 @@ class LinearOperatorMatrix(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torc
 
     def __rmatmul__(self, other: LinearOperator) -> Self:  # type: ignore[misc]
         """Composition of operators."""
-        operators = [[op @ other for op in row] for row in self._operators]
+        operators = [[other @ op for op in row] for row in self._operators]
         return self.__class__(operators)
 
     def __matmul__(self, other: LinearOperator | Self) -> Self:  # type: ignore[override]
         """Composition of operators."""
         if isinstance(other, LinearOperator):
-            operators = [[other @ op for op in row] for row in self._operators]
+            operators = [[op @ other for op in row] for row in self._operators]
             return self.__class__(operators)
         elif isinstance(other, LinearOperatorMatrix):
             if self.shape[1] != other.shape[0]:
@@ -304,11 +304,10 @@ class LinearOperatorMatrix(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torc
     ) -> torch.Tensor:
         r"""Upper bound of operator norm of the Matrix.
 
-        Uses the bounds :math:`||[A, B]^T||\leq\sqrt{(||A||^2 + ||B||^2)}` and :math:`||[A, B]||\leq\max(||A||,||B||)`
-        to estimate the operator norm of the matrix.
-        First,  operator_norm is called on each element of the matrix.
-        Next, the norm is estimated for each column using the first bound.
-        Finally, the norm of the full matrix of linear operators is calculated using the second bound.
+        Uses the operator norm of the matrix of entrywise operator norms to estimate the norm of the
+        block operator induced by the product :math:`\ell_2` norm on tuples.
+        First, `operator_norm` is called on each element of the matrix.
+        The resulting matrix of scalar bounds is then combined with the spectral matrix norm.
 
         Parameters
         ----------
@@ -351,8 +350,7 @@ class LinearOperatorMatrix(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torc
                 for row in self._operators
             ]
         )
-        norm = norms.square().sum(0).sqrt().amax(0)
-        return norm
+        return torch.linalg.matrix_norm(norms.movedim((0, 1), (-2, -1)), ord=2)
 
     def __or__(self, other: LinearOperator | LinearOperatorMatrix) -> Self:
         """Horizontal stacking."""
