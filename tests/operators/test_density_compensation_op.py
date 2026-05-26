@@ -68,6 +68,24 @@ def test_density_compensation_op_dcfdata_tensor() -> None:
     assert torch.equal(*dcf_op_tensor.H(v), *dcf_op_dcfdata_asop.H(v))
 
 
+def test_density_compensation_op_sqrt() -> None:
+    """Test that sqrt() squared reproduces the original operator and rejects negative DCF."""
+    rng = RandomGenerator(seed=0)
+    n_zyx = (2, 3, 4)
+    n_other = (5, 6, 7)
+    n_coils = 8
+
+    dcf_tensor = rng.float32_tensor(size=(*n_other, 1, *n_zyx), low=0.0, high=1.0)
+    dcf_op = DensityCompensationOp(dcf_tensor)
+    sqrt_op = dcf_op.sqrt()
+
+    u = rng.complex64_tensor(size=(*n_other, n_coils, *n_zyx))
+    torch.testing.assert_close(sqrt_op(sqrt_op(u)[0])[0], dcf_op(u)[0])
+
+    with pytest.raises(ValueError, match='non-negative'):
+        DensityCompensationOp(-dcf_tensor).sqrt()
+
+
 def test_density_compensation_op_forward() -> None:
     """Test result of forward."""
     rng = RandomGenerator(seed=0)
