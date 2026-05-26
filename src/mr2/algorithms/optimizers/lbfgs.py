@@ -118,6 +118,8 @@ def lbfgs(
         nonlocal iteration
         optim.zero_grad()
         (residual,) = f(*parameters)
+        if not torch.isfinite(residual):
+            raise RuntimeError(f'Non-finite objective value encountered in LBFGS closure: {residual}.')
         residual.backward()
 
         if callback is not None:

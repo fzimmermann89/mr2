@@ -15,7 +15,7 @@ class EllipsePhantomTestData:
         number of voxels along x
     """
 
-    def __init__(self, n_y: int = 512, n_x: int = 256, intensities: tuple[float, ...] = (1, 2, 3, 4, 5)):
+    def __init__(self, n_y: int = 256, n_x: int = 128, intensities: tuple[float, ...] = (1, 2, 3, 4, 5)):
         # Define image size and k-space matrix
         self.n_x: int = n_x
         self.n_y: int = n_y
