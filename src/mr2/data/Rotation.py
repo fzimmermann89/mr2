@@ -1095,7 +1095,7 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
 
         seq = seq.lower()
         if improper == 'reflection' or improper == 'inversion':
-            quat, is_improper = self.as_quat(improper=improper)
+            quat, is_improper = self.as_quat(canonical=True, improper=improper)
         else:
             quat, is_improper = self.as_quat(improper=improper), None
 
@@ -1341,7 +1341,7 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         else:
             random_sample = rng.randn_tensor((*num, 4), torch.float32, device=device)
         if improper == 'random':
-            inversion: torch.Tensor | bool = rng.bool_tensor(random_sample.shape[:-1]).to(device=device)
+            inversion: torch.Tensor | bool = rng.bool_tensor(random_sample.shape[:-1], device=device)
         elif isinstance(improper, bool):
             inversion = improper
         else:
@@ -1631,7 +1631,7 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         """
         if degrees:
             atol = np.deg2rad(atol)
-        angles = (other @ self.inv()).magnitude()
+        angles = (self @ other.inv()).magnitude()
         return (angles < atol) & (self._is_improper == other._is_improper)
 
     def __eq__(self, other: object) -> bool:
