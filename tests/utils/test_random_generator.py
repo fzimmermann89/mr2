@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 
+import pytest
 import torch
 from mr2.utils import RandomGenerator
 
@@ -384,3 +385,31 @@ def test_randperm(n: int = 5, dtype: torch.dtype = torch.int64) -> None:
     assert len(tensor) == n
     assert len(tensor.unique()) == n
     assert (tensor.unique() == torch.arange(n, dtype=dtype)).all()
+
+
+@pytest.mark.cuda
+def test_cross_device_sampling() -> None:
+    """Sampling should use the generator device internally and materialize on the requested device."""
+    cpu_rng = RandomGenerator(seed=42, device='cpu')
+
+    cpu_to_cuda_uniform = cpu_rng.rand_tensor((2, 3), dtype=torch.float32, device='cuda')
+    cpu_to_cuda_normal = cpu_rng.randn_tensor((2, 3), dtype=torch.float32, device='cuda')
+    cpu_to_cuda_beta = cpu_rng.beta_tensor((2, 3), alpha=1.5, beta=2.5, device='cuda')
+    cpu_to_cuda_perm = cpu_rng.randperm(5, device='cuda')
+
+    assert cpu_to_cuda_uniform.device.type == 'cuda'
+    assert cpu_to_cuda_normal.device.type == 'cuda'
+    assert cpu_to_cuda_beta.device.type == 'cuda'
+    assert cpu_to_cuda_perm.device.type == 'cuda'
+
+    cuda_rng = RandomGenerator(seed=42, device='cuda')
+
+    cuda_to_cpu_uniform = cuda_rng.rand_tensor((2, 3), dtype=torch.float32, device='cpu')
+    cuda_to_cpu_normal = cuda_rng.randn_tensor((2, 3), dtype=torch.float32, device='cpu')
+    cuda_to_cpu_beta = cuda_rng.beta_tensor((2, 3), alpha=1.5, beta=2.5, device='cpu')
+    cuda_to_cpu_perm = cuda_rng.randperm(5, device='cpu')
+
+    assert cuda_to_cpu_uniform.device.type == 'cpu'
+    assert cuda_to_cpu_normal.device.type == 'cpu'
+    assert cuda_to_cpu_beta.device.type == 'cpu'
+    assert cuda_to_cpu_perm.device.type == 'cpu'
