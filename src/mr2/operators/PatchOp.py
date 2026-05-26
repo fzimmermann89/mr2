@@ -111,7 +111,7 @@ class PatchOp(LinearOperator):
 
     def _adjoint_fast(self, patches: torch.Tensor) -> torch.Tensor:
         """Adjoint via reshape/permute for non-overlapping patches."""
-        assert self.domain_size is not None  # mypy  # noqa: S101
+        assert self.domain_size is not None  # mypy
         grid = tuple(s // p for s, p in zip(self.domain_size, self.patch_size, strict=True))
         n_dim = len(grid)
         if self.flatten_patches:
@@ -131,7 +131,7 @@ class PatchOp(LinearOperator):
 
     def _adjoint_scatter(self, patches: torch.Tensor) -> torch.Tensor:
         """Adjoint via scatter for overlapping patches."""
-        assert self.domain_size is not None  # mypy  # noqa: S101
+        assert self.domain_size is not None  # mypy
         k = len(self.dim)
         if not self.flatten_patches:
             patches = patches.flatten(start_dim=0, end_dim=k - 1)

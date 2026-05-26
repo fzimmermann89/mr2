@@ -59,7 +59,7 @@ class EinsumOp(LinearOperator):
         # swapping the input and output indices gets the adjoint rule
         self._adjoint_pattern = f'{indices_matrix},{indices_output}->{indices_input}'
         self._forward_pattern = einsum_rule
-        self.matrix = torch.nn.Parameter(matrix, matrix.requires_grad)
+        self.matrix = matrix
 
     def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor]:
         """Apply sum-product of input `x` with the operator's matrix `A`.

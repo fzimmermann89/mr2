@@ -57,7 +57,7 @@ class RandomGenerator:
             float32_tuple, float64_tuple, complex64_tuple, complex128_tuple
     """
 
-    def __init__(self, seed: int | None = None):
+    def __init__(self, seed: int | None = None, device: torch.device | str | None = None):
         """Initialize the random generator with a fixed seed.
 
         Parameters
@@ -65,9 +65,11 @@ class RandomGenerator:
         seed
             Seed for the random generator. If `None`, use
             default generator to get a random seed
+        device
+            Device for the underlying torch generator. If `None`, the default device is used.
         """
         seed_ = int(torch.randint(0, 2**32, (1,))) if seed is None else seed
-        self.generator = torch.Generator().manual_seed(seed_)
+        self.generator = torch.Generator(device=device).manual_seed(seed_)
 
     def _randint(
         self,
@@ -75,7 +77,7 @@ class RandomGenerator:
         low: int,
         high: int,
         dtype: torch.dtype = torch.int64,
-        device: torch.device | None = None,
+        device: torch.device | str | None = None,
     ) -> torch.Tensor:
         """Generate uniform random integers in [low, high).
 
@@ -98,7 +100,8 @@ class RandomGenerator:
         """
         check_bounds(low, high, dtype)
         size_ = (size,) if isinstance(size, int) else size
-        return torch.randint(low, high, size_, generator=self.generator, dtype=dtype, device=device)
+        tensor = torch.randint(low, high, size_, generator=self.generator, dtype=dtype, device=self.generator.device)
+        return tensor.to(device=device) if device is not None else tensor
 
     def _rand(
         self,
@@ -106,7 +109,7 @@ class RandomGenerator:
         low: float | torch.Tensor,
         high: float | torch.Tensor,
         dtype: torch.dtype = torch.float32,
-        device: torch.device | None = None,
+        device: torch.device | str | None = None,
     ) -> torch.Tensor:
         """Generate uniform random floats in [low, high).
 
@@ -128,9 +131,18 @@ class RandomGenerator:
             Tensor of random floats.
         """
         check_bounds(low, high, dtype)
-        return (torch.rand(size, generator=self.generator, dtype=dtype, device=device) * (high - low)) + low
+        tensor = (
+            torch.rand(size, generator=self.generator, dtype=dtype, device=self.generator.device) * (high - low)
+        ) + low
+        return tensor.to(device=device) if device is not None else tensor
 
-    def float32_tensor(self, size: Sequence[int] | int = (1,), low: float = 0.0, high: float = 1.0) -> torch.Tensor:
+    def float32_tensor(
+        self,
+        size: Sequence[int] | int = (1,),
+        low: float = 0.0,
+        high: float = 1.0,
+        device: torch.device | str | None = None,
+    ) -> torch.Tensor:
         """Generate a float32 tensor with uniform distribution in [low, high).
 
         Parameters
@@ -141,14 +153,22 @@ class RandomGenerator:
             Lower bound.
         high
             Upper bound.
+        device
+            Device of the output tensor. If `None`, the tensor is created on the generator device.
 
         Returns
         -------
             Tensor of float32 random numbers.
         """
-        return self._rand(size, low, high, torch.float32)
+        return self._rand(size, low, high, torch.float32, device=device)
 
-    def float64_tensor(self, size: Sequence[int] | int = (1,), low: float = 0.0, high: float = 1.0) -> torch.Tensor:
+    def float64_tensor(
+        self,
+        size: Sequence[int] | int = (1,),
+        low: float = 0.0,
+        high: float = 1.0,
+        device: torch.device | str | None = None,
+    ) -> torch.Tensor:
         """Generate a float64 tensor with uniform distribution in [low, high).
 
         Parameters
@@ -159,14 +179,22 @@ class RandomGenerator:
             Lower bound.
         high
             Upper bound.
+        device
+            Device of the output tensor. If `None`, the tensor is created on the generator device.
 
         Returns
         -------
             Tensor of float64 random numbers.
         """
-        return self._rand(size, low, high, torch.float64)
+        return self._rand(size, low, high, torch.float64, device=device)
 
-    def complex64_tensor(self, size: Sequence[int] | int = (1,), low: float = 0.0, high: float = 1.0) -> torch.Tensor:
+    def complex64_tensor(
+        self,
+        size: Sequence[int] | int = (1,),
+        low: float = 0.0,
+        high: float = 1.0,
+        device: torch.device | str | None = None,
+    ) -> torch.Tensor:
         """Generate a complex64 tensor with uniform amplitude in [low, high).
 
         The phase is uniformly distributed in [-π, π].
@@ -179,6 +207,8 @@ class RandomGenerator:
             Lower bound for amplitude (must be non-negative).
         high
             Upper bound for amplitude.
+        device
+            Device of the output tensor. If `None`, the tensor is created on the generator device.
 
         Returns
         -------
@@ -186,11 +216,17 @@ class RandomGenerator:
         """
         if low < 0:
             raise ValueError('low/high refer to the amplitude and must be positive')
-        amp = self.float32_tensor(size, low, high)
-        phase = self.float32_tensor(size, -torch.pi, torch.pi)
+        amp = self.float32_tensor(size, low, high, device=device)
+        phase = self.float32_tensor(size, -torch.pi, torch.pi, device=device)
         return (amp * torch.exp(1j * phase)).to(dtype=torch.complex64)
 
-    def complex128_tensor(self, size: Sequence[int] | int = (1,), low: float = 0.0, high: float = 1.0) -> torch.Tensor:
+    def complex128_tensor(
+        self,
+        size: Sequence[int] | int = (1,),
+        low: float = 0.0,
+        high: float = 1.0,
+        device: torch.device | str | None = None,
+    ) -> torch.Tensor:
         """Generate a complex128 tensor with uniform amplitude in [low, high).
 
         The phase is uniformly distributed in [-π, π].
@@ -203,6 +239,8 @@ class RandomGenerator:
             Lower bound for amplitude (must be non-negative).
         high
             Upper bound for amplitude.
+        device
+            Device of the output tensor. If `None`, the tensor is created on the generator device.
 
         Returns
         -------
@@ -210,11 +248,17 @@ class RandomGenerator:
         """
         if low < 0:
             raise ValueError('low/high refer to the amplitude and must be positive')
-        amp = self.float64_tensor(size, low, high)
-        phase = self.float64_tensor(size, -torch.pi, torch.pi)
+        amp = self.float64_tensor(size, low, high, device=device)
+        phase = self.float64_tensor(size, -torch.pi, torch.pi, device=device)
         return (amp * torch.exp(1j * phase)).to(dtype=torch.complex128)
 
-    def int8_tensor(self, size: Sequence[int] | int = (1,), low: int = -1 << 7, high: int = 1 << 7) -> torch.Tensor:
+    def int8_tensor(
+        self,
+        size: Sequence[int] | int = (1,),
+        low: int = -1 << 7,
+        high: int = 1 << 7,
+        device: torch.device | str | None = None,
+    ) -> torch.Tensor:
         """Generate an int8 tensor with uniform distribution in [low, high).
 
         Parameters
@@ -225,14 +269,22 @@ class RandomGenerator:
             Lower bound (inclusive).
         high
             Upper bound (exclusive).
+        device
+            Device of the output tensor. If `None`, the tensor is created on the generator device.
 
         Returns
         -------
             Tensor of int8 random numbers.
         """
-        return self._randint(size, low, high, dtype=torch.int8)
+        return self._randint(size, low, high, dtype=torch.int8, device=device)
 
-    def int16_tensor(self, size: Sequence[int] | int = (1,), low: int = -1 << 15, high: int = 1 << 15) -> torch.Tensor:
+    def int16_tensor(
+        self,
+        size: Sequence[int] | int = (1,),
+        low: int = -1 << 15,
+        high: int = 1 << 15,
+        device: torch.device | str | None = None,
+    ) -> torch.Tensor:
         """Generate an int16 tensor with uniform distribution in [low, high).
 
         Parameters
@@ -243,14 +295,22 @@ class RandomGenerator:
             Lower bound (inclusive).
         high
             Upper bound (exclusive).
+        device
+            Device of the output tensor. If `None`, the tensor is created on the generator device.
 
         Returns
         -------
             Tensor of int16 random numbers.
         """
-        return self._randint(size, low, high, dtype=torch.int16)
+        return self._randint(size, low, high, dtype=torch.int16, device=device)
 
-    def int32_tensor(self, size: Sequence[int] | int = (1,), low: int = -1 << 31, high: int = 1 << 31) -> torch.Tensor:
+    def int32_tensor(
+        self,
+        size: Sequence[int] | int = (1,),
+        low: int = -1 << 31,
+        high: int = 1 << 31,
+        device: torch.device | str | None = None,
+    ) -> torch.Tensor:
         """Generate an int32 tensor with uniform distribution in [low, high).
 
         Parameters
@@ -261,15 +321,21 @@ class RandomGenerator:
             Lower bound (inclusive).
         high
             Upper bound (exclusive).
+        device
+            Device of the output tensor. If `None`, the tensor is created on the generator device.
 
         Returns
         -------
             Tensor of int32 random numbers.
         """
-        return self._randint(size, low, high, dtype=torch.int32)
+        return self._randint(size, low, high, dtype=torch.int32, device=device)
 
     def int64_tensor(
-        self, size: Sequence[int] | int = (1,), low: int = -1 << 63, high: int = (1 << 63) - 1
+        self,
+        size: Sequence[int] | int = (1,),
+        low: int = -1 << 63,
+        high: int = (1 << 63) - 1,
+        device: torch.device | str | None = None,
     ) -> torch.Tensor:
         """Generate an int64 tensor with uniform distribution in [low, high).
 
@@ -282,14 +348,22 @@ class RandomGenerator:
         high
             Upper bound (exclusive).
             Maximum value is (1 << 63) - 1 due to https://github.com/pytorch/pytorch/issues/81446
+        device
+            Device of the output tensor. If `None`, the tensor is created on the generator device.
 
         Returns
         -------
             Tensor of int64 random numbers.
         """
-        return self._randint(size, low, high, dtype=torch.int64)
+        return self._randint(size, low, high, dtype=torch.int64, device=device)
 
-    def uint8_tensor(self, size: Sequence[int] | int = (1,), low: int = 0, high: int = 1 << 8) -> torch.Tensor:
+    def uint8_tensor(
+        self,
+        size: Sequence[int] | int = (1,),
+        low: int = 0,
+        high: int = 1 << 8,
+        device: torch.device | str | None = None,
+    ) -> torch.Tensor:
         """Generate a uint8 tensor with uniform distribution in [low, high).
 
         Parameters
@@ -300,22 +374,26 @@ class RandomGenerator:
             Lower bound (inclusive).
         high
             Upper bound (exclusive).
+        device
+            Device of the output tensor. If `None`, the tensor is created on the generator device.
 
         Returns
         -------
             Tensor of uint8 random numbers.
         """
-        return self._randint(size, low, high, dtype=torch.uint8)
+        return self._randint(size, low, high, dtype=torch.uint8, device=device)
 
-    def bool_tensor(self, size: Sequence[int] | int = (1,)) -> torch.Tensor:
+    def bool_tensor(self, size: Sequence[int] | int = (1,), device: torch.device | str | None = None) -> torch.Tensor:
         """Generate boolean tensor of given size.
 
         Parameters
         ----------
         size
             Shape of the output tensor.
+        device
+            Device of the output tensor. If `None`, the tensor is created on the generator device.
         """
-        return self.uint8_tensor(size, low=0, high=2).bool()
+        return self.uint8_tensor(size, low=0, high=2, device=device).bool()
 
     def bool(self) -> bool:
         """Generate a random boolean value.
@@ -324,7 +402,7 @@ class RandomGenerator:
         -------
             Random boolean.
         """
-        return self.uint8(0, 1) == 1
+        return self.uint8(0, 2) == 1
 
     def float32(self, low: float = 0.0, high: float = 1.0) -> float:
         """Generate a float32 scalar with uniform distribution in [low, high).
@@ -782,7 +860,7 @@ class RandomGenerator:
         -------
             Random tensor with the same shape and dtype as `x`.
         """
-        return self.rand_tensor(x.shape, x.dtype, low=low, high=high).to(x.device)
+        return self.rand_tensor(x.shape, x.dtype, low=low, high=high, device=x.device)
 
     def randn_like(self, x: torch.Tensor) -> torch.Tensor:
         """Generate a tensor with the same shape, device, and dtype as `x`, filled with standard normal random numbers.
@@ -796,7 +874,7 @@ class RandomGenerator:
         -------
             Random tensor with the same shape and dtype as `x`.
         """
-        return self.randn_tensor(x.shape, x.dtype).to(x.device)
+        return self.randn_tensor(x.shape, x.dtype, device=x.device)
 
     def rand_tensor(
         self,
@@ -804,6 +882,7 @@ class RandomGenerator:
         dtype: torch.dtype,
         low: float | int = 0,
         high: int | float = 1,
+        device: torch.device | str | None = None,
     ) -> torch.Tensor:
         """Generate a tensor of given shape and dtype with uniform random numbers in [low, high).
 
@@ -817,22 +896,29 @@ class RandomGenerator:
             Lower bound.
         high
             Upper bound.
+        device
+            Device of the output tensor. If `None`, the tensor is created on the default device.
 
         Returns
         -------
             Random tensor.
         """
         if dtype.is_complex:
-            tensor = self.complex64_tensor(size, low, high).to(dtype=dtype)
+            real_dtype = torch.float32 if dtype == torch.complex64 else torch.float64
+            amp = self._rand(size, low, high, real_dtype, device=device)
+            phase = self._rand(size, -torch.pi, torch.pi, real_dtype, device=device)
+            tensor = (amp * torch.exp(1j * phase)).to(dtype=dtype)
         elif dtype.is_floating_point:
-            tensor = self._rand(size, low, high, dtype)
+            tensor = self._rand(size, low, high, dtype, device=device)
         elif dtype == torch.bool:
-            tensor = self.int32_tensor(size, low=0, high=1) > 0
+            tensor = self._randint(size, 0, 2, dtype=torch.int32, device=device) > 0
         else:
-            tensor = self._randint(size, ceil(low), floor(high), dtype)
+            tensor = self._randint(size, ceil(low), floor(high), dtype, device=device)
         return tensor
 
-    def randn_tensor(self, size: Sequence[int], dtype: torch.dtype) -> torch.Tensor:
+    def randn_tensor(
+        self, size: Sequence[int], dtype: torch.dtype, device: torch.device | str | None = None
+    ) -> torch.Tensor:
         """Generate a tensor of given shape and dtype with standard normal distribution.
 
         Parameters
@@ -841,14 +927,36 @@ class RandomGenerator:
             Shape of the output tensor.
         dtype
             Data type of the output tensor.
+        device
+            Device of the output tensor. If `None`, the tensor is created on the default device.
 
         Returns
         -------
             Random tensor with normal distribution.
         """
-        return torch.randn(size=size, generator=self.generator, dtype=dtype)
+        tensor = torch.randn(size=size, generator=self.generator, dtype=dtype, device=self.generator.device)
+        return tensor.to(device=device) if device is not None else tensor
 
-    def randperm(self, n: int, *, dtype: torch.dtype = torch.int64) -> torch.Tensor:
+    def beta_tensor(
+        self,
+        size: Sequence[int] | int,
+        alpha: float,
+        beta: float,
+        dtype: torch.dtype = torch.float32,
+        device: torch.device | str | None = None,
+    ) -> torch.Tensor:
+        """Generate beta-distributed random numbers using gamma draws."""
+        size_ = (size,) if isinstance(size, int) else tuple(size)
+        alpha_tensor = torch.full(size_, alpha, dtype=dtype, device=self.generator.device)
+        beta_tensor = torch.full(size_, beta, dtype=dtype, device=self.generator.device)
+        sample_alpha = torch._standard_gamma(alpha_tensor, generator=self.generator)
+        sample_beta = torch._standard_gamma(beta_tensor, generator=self.generator)
+        tensor = sample_alpha / (sample_alpha + sample_beta)
+        return tensor.to(device=device) if device is not None else tensor
+
+    def randperm(
+        self, n: int, *, dtype: torch.dtype = torch.int64, device: torch.device | str | None = None
+    ) -> torch.Tensor:
         """Generate a random permutation of integers from 0 to n - 1.
 
         Parameters
@@ -857,12 +965,15 @@ class RandomGenerator:
             Number of elements.
         dtype
             Data type of the output tensor.
+        device
+            Device of the output tensor. If `None`, the tensor is created on the generator device.
 
         Returns
         -------
             Tensor containing a random permutation.
         """
-        return torch.randperm(n, generator=self.generator, dtype=dtype)
+        tensor = torch.randperm(n, generator=self.generator, dtype=dtype, device=self.generator.device)
+        return tensor.to(device=device) if device is not None else tensor
 
     def gaussian_variable_density_samples(
         self, shape: Sequence[int], low: int, high: int, fwhm: float = float('inf'), always_sample: Sequence[int] = ()

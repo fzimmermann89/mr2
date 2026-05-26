@@ -100,3 +100,29 @@ def test_dictionary_matching_op_not_differentiable() -> None:
     y = torch.zeros(5, 5, 4, 3)
     with pytest.raises(ValueError, match='differentiable'):
         _ = operator(y.requires_grad_(True))
+
+
+@pytest.mark.cuda
+def test_dictionary_matching_op_cuda() -> None:
+    """Test dictionary matching operator works on CUDA devices."""
+    rng = RandomGenerator(2)
+    shape = (5, 4, 3)
+    ti = rng.float32_tensor(5)
+    m0 = rng.rand_tensor(shape, dtype=torch.float32, low=0.2, high=1.0)
+    t1 = rng.rand_tensor(shape, dtype=torch.float32, low=0.1, high=1.0)
+
+    # Create on CPU, transfer to GPU, run on GPU.
+    model = InversionRecovery(ti)
+    (y,) = model(m0, t1)
+    operator = DictionaryMatchOp(model)
+    operator.append(m0, t1)
+    operator.cuda()
+    result = operator(y.cuda())
+    assert all(tensor.is_cuda for tensor in result)
+
+    # Create directly on GPU, run on GPU.
+    model = InversionRecovery(ti.cuda())
+    operator = DictionaryMatchOp(model)
+    operator.append(m0.cuda(), t1.cuda())
+    result = operator(y.cuda())
+    assert all(tensor.is_cuda for tensor in result)

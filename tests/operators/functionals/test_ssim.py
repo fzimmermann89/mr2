@@ -46,3 +46,15 @@ def test_ssim_reduction() -> None:
     assert ssim_volume.shape == (2, 3)
     assert ssim_full.shape == ()
     assert ssim_none.shape == (2, 3, 4, 4, 4)
+
+
+def test_ssim_complex_uses_imaginary_part() -> None:
+    """Test that complex SSIM uses real and imaginary components."""
+    rng = RandomGenerator(0)
+    target = rng.complex64_tensor((1, 8, 32, 32), low=0.0, high=1.0)
+    test = target.real + 1j * rng.float32_tensor(target.shape, low=0.0, high=1.0)
+
+    (complex_ssim,) = SSIM(target)(test)
+    (real_ssim,) = SSIM(target.real)(test.real)
+
+    assert complex_ssim < real_ssim

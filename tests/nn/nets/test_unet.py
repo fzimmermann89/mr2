@@ -34,7 +34,7 @@ def test_unet_forward(torch_compile: bool, device: str) -> None:
     x = x.to(device)
     cond = cond.to(device)
     if torch_compile:
-        unet = cast(UNet, torch.compile(unet))
+        unet = cast(UNet, torch.compile(unet, dynamic=False))
     y = unet(x, cond=cond)
     assert y.shape == (1, 1, 16, 16)
 
@@ -88,7 +88,7 @@ def test_gated_unet_forward(torch_compile: bool, device: str) -> None:
     x = x.to(device)
     cond = cond.to(device)
     if torch_compile:
-        unet = cast(AttentionGatedUNet, torch.compile(unet))
+        unet = cast(AttentionGatedUNet, torch.compile(unet, dynamic=False))
     y = unet(x, cond=cond)
     assert y.shape == (1, 1, 16, 16)
 

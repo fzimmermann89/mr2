@@ -4,9 +4,10 @@ from collections.abc import Sequence
 from typing import Literal
 
 import torch
-from torch.nn import Module, Sequential
+from torch.nn import Module
 
-from mr2.nn.PermutedBlock import PermutedBlock
+from mr2.utils.interpolate import interpolate
+from mr2.utils.reshape import normalize_indices
 
 
 class Upsample(Module):
@@ -24,32 +25,24 @@ class Upsample(Module):
         scale_factor
             Factor by which to upsample
         mode
-            Interpolation mode. See `torch.nn.functional.interpolate` for details.
+            Interpolation mode.
         """
         super().__init__()
+        self.dim = tuple(dim)
         self.scale_factor = scale_factor
-        if mode == 'nearest':
-            dims = [d.tolist() for d in torch.tensor(dim).split(3)]
-            modes = ['nearest'] * len(dim)
-        elif mode == 'linear':
-            dims = [d.tolist() for d in torch.tensor(dim).split(3)]
-            modes = [{1: 'linear', 2: 'bilinear', 3: 'trilinear'}[len(d)] for d in dims]
-        elif mode == 'cubic':
-            if not len(dim) == 2:
-                raise ValueError('Cubic interpolation is only supported for 2D images.')
-            dims = [tuple(dim)]
-            modes = ['bicubic']
-
-        self.blocks = Sequential(
-            *[
-                PermutedBlock(d, torch.nn.Upsample(scale_factor=len(d) * (scale_factor,), mode=m))
-                for d, m in zip(dims, modes, strict=False)
-            ]
-        )
+        self.mode = mode
+        if mode not in ('nearest', 'linear', 'cubic'):
+            raise ValueError("mode must be one of 'nearest', 'linear', or 'cubic'.")
+        if scale_factor <= 0:
+            raise ValueError('scale_factor should be positive.')
+        if mode == 'cubic' and len(self.dim) != 2:
+            raise ValueError('Cubic interpolation is only supported for 2D images.')
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Upsample the input tensor."""
-        return self.blocks(x)
+        dim = normalize_indices(x.ndim, self.dim)
+        size = tuple(x.shape[d] * self.scale_factor for d in dim)
+        return interpolate(x, size=size, dim=dim, mode=self.mode)
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         """Upsample the input tensor.
