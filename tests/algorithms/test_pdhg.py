@@ -3,7 +3,14 @@
 import pytest
 import torch
 from mr2.algorithms.optimizers import pdhg
-from mr2.operators import FastFourierOp, IdentityOp, LinearOperatorMatrix, ProximableFunctionalSeparableSum, WaveletOp
+from mr2.operators import (
+    FastFourierOp,
+    IdentityOp,
+    LinearOperatorMatrix,
+    ProximableFunctionalSeparableSum,
+    WaveletOp,
+    ZeroOp,
+)
 from mr2.operators.functionals import L1Norm, L1NormViewAsReal, L2NormSquared, ZeroFunctional
 from mr2.utils import RandomGenerator
 
@@ -164,6 +171,19 @@ def test_f_and_g_None() -> None:
     with pytest.warns(UserWarning, match='constant'):
         (pdhg_solution,) = pdhg(f=f, g=g, operator=operator, initial_values=initial_values, max_iterations=1)
     assert (pdhg_solution == initial_values[0]).all()
+
+
+@pytest.mark.xfail(strict=True, reason='Known issue: automatic PDHG step sizes divide by a zero operator norm.')
+def test_pdhg_automatic_stepsize_for_zero_operator_is_finite() -> None:
+    """Automatic step selection should handle valid objectives whose coupling operator is zero."""
+    (solution,) = pdhg(
+        f=None,
+        g=L2NormSquared(),
+        operator=ZeroOp(keep_shape=True),
+        initial_values=(torch.tensor([2.0]),),
+        max_iterations=1,
+    )
+    assert torch.isfinite(solution).all()
 
 
 def test_callback() -> None:
