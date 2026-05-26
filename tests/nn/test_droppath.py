@@ -1,6 +1,7 @@
 """Test DropPath."""
 
 import pytest
+import torch
 from mr2.nn.DropPath import DropPath
 from mr2.utils import RandomGenerator
 
@@ -28,3 +29,11 @@ def test_droppath_drop_all() -> None:
     droppath = DropPath(1.0)
     y = droppath(x)
     assert (y == 0).all()
+
+
+@pytest.mark.xfail(strict=True, reason='Known issue: full scaled dropping divides the mask by zero.')
+def test_droppath_drop_all_with_keep_scaling_is_finite() -> None:
+    """Full drop should not create NaN activations when keep scaling is enabled."""
+    output = DropPath(1.0, scale_by_keep=True)(torch.ones(3, 4))
+    assert torch.isfinite(output).all()
+    assert (output == 0).all()
