@@ -1044,6 +1044,7 @@ class Dataclass:
         """
         objects = (self, *others)
         shapes = [obj.shape for obj in objects]
+        target_shapes: list[tuple[int, ...]]
         if all(shape == () for shape in shapes) and dim in (0, -1):
             target_shapes = [(1,) for _ in objects]
             dim = 0
