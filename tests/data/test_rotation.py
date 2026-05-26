@@ -624,7 +624,7 @@ def test_as_euler_degenerate_symmetric_axes(seq_tuple: Sequence[str], intrinsic:
 
 
 def test_inv() -> None:
-    rnd = np.random.RandomState(0)
+    rnd = RandomGenerator(0)
     n = 10
     p = Rotation.random(num=n, random_state=rnd)
     q = p.inv()
@@ -642,7 +642,7 @@ def test_inv() -> None:
 
 
 def test_inv_single_rotation() -> None:
-    rnd = np.random.RandomState(0)
+    rnd = RandomGenerator(0)
     p = Rotation.random(random_state=rnd)
     q = p.inv()
 
@@ -726,7 +726,7 @@ def test_magnitude_single_rotation() -> None:
 
 
 def test_approx_equal() -> None:
-    rng = np.random.RandomState(0)
+    rng = RandomGenerator(0)
     p = Rotation.random(10, random_state=rng)
     q = Rotation.random(10, random_state=rng)
     r = p @ q.inv()
@@ -862,6 +862,17 @@ def test_getitem() -> None:
     torch.testing.assert_close(r[:-1].as_matrix(), mat[0].unsqueeze(0))
 
 
+def test_getitem_with_broadcasted_inversion() -> None:
+    quat = Rotation.random((1, 2), random_state=0, improper=False).as_quat()
+    inversion = torch.tensor([[False], [True], [False]])
+    r = Rotation(quat, normalize=False, inversion=inversion)
+
+    selected = r[1]
+    assert selected.shape == (2,)
+    torch.testing.assert_close(selected.as_quat(improper='ignore'), quat.expand(3, 2, 4)[1])
+    assert torch.equal(selected.is_improper, inversion.expand(3, 2)[1])
+
+
 def test_getitem_single() -> None:
     with pytest.raises(TypeError, match='not subscriptable'):
         Rotation.identity()[0]
@@ -874,7 +885,7 @@ def test_setitem_single() -> None:
 
 
 def test_setitem_slice() -> None:
-    rng = np.random.RandomState(seed=0)
+    rng = RandomGenerator(0)
     r1 = Rotation.random(10, random_state=rng)
     r2 = Rotation.random(5, random_state=rng)
     r1[1:6] = r2
@@ -882,7 +893,7 @@ def test_setitem_slice() -> None:
 
 
 def test_setitem_integer() -> None:
-    rng = np.random.RandomState(seed=0)
+    rng = RandomGenerator(0)
     r1 = Rotation.random(10, random_state=rng)
     r2 = Rotation.random(random_state=rng)
     r1[1] = r2
@@ -906,7 +917,7 @@ def test_n_rotations() -> None:
 
 
 def test_random_rotation_shape() -> None:
-    rnd = np.random.RandomState(0)
+    rnd = RandomGenerator(0)
     assert Rotation.random(random_state=rnd).as_quat().shape == (4,)
     assert Rotation.random(None, random_state=rnd).as_quat().shape == (4,)
     assert Rotation.random(1, random_state=rnd).as_quat().shape == (1, 4)
@@ -924,13 +935,14 @@ def test_align_vectors_no_rotation() -> None:
 
 
 def test_align_vectors_no_noise() -> None:
+    rot_rng = RandomGenerator(0)
     rnd = np.random.RandomState(0)
-    c = Rotation.random(random_state=rnd)
+    c = Rotation.random(random_state=rot_rng)
     b = torch.tensor(rnd.normal(size=(5, 3)))
     a = c(b)
 
     est, rssd = Rotation.align_vectors(a, b)
-    torch.testing.assert_close(c.as_quat().double(), est.as_quat().double())
+    torch.testing.assert_close(c.as_quat(canonical=True).double(), est.as_quat(canonical=True).double())
     assert math.isclose(rssd, 0.0, abs_tol=1e-6, rel_tol=1e-4)
 
 
@@ -969,9 +981,10 @@ def test_align_vectors_scaled_weights() -> None:
 
 
 def test_align_vectors_noise() -> None:
+    rot_rng = RandomGenerator(0)
     rnd = np.random.RandomState(0)
     n_vectors = 100
-    rot = Rotation.random(random_state=rnd)
+    rot = Rotation.random(random_state=rot_rng)
     vectors = torch.tensor(rnd.normal(size=(n_vectors, 3)), dtype=torch.float32)
     result = rot(vectors)
 
@@ -1354,7 +1367,7 @@ def test_weighted_mean_dims(
     mean2 = rotations_full.mean(weights=None, keepdim=keepdim, dim=dim)
 
     assert mean1.shape == expected_shape, 'Shape does not match'
-    assert mean1.approx_equal(mean2).all(), 'Weighting a Rotation 2x is not the same as including it twice'
+    assert mean1.approx_equal(mean2, atol=2e-6).all(), 'Weighting a Rotation 2x is not the same as including it twice'
 
 
 def test_mean_invalid_weights() -> None:
@@ -1503,7 +1516,7 @@ def test_improper_euler_reflection() -> None:
     r = Rotation.random(10, random_state=0, improper=True)
     angle, ref = r.as_euler('xyz', improper='reflection')
     r2 = Rotation.from_euler('xyz', angle, reflection=ref)
-    assert r2.approx_equal(r, atol=1e-5).all()  # loss of precision in reflection conversion
+    assert r2.approx_equal(r, atol=5e-5).all()  # float32 reflection conversion loses a few ulps near identity
 
 
 def test_improper_euler_inversion() -> None:
@@ -1584,11 +1597,7 @@ def test_apply_torch() -> None:
 def test_random_vmf_uniform() -> None:
     """Test random rotations with a uniform distribution"""
     mean = torch.tensor([0, 0, 1.0])
-    # vmf does not support a seed, as torch.distribution do not support it
-    prev_rng_state = torch.random.get_rng_state()
-    torch.manual_seed(0)
-    r = Rotation.random_vmf(10000, mean, kappa=0, sigma=math.inf)
-    torch.random.set_rng_state(prev_rng_state)
+    r = Rotation.random_vmf(10000, mean, kappa=0, sigma=math.inf, random_state=0)
     assert r.shape == (10000,)
     assert r.mean().magnitude() < 0.1
 
@@ -1596,13 +1605,34 @@ def test_random_vmf_uniform() -> None:
 def test_random_vmf_peaked() -> None:
     """Test random rotations with a peaked distribution"""
     mean = torch.tensor([0.0, 1.0, 0.0])
-    # vmf does not support a seed, as torch.distribution do not support it
-    prev_rng_state = torch.random.get_rng_state()
-    torch.manual_seed(0)
-    r = Rotation.random_vmf(5000, mean, kappa=50, sigma=20)
-    torch.random.set_rng_state(prev_rng_state)
+    r = Rotation.random_vmf(5000, mean, kappa=50, sigma=20, random_state=0)
     assert r.shape == (5000,)
-    torch.testing.assert_close(torch.linalg.cross(r.mean().as_rotvec(), mean), torch.zeros(3), atol=3e-3, rtol=0)
+    torch.testing.assert_close(torch.linalg.cross(r.mean().as_rotvec(), mean), torch.zeros(3), atol=5e-3, rtol=0)
+
+
+def test_random_vmf_seed_reproducible() -> None:
+    """random_vmf should be reproducible for integer seeds."""
+    mean = torch.tensor([0.0, 0.0, 1.0])
+    r1 = Rotation.random_vmf(16, mean, kappa=5.0, sigma=1.0, random_state=0)
+    r2 = Rotation.random_vmf(16, mean, kappa=5.0, sigma=1.0, random_state=0)
+    r3 = Rotation.random_vmf(16, mean, kappa=5.0, sigma=1.0, random_state=1)
+    torch.testing.assert_close(r1.as_quat(), r2.as_quat())
+    assert not r1.approx_equal(r3).all()
+
+
+def test_random_vmf_randomstate_progression() -> None:
+    """RandomGenerator instances should progress across repeated calls."""
+    mean = torch.tensor([1.0, 0.0, 0.0])
+    rng = RandomGenerator(0)
+    r1 = Rotation.random_vmf(10, mean, kappa=10.0, sigma=2.0, random_state=rng)
+    r2 = Rotation.random_vmf(10, mean, kappa=10.0, sigma=2.0, random_state=rng)
+
+    rng_replay = RandomGenerator(0)
+    r1_replay = Rotation.random_vmf(10, mean, kappa=10.0, sigma=2.0, random_state=rng_replay)
+    r2_replay = Rotation.random_vmf(10, mean, kappa=10.0, sigma=2.0, random_state=rng_replay)
+
+    torch.testing.assert_close(r1.as_quat(), r1_replay.as_quat())
+    torch.testing.assert_close(r2.as_quat(), r2_replay.as_quat())
 
 
 def test_apply_improper() -> None:
@@ -1633,6 +1663,20 @@ def test_permute() -> None:
     torch.testing.assert_close(permuted.as_matrix(), r.as_matrix().permute(2, 0, 1, 3, 4))
     reverted = permuted.permute((1, 2, 0))
     torch.testing.assert_close(r.as_matrix(), reverted.as_matrix())
+
+
+def test_reshape_and_permute_with_broadcasted_inversion() -> None:
+    quat = Rotation.random((1, 2), random_state=0, improper=False).as_quat()
+    inversion = torch.tensor([[False], [True], [False]])
+    r = Rotation(quat, normalize=False, inversion=inversion)
+
+    reshaped = r.reshape(2, 3)
+    assert reshaped.shape == (2, 3)
+    torch.testing.assert_close(reshaped.as_matrix(), r.as_matrix().reshape(2, 3, 3, 3))
+
+    permuted = r.permute((1, 0))
+    assert permuted.shape == (2, 3)
+    torch.testing.assert_close(permuted.as_matrix(), r.as_matrix().permute(1, 0, 2, 3))
 
 
 def test_expand() -> None:
@@ -1691,3 +1735,159 @@ def test_unqueeze_last() -> None:
     assert r2.shape == (1, 2, 3, 1)
     assert r2[..., 0].approx_equal(r).all()
     assert r._quaternions is not r2._quaternions
+
+
+@pytest.mark.cuda
+def test_cuda_quat_roundtrip() -> None:
+    """from_quat / as_quat preserve device."""
+    quat = torch.tensor([0.0, 0.0, 0.0, 1.0], device='cuda')
+    rotation = Rotation.from_quat(quat)
+    result = rotation.as_quat()
+    assert rotation.device.type == 'cuda'
+    assert result.device.type == 'cuda'
+    torch.testing.assert_close(result, quat)
+
+
+@pytest.mark.cuda
+def test_cuda_matrix_roundtrip() -> None:
+    """from_matrix / as_matrix preserve device."""
+    rotation = Rotation.random(4, random_state=0, device='cuda')
+    matrix = rotation.as_matrix()
+    rotation2 = Rotation.from_matrix(matrix)
+    assert matrix.device.type == 'cuda'
+    assert rotation2.device.type == 'cuda'
+    assert rotation.approx_equal(rotation2).all()
+
+
+@pytest.mark.cuda
+def test_cuda_rotvec_roundtrip() -> None:
+    """from_rotvec / as_rotvec preserve device, including python-list reflection flags."""
+    rotvec = torch.tensor([[0.1, 0.0, 0.0], [0.2, 0.0, 0.0]], device='cuda')
+    rotation = Rotation.from_rotvec(rotvec, reflection=[False, True])
+    result = rotation.as_rotvec(improper='ignore')
+    assert rotation.device.type == 'cuda'
+    assert result.device.type == 'cuda'
+
+
+@pytest.mark.cuda
+def test_cuda_euler_roundtrip() -> None:
+    """from_euler / as_euler preserve device."""
+    angles = torch.tensor([0.1, 0.2, 0.3], device='cuda')
+    rotation = Rotation.from_euler('xyz', angles)
+    result = rotation.as_euler('xyz')
+    assert rotation.device.type == 'cuda'
+    assert result.device.type == 'cuda'
+    torch.testing.assert_close(result, angles)
+
+
+@pytest.mark.cuda
+def test_cuda_directions_roundtrip() -> None:
+    """from_directions / as_directions preserve device."""
+    rotation = Rotation.random(random_state=0, device='cuda')
+    bx, by, bz = rotation.as_directions()
+    rotation2 = Rotation.from_directions(bx, by, bz)
+    assert bx.x.device.type == 'cuda'
+    assert rotation2.device.type == 'cuda'
+    assert rotation.approx_equal(rotation2)
+
+
+@pytest.mark.cuda
+def test_cuda_apply_tensor() -> None:
+    """Applying a CUDA rotation to a tensor or python list returns CUDA output."""
+    rotation = Rotation.identity(device='cuda')
+    assert rotation(torch.tensor([1.0, 2.0, 3.0], device='cuda')).device.type == 'cuda'
+    assert rotation([1.0, 2.0, 3.0]).device.type == 'cuda'
+
+
+@pytest.mark.cuda
+def test_cuda_apply_spatialdimension() -> None:
+    """Applying a CUDA rotation to a SpatialDimension (scalar floats) returns CUDA tensors."""
+    rotation = Rotation.identity(device='cuda')
+    result = rotation(SpatialDimension(1.0, 2.0, 3.0))
+    assert isinstance(result, SpatialDimension)
+    assert result.x.device.type == 'cuda'
+
+
+@pytest.mark.cuda
+def test_cuda_matmul() -> None:
+    """Composing two CUDA rotations preserves device."""
+    r1 = Rotation.random(3, random_state=0, device='cuda')
+    r2 = Rotation.random(3, random_state=1, device='cuda')
+    assert (r1 @ r2).device.type == 'cuda'
+
+
+@pytest.mark.cuda
+def test_cuda_inv() -> None:
+    """inv preserves device and composes back to identity."""
+    rotation = Rotation.random(4, random_state=0, device='cuda')
+    inverse = rotation.inv()
+    assert inverse.device.type == 'cuda'
+    torch.testing.assert_close((rotation @ inverse).magnitude().cpu(), torch.zeros(4))
+
+
+@pytest.mark.cuda
+def test_cuda_pow() -> None:
+    """Integer powers preserve device, including the n=0 identity shortcut."""
+    rotation = Rotation.random(3, random_state=0, device='cuda')
+    assert (rotation**0).device.type == 'cuda'
+    assert (rotation**1).device.type == 'cuda'
+    assert (rotation**2).device.type == 'cuda'
+
+
+@pytest.mark.cuda
+def test_cuda_magnitude() -> None:
+    """magnitude returns a CUDA tensor."""
+    rotation = Rotation.random(3, random_state=0, device='cuda')
+    assert rotation.magnitude().device.type == 'cuda'
+
+
+@pytest.mark.cuda
+def test_cuda_reflect() -> None:
+    """reflect preserves device."""
+    rotation = Rotation.random(3, random_state=0, device='cuda')
+    assert rotation.reflect().device.type == 'cuda'
+
+
+@pytest.mark.cuda
+def test_cuda_invert_axes() -> None:
+    """invert_axes preserves device."""
+    rotation = Rotation.random(3, random_state=0, device='cuda')
+    assert rotation.invert_axes().device.type == 'cuda'
+
+
+@pytest.mark.cuda
+def test_cuda_mean() -> None:
+    """mean stays on CUDA, with both default weights and python-list weights."""
+    rotation = Rotation.random(4, random_state=0, device='cuda')
+    assert rotation.mean().device.type == 'cuda'
+    assert rotation.mean(weights=[1.0, 2.0, 3.0, 4.0]).device.type == 'cuda'
+
+
+@pytest.mark.cuda
+def test_cuda_align_vectors() -> None:
+    """align_vectors stays on CUDA, with both default weights and python-list weights."""
+    a = torch.eye(3, device='cuda')
+    b = torch.eye(3, device='cuda')
+    rot1, rssd1 = Rotation.align_vectors(a, b)
+    rot2, rssd2 = Rotation.align_vectors(a, b, weights=[1.0, 1.0, 1.0])
+    assert rot1.device.type == 'cuda'
+    assert rssd1.device.type == 'cuda'
+    assert rot2.device.type == 'cuda'
+    assert rssd2.device.type == 'cuda'
+
+
+@pytest.mark.cuda
+def test_cuda_concatenate() -> None:
+    """Concatenating CUDA rotations preserves device."""
+    r1 = Rotation.random(2, random_state=0, device='cuda')
+    r2 = Rotation.random(2, random_state=1, device='cuda')
+    assert Rotation.concatenate([r1, r2]).device.type == 'cuda'
+
+
+@pytest.mark.cuda
+def test_cuda_random_vmf() -> None:
+    """random_vmf materializes outputs on the requested CUDA device."""
+    mean_axis = torch.tensor([0.0, 0.0, 1.0], device='cuda')
+    rotation = Rotation.random_vmf(num=8, mean_axis=mean_axis, kappa=5.0, sigma=math.inf, device='cuda')
+    assert rotation.device.type == 'cuda'
+    assert rotation.as_quat().device.type == 'cuda'

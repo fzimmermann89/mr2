@@ -54,10 +54,10 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from einops import rearrange
 from einops._backends import AbstractBackend
-from scipy._lib._util import check_random_state
 from typing_extensions import Self, Unpack, overload
 
 from mr2.data.SpatialDimension import SpatialDimension
+from mr2.utils import RandomGenerator
 from mr2.utils.indexing import Indexer
 from mr2.utils.reduce_repeat import reduce_repeat
 from mr2.utils.reshape import broadcasted_rearrange, normalize_indices
@@ -694,8 +694,8 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
 
         """
         rotvec_ = torch.as_tensor(rotvec)
-        reflection_ = torch.as_tensor(reflection)
-        inversion_ = torch.as_tensor(inversion)
+        reflection_ = torch.as_tensor(reflection, device=rotvec_.device)
+        inversion_ = torch.as_tensor(inversion, device=rotvec_.device)
         if rotvec_.is_complex():
             raise ValueError('rotvec should be real numbers')
         if not rotvec_.is_floating_point():
@@ -716,7 +716,7 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
             inversion_ = reflection_ ^ inversion_
             scales = torch.cos(0.5 * angles) / angles
             reflected_quaternions = torch.cat((scales * rotvec_, -torch.sin(angles / 2)), -1)
-            quaternions = torch.where(reflection_, reflected_quaternions, quaternions)
+            quaternions = torch.where(reflection_.unsqueeze(-1), reflected_quaternions, quaternions)
 
         return cls(quaternions, normalize=False, copy=False, inversion=inversion_, reflection=False)
 
@@ -1095,7 +1095,7 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
 
         seq = seq.lower()
         if improper == 'reflection' or improper == 'inversion':
-            quat, is_improper = self.as_quat(improper=improper)
+            quat, is_improper = self.as_quat(canonical=True, improper=improper)
         else:
             quat, is_improper = self.as_quat(improper=improper), None
 
@@ -1259,9 +1259,11 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
 
         if input_is_spatialdimension := isinstance(vectors, SpatialDimension):
             # sort the axis by AXIS_ORDER
-            vectors_tensor = torch.stack([torch.as_tensor(getattr(vectors, axis)) for axis in AXIS_ORDER], -1)
+            vectors_tensor = torch.stack(
+                [torch.as_tensor(getattr(vectors, axis), device=matrix.device) for axis in AXIS_ORDER], -1
+            )
         else:
-            vectors_tensor = torch.as_tensor(vectors)
+            vectors_tensor = torch.as_tensor(vectors, device=matrix.device)
         if vectors_tensor.shape[-1] != 3:
             raise ValueError(f'Expected input of shape (..., 3), got {vectors_tensor.shape}.')
         if vectors_tensor.is_complex():
@@ -1296,8 +1298,10 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
     def random(
         cls,
         num: int | Sequence[int] | None = None,
-        random_state: int | np.random.RandomState | np.random.Generator | None = None,
+        random_state: int | RandomGenerator | None = None,
         improper: bool | Literal['random'] = False,
+        *,
+        device: torch.device | str | None = None,
     ):
         """Generate uniformly distributed rotations.
 
@@ -1307,15 +1311,16 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
             Number of random rotations to generate. If `None`, then a
             single rotation is generated.
         random_state
-            If `random_state` is `None`, the `~numpy.random.RandomState`
-            singleton is used.
-            If `random_state` is an int, a new `RandomState` instance is used,
-            seeded with `random_state`.
-            If `random_state` is already a  `Generator` or `RandomState` instance
-            then that instance is used.
+            If `random_state` is `None`, a fresh internal random generator is used.
+            If `random_state` is an int, a new `RandomGenerator` instance is created
+            with that seed.
+            If `random_state` is already a `RandomGenerator` instance then that
+            instance is used directly, and repeated calls advance its state.
         improper
             if `True`, only improper rotations are generated. If False, only proper rotations are generated.
             if "random", then a random mix of proper and improper rotations are generated.
+        device
+            Device on which to materialize the generated rotation. If `None`, the default device is used.
 
         Returns
         -------
@@ -1323,18 +1328,20 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
             Contains a single rotation if `num` is `None`. Otherwise contains a
             stack of `num` rotations.
         """
-        generator: np.random.RandomState = check_random_state(random_state)
-
-        if num is None:
-            random_sample = torch.as_tensor(generator.normal(size=4), dtype=torch.float32)
-        elif isinstance(num, int):
-            random_sample = torch.as_tensor(generator.normal(size=(num, 4)), dtype=torch.float32)
+        if random_state is None:
+            rng = RandomGenerator(device=device)
+        elif isinstance(random_state, RandomGenerator):
+            rng = random_state
         else:
-            random_sample = torch.as_tensor(generator.normal(size=(*num, 4)), dtype=torch.float32)
+            rng = RandomGenerator(seed=random_state, device=device)
+        if num is None:
+            random_sample = rng.randn_tensor((4,), torch.float32, device=device)
+        elif isinstance(num, int):
+            random_sample = rng.randn_tensor((num, 4), torch.float32, device=device)
+        else:
+            random_sample = rng.randn_tensor((*num, 4), torch.float32, device=device)
         if improper == 'random':
-            inversion: torch.Tensor | bool = torch.as_tensor(
-                generator.choice([True, False], size=random_sample.shape[:-1]), dtype=torch.bool
-            )
+            inversion: torch.Tensor | bool = rng.bool_tensor(random_sample.shape[:-1], device=device)
         elif isinstance(improper, bool):
             inversion = improper
         else:
@@ -1348,6 +1355,9 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         mean_axis: torch.Tensor | None = None,
         kappa: float = 0.0,
         sigma: float = math.inf,
+        random_state: int | RandomGenerator | None = None,
+        *,
+        device: torch.device | str | None = None,
     ):
         """
         Randomly sample rotations from a von Mises-Fisher distribution.
@@ -1368,6 +1378,14 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
             Use `math.inf` if a uniform distribution is desired.
         num
             number of samples to generate. If `None`, a single rotation is generated.
+        random_state
+            If `random_state` is `None`, a fresh internal random generator is used.
+            If `random_state` is an int, a new `RandomGenerator` instance is created
+            with that seed.
+            If `random_state` is already a `RandomGenerator` instance then that
+            instance is used directly, and repeated calls advance its state.
+        device
+            Device on which to materialize the generated rotations. If `None`, the device of `mean_axis` is used
 
         Returns
         -------
@@ -1376,12 +1394,18 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
 
         """
         n = 1 if num is None else num
-        mu = torch.tensor((1.0, 0.0, 0.0)) if mean_axis is None else torch.as_tensor(mean_axis)
-        rot_axes = sample_vmf(mu=mu, kappa=kappa, n_samples=n)
-        if sigma == math.inf:
-            rot_angle = torch.rand(n, *mu.shape[:-1], dtype=mu.dtype, device=mu.device) * 2 * math.pi
+        mu = torch.as_tensor((1.0, 0.0, 0.0) if mean_axis is None else mean_axis, device=device)
+        if random_state is None:
+            rng = RandomGenerator(device=mu.device)
+        elif isinstance(random_state, RandomGenerator):
+            rng = random_state
         else:
-            rot_angle = (torch.randn(n, *mu.shape[:-1], dtype=mu.dtype, device=mu.device) * sigma) % (2 * math.pi)
+            rng = RandomGenerator(seed=random_state, device=mu.device)
+        rot_axes = sample_vmf(mu=mu, kappa=kappa, n_samples=n, rng=rng)
+        if sigma == math.inf:
+            rot_angle = rng.rand_tensor((n, *mu.shape[:-1]), mu.dtype, device=mu.device) * 2 * math.pi
+        else:
+            rot_angle = (rng.randn_tensor((n, *mu.shape[:-1]), mu.dtype, device=mu.device) * sigma) % (2 * math.pi)
         return cls.from_rotvec(rot_axes * rot_angle.unsqueeze(-1))
 
     def __mul__(self, other: Rotation) -> Self:
@@ -1488,14 +1512,15 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
 
         # Exact short-cuts
         if n == 0:
-            return Rotation.identity(None if self._single else self._quaternions.shape[:-1])
+            shape = None if self._single else self._quaternions.shape[:-1]
+            return self.__class__.identity(shape, device=self.device).to(dtype=self._quaternions.dtype)
         elif n == -1:
             return self.inv()
         elif n == 1:
             if self._single:
                 return self.__class__(self._quaternions[0], inversion=self._is_improper[0], copy=True)
             else:
-                return self.__class__(self._quaternions, inversion=self._is_improper[0], copy=True)
+                return self.__class__(self._quaternions, inversion=self._is_improper, copy=True)
         elif math.isclose(round(n), n) and round(n) % 2:
             improper: torch.Tensor | bool = self._is_improper
         else:
@@ -1514,7 +1539,7 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         inverse
             Object containing inverse of the rotations in the current instance.
         """
-        quaternions = self._quaternions * torch.tensor([-1, -1, -1, 1])
+        quaternions = self._quaternions * self._quaternions.new_tensor([-1, -1, -1, 1])
         improper = self._is_improper.clone()
 
         if self._single:
@@ -1606,7 +1631,7 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         """
         if degrees:
             atol = np.deg2rad(atol)
-        angles = (other @ self.inv()).magnitude()
+        angles = (self @ other.inv()).magnitude()
         return (angles < atol) & (self._is_improper == other._is_improper)
 
     def __eq__(self, other: object) -> bool:
@@ -1659,8 +1684,9 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
             raise TypeError('Single rotation is not subscriptable.')
 
         indexer_quat = (*indexer, slice(None)) if isinstance(indexer, tuple) else (indexer, slice(None))
-        quaternions = self._quaternions[indexer_quat]
-        inversion = self._is_improper[indexer]
+        batch_shape = torch.broadcast_shapes(self._quaternions.shape[:-1], self._is_improper.shape)
+        quaternions = self._quaternions.expand(*batch_shape, 4)[indexer_quat]
+        inversion = self._is_improper.expand(batch_shape)[indexer]
         return type(self)(quaternions, normalize=False, inversion=inversion)
 
     def __iter__(self) -> Iterator[Self]:
@@ -1796,7 +1822,12 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         self._is_improper[indexer] = inversion
 
     @classmethod
-    def identity(cls, shape: int | None | tuple[int, ...] = None) -> Self:
+    def identity(
+        cls,
+        shape: int | None | tuple[int, ...] = None,
+        *,
+        device: torch.device | str | None = None,
+    ) -> Self:
         """Get identity rotation(s).
 
         Composition with the identity rotation has no effect.
@@ -1806,6 +1837,8 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         shape
             Number of identity rotations to generate. If `None`, then a
             single rotation is generated.
+        device
+            Device on which to materialize the identity rotation. If `None`, the default device is used.
 
         Returns
         -------
@@ -1814,11 +1847,11 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         """
         match shape:
             case None:
-                q = torch.zeros(4)
+                q = torch.zeros(4, device=device)
             case int():
-                q = torch.zeros(shape, 4)
+                q = torch.zeros(shape, 4, device=device)
             case tuple():
-                q = torch.zeros(*shape, 4)
+                q = torch.zeros(*shape, 4, device=device)
         q[..., -1] = 1
         return cls(q, normalize=False)
 
@@ -1832,7 +1865,7 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         *,
         return_sensitivity: Literal[False] = False,
         allow_improper: bool = ...,
-    ) -> tuple[Rotation, float]: ...
+    ) -> tuple[Rotation, torch.Tensor]: ...
 
     @overload
     @classmethod
@@ -1844,7 +1877,7 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         *,
         return_sensitivity: Literal[True],
         allow_improper: bool = ...,
-    ) -> tuple[Rotation, float, torch.Tensor]: ...
+    ) -> tuple[Rotation, torch.Tensor, torch.Tensor]: ...
 
     @classmethod
     def align_vectors(
@@ -1855,7 +1888,7 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         *,
         return_sensitivity: bool = False,
         allow_improper: bool = False,
-    ) -> tuple[Rotation, float] | tuple[Rotation, float, torch.Tensor]:
+    ) -> tuple[Rotation, torch.Tensor] | tuple[Rotation, torch.Tensor, torch.Tensor]:
         R"""Estimate a rotation to optimally align two sets of vectors.
 
         Find a rotation between frames A and B which best aligns a set of
@@ -1937,7 +1970,7 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         if weights is None:
             weights_tensor = a_tensor.new_ones(a_tensor.shape[:-1], dtype=dtype)
         else:
-            weights_tensor = torch.atleast_1d(torch.as_tensor(weights, dtype=dtype))
+            weights_tensor = torch.atleast_1d(torch.as_tensor(weights, dtype=dtype, device=a_tensor.device))
 
         if a_tensor.ndim > 2 or b_tensor.ndim > 2 or weights_tensor.ndim > 1:
             raise NotImplementedError('Batched inputs are not supported.')
@@ -2035,9 +2068,9 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
             return self.__class__(self._quaternions[0], inversion=self._is_improper, normalize=False)
 
         if weights is None:
-            weights = torch.ones(*self.shape)
+            weights = self._quaternions.new_ones(self.shape)
         else:
-            weights = torch.as_tensor(weights)
+            weights = torch.as_tensor(weights, dtype=self._quaternions.dtype, device=self.device)
             weights = weights.expand(self.shape)
 
             if torch.any(weights < 0):
@@ -2090,8 +2123,11 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
                 newshape.append(s)
             else:
                 newshape.extend(s)
+        batch_shape = torch.broadcast_shapes(self._quaternions.shape[:-1], self._is_improper.shape)
         return self.__class__(
-            self._quaternions.reshape(*newshape, 4), inversion=self._is_improper.reshape(newshape), copy=True
+            self._quaternions.expand(*batch_shape, 4).reshape(*newshape, 4),
+            inversion=self._is_improper.expand(batch_shape).reshape(*newshape),
+            copy=True,
         )
 
     def permute(self, dims: Sequence[int]) -> Self:
@@ -2107,9 +2143,12 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         permuted
             The permuted Rotation object.
         """
-        inversion = self._is_improper.permute(*dims)
+        batch_shape = torch.broadcast_shapes(self._quaternions.shape[:-1], self._is_improper.shape)
+        inversion = self._is_improper.expand(batch_shape).permute(*dims)
         # negative dimensions should ignore the internal dimension
-        quaternions = self._quaternions.permute(*[d - 1 if d < 0 else d for d in dims], -1)
+        batch_ndim = len(batch_shape)
+        quaternion_dims = [d if d >= 0 else batch_ndim + d for d in dims]
+        quaternions = self._quaternions.expand(*batch_shape, 4).permute(*quaternion_dims, -1)
         return self.__class__(quaternions, inversion=inversion, copy=True)
 
     def expand(self, *shape: int | Sequence[int]) -> Self:
