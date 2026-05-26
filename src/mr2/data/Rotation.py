@@ -2110,7 +2110,7 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
                 newshape.extend(s)
         return self.__class__(
             self._quaternions.reshape(*newshape, 4),
-            inversion=self._is_improper.expand(self.shape).reshape(newshape),
+            inversion=self._is_improper.expand(self._quaternions.shape[:-1]).reshape(*newshape),
             copy=True,
         )
 
