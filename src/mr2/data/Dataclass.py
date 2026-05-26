@@ -1043,8 +1043,14 @@ class Dataclass:
             The concatenated dataclass.
         """
         objects = (self, *others)
-        target_shapes = broadcast_shapes_except([obj.shape for obj in objects], dim)
-        dim = normalize_index(len(target_shapes[0]), dim)
+        shapes = [obj.shape for obj in objects]
+        target_shapes: list[tuple[int, ...]]
+        if all(shape == () for shape in shapes) and dim in (0, -1):
+            target_shapes = [(1,) for _ in objects]
+            dim = 0
+        else:
+            target_shapes = broadcast_shapes_except(shapes, dim)
+            dim = normalize_index(len(target_shapes[0]), dim)
 
         new = shallowcopy(self)
         for field in dataclasses.fields(new):
