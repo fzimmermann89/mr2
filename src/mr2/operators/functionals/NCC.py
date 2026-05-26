@@ -6,7 +6,108 @@ import torch
 
 from mr2.operators.Operator import Operator
 from mr2.utils.reshape import unsqueeze_at
-from mr2.utils.sliding_window import sliding_window
+
+
+def _global_ncc3d(
+    target: torch.Tensor,
+    prediction: torch.Tensor,
+    *,
+    weight: torch.Tensor | None = None,
+    reduction: Literal['full', 'volume', 'none'] = 'full',
+    eps: float = 1e-12,
+) -> torch.Tensor:
+    """Global, unwindowed NCC between two tensors."""
+    dims = (-3, -2, -1)
+    target_window = unsqueeze_at(target, dim=-len(dims), n=len(dims))
+    prediction_window = unsqueeze_at(prediction, dim=-len(dims), n=len(dims))
+
+    if weight is None:
+        weight_window = target_window.new_ones(()).expand_as(target_window)
+    else:
+        weight_window = unsqueeze_at(weight.to(dtype=torch.float32), dim=-len(dims), n=len(dims))
+
+    w_sum = weight_window.sum(dim=dims, keepdim=True).clamp_min(eps)
+    mean_tgt = (weight_window * target_window).sum(dim=dims, keepdim=True) / w_sum
+    mean_pred = (weight_window * prediction_window).sum(dim=dims, keepdim=True) / w_sum
+
+    tgt_centered = target_window - mean_tgt
+    pred_centered = prediction_window - mean_pred
+
+    w_sum_squeezed = w_sum.squeeze(dims)
+    cov = (weight_window * tgt_centered * pred_centered).sum(dim=dims) / w_sum_squeezed
+    var_tgt = (weight_window * tgt_centered.square()).sum(dim=dims) / w_sum_squeezed
+    var_pred = (weight_window * pred_centered.square()).sum(dim=dims) / w_sum_squeezed
+    ncc_map = cov / torch.sqrt((var_tgt * var_pred).clamp_min(eps**2))
+
+    if reduction == 'none':
+        return ncc_map.mean(dim=dims)
+
+    window_weight = weight_window.mean(dim=dims)
+    window_weight = window_weight / window_weight.sum(dim=dims, keepdim=True).clamp_min(eps)
+    ncc_volume = (ncc_map * window_weight).sum(dim=dims)
+    if reduction == 'full':
+        return ncc_volume.mean()
+    return ncc_volume
+
+
+def _windowed_ncc3d(
+    target: torch.Tensor,
+    prediction: torch.Tensor,
+    *,
+    weight: torch.Tensor | None = None,
+    window_size: int,
+    reduction: Literal['full', 'volume', 'none'] = 'full',
+    eps: float = 1e-12,
+) -> torch.Tensor:
+    """Local, windowed NCC between two tensors."""
+    dims = (-3, -2, -1)
+    shape = tuple(window_size if s > 1 else 1 for s in target.shape[-3:])
+    window_volume = float(shape[0] * shape[1] * shape[2])
+    leading_shape = target.shape[:-3]
+
+    def local_sum(tensor: torch.Tensor) -> torch.Tensor:
+        tensor = tensor.reshape(-1, 1, *tensor.shape[-3:])
+        summed = window_volume * torch.nn.functional.avg_pool3d(tensor, kernel_size=shape, stride=1)
+        return summed.reshape(*leading_shape, *summed.shape[-3:])
+
+    if weight is None:
+        weight_local = local_sum(target.new_ones(target.shape))
+        valid = torch.ones_like(weight_local, dtype=torch.bool)
+    else:
+        weight_float = weight.to(dtype=torch.float32)
+        weight_local = local_sum(weight_float)
+        valid = local_sum((weight_float > 0).to(dtype=weight_float.dtype)) == window_volume
+        weight_local = weight_local * valid
+
+    target_local = local_sum(target)
+    prediction_local = local_sum(prediction)
+    target2_local = local_sum(target.square())
+    prediction2_local = local_sum(prediction.square())
+    cross_local = local_sum(target * prediction)
+    if weight is not None:
+        target_local = local_sum(weight_float * target) * valid
+        prediction_local = local_sum(weight_float * prediction) * valid
+        target2_local = local_sum(weight_float * target.square()) * valid
+        prediction2_local = local_sum(weight_float * prediction.square()) * valid
+        cross_local = local_sum(weight_float * target * prediction) * valid
+
+    w_sum = weight_local.clamp_min(eps)
+    mean_tgt = target_local / w_sum
+    mean_pred = prediction_local / w_sum
+    cov = cross_local / w_sum - mean_tgt * mean_pred
+    var_tgt = target2_local / w_sum - mean_tgt.square()
+    var_pred = prediction2_local / w_sum - mean_pred.square()
+    ncc_map = cov / torch.sqrt((var_tgt * var_pred).clamp_min(eps**2))
+
+    if reduction == 'none':
+        return ncc_map
+
+    window_weight = weight_local / window_volume
+    window_weight = window_weight / window_weight.sum(dim=dims, keepdim=True).clamp_min(eps)
+    ncc_volume = (ncc_map * window_weight).sum(dim=dims)
+    if reduction == 'full':
+        return ncc_volume.mean()
+    return ncc_volume
 
 
 def ncc3d(
@@ -72,51 +173,22 @@ def ncc3d(
     else:
         target, prediction = torch.broadcast_tensors(target, prediction)
 
-    dims = (-3, -2, -1)
-
-    def window(tensor: torch.Tensor) -> torch.Tensor:
-        if window_size is None:
-            return unsqueeze_at(tensor, dim=-len(dims), n=len(dims))
-        else:
-            shape = tuple(window_size if s > 1 else 1 for s in target.shape[-3:])
-            w = sliding_window(tensor, window_shape=shape, dim=dims)
-            return w.movedim(tuple(range(len(dims))), tuple(range(-2 * len(dims), -len(dims))))
-
-    target_window = window(target)
-    prediction_window = window(prediction)
-
-    if weight is None:
-        weight_window = target_window.new_ones(()).expand_as(target_window)
-    else:
-        weight_window = window(weight.to(dtype=torch.float32))
-        if window_size is not None:
-            weight_window = weight_window * (weight_window > 0).all(dim=dims, keepdim=True)
-
-    w_sum = weight_window.sum(dim=dims, keepdim=True).clamp_min(eps)
-    mean_tgt = (weight_window * target_window).sum(dim=dims, keepdim=True) / w_sum
-    mean_pred = (weight_window * prediction_window).sum(dim=dims, keepdim=True) / w_sum
-
-    tgt_centered = target_window - mean_tgt
-    pred_centered = prediction_window - mean_pred
-
-    w_sum_squeezed = w_sum.squeeze(dims)
-    cov = (weight_window * tgt_centered * pred_centered).sum(dim=dims) / w_sum_squeezed
-    var_tgt = (weight_window * tgt_centered.square()).sum(dim=dims) / w_sum_squeezed
-    var_pred = (weight_window * pred_centered.square()).sum(dim=dims) / w_sum_squeezed
-
-    ncc_map = cov / torch.sqrt((var_tgt * var_pred).clamp_min(eps))
-
-    if reduction == 'none':
-        if window_size is not None:
-            return ncc_map
-        return ncc_map.mean(dim=dims)
-
-    window_weight = weight_window.mean(dim=dims)
-    window_weight = window_weight / window_weight.sum(dim=dims, keepdim=True).clamp_min(eps)
-    ncc_volume = (ncc_map * window_weight).sum(dim=dims)
-    if reduction == 'full':
-        return ncc_volume.mean()
-    return ncc_volume
+    if window_size is not None:
+        return _windowed_ncc3d(
+            target,
+            prediction,
+            weight=weight,
+            window_size=window_size,
+            reduction=reduction,
+            eps=eps,
+        )
+    return _global_ncc3d(
+        target,
+        prediction,
+        weight=weight,
+        reduction=reduction,
+        eps=eps,
+    )
 
 
 class NCC(Operator[torch.Tensor, tuple[torch.Tensor]]):
