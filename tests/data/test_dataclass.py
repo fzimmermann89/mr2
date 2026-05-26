@@ -440,6 +440,39 @@ def test_dataclass_concatenate_rotation_and_spatial_dimension() -> None:
     assert torch.equal(c.data, expected)
 
 
+def test_dataclass_concatenate_scalar_shape() -> None:
+    """Test concatenation of scalar-shaped tensor and rotation fields."""
+
+    class SampleWithRotationandSpatialDimension(Dataclass):
+        """Test dataclass"""
+
+        data: torch.Tensor
+        orientation: Rotation
+        spatial_dimension: SpatialDimension[int]
+
+    a = SampleWithRotationandSpatialDimension(
+        data=torch.tensor(1.0),
+        orientation=Rotation.identity(),
+        spatial_dimension=SpatialDimension(1, 2, 3),
+    )
+    b = SampleWithRotationandSpatialDimension(
+        data=torch.tensor(2.0),
+        orientation=Rotation.from_euler('z', 1.0),
+        spatial_dimension=SpatialDimension(1, 2, 3),
+    )
+
+    c = a.concatenate(b, dim=0)
+
+    expected_data = torch.cat((a.data.expand(1), b.data.expand(1)), dim=0)
+    expected_orientation = a.orientation.reshape(1).concatenate(b.orientation.reshape(1), dim=0)
+
+    assert c.data.shape == (2,)
+    assert c.orientation.shape == (2,)
+    assert c.spatial_dimension == SpatialDimension(1, 2, 3)
+    assert torch.equal(c.data, expected_data)
+    assert torch.equal(c.orientation.as_quat(), expected_orientation.as_quat())
+
+
 def test_dataclass_equal() -> None:
     """Test __eq__ method of the dataclass."""
     a = A()
