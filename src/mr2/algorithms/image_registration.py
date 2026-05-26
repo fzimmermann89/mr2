@@ -96,8 +96,12 @@ def correlation_registration(
 
     numerator = torch.fft.ifftn((fixed_fft * moving_fft.conj()).sum(dim=1, keepdim=True), dim=spatial_dims).real
 
-    fixed_energy_fft = torch.fft.fftn(fixed_weighted.abs().square().sum(dim=1, keepdim=True), s=padded_shape, dim=spatial_dims)
-    moving_energy_fft = torch.fft.fftn(moving_weighted.abs().square().sum(dim=1, keepdim=True), s=padded_shape, dim=spatial_dims)
+    fixed_energy_fft = torch.fft.fftn(
+        fixed_weighted.abs().square().sum(dim=1, keepdim=True), s=padded_shape, dim=spatial_dims
+    )
+    moving_energy_fft = torch.fft.fftn(
+        moving_weighted.abs().square().sum(dim=1, keepdim=True), s=padded_shape, dim=spatial_dims
+    )
     fixed_energy = torch.fft.ifftn(fixed_energy_fft * mask_fft.conj(), dim=spatial_dims).real
     moving_energy = torch.fft.ifftn(mask_fft * moving_energy_fft.conj(), dim=spatial_dims).real
     correlation = numerator / (fixed_energy.clamp_min(0.0) * moving_energy.clamp_min(0.0)).sqrt().clamp_min(eps)

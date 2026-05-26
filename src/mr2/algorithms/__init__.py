@@ -14,15 +14,15 @@ from mr2.algorithms.varimax import varimax
 
 __all__ = [
     "affine_registration",
+    "correlation_registration",
     "csm",
     "dcf",
     "optimizers",
-    "correlation_registration",
     "prewhiten_kspace",
     "reconstruction",
     "register_images",
     "rovir",
     "spline_registration",
     "total_variation_denoising",
-    "varimax",
+    "varimax"
 ]
