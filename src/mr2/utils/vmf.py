@@ -14,26 +14,16 @@ from mr2.utils.RandomGenerator import RandomGenerator
 
 def sample_vmf(mu: torch.Tensor, kappa: float, n_samples: int, rng: RandomGenerator | None = None) -> torch.Tensor:
     """
-    Generate samples from the von Mises-Fisher distribution.
-
-    The von Mises-Fisher distribution is a circular normal distribution on the unit hypersphere.
-
-    Parameters
-    ----------
-    mu
-        Center of the distribution on the unit hypersphere. Shape: (..., dim)
-    kappa
-        Concentration parameter.
-        For small kappa, the distribution is close to uniform.
-        For large kappa, the distribution is close to a normal distribution with variance 1/kappa.
-    n_samples
-        Number of samples to generate.
-    rng
-        Random generator used for sampling. If `None`, a fresh generator with a random seed is used.
-
-    Returns
-    -------
-        Samples from the von Mises-Fisher distribution. Shape: (num_samples, ..., dim)
+    Draws samples from the von Mises–Fisher distribution on the unit hypersphere centered at `mu`.
+    
+    Parameters:
+        mu (torch.Tensor): Mean direction on the unit hypersphere. Shape: (..., dim) or (dim,).
+        kappa (float): Concentration parameter; larger values concentrate samples closer to `mu`.
+        n_samples (int): Number of samples to draw per leading entry of `mu`.
+        rng (RandomGenerator | None): Optional random generator. If `None`, a new generator is created on `mu`'s device.
+    
+    Returns:
+        torch.Tensor: Unit-length samples with shape (n_samples, ..., dim), where `...` matches `mu`'s leading dimensions; for a 1-D `mu` the shape is (n_samples, dim).
     """
     mu_ = mu.unsqueeze(0) if mu.dim() == 1 else mu
     total_samples = n_samples * mu_[..., 0].numel()

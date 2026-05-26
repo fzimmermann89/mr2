@@ -79,24 +79,18 @@ class RandomGenerator:
         dtype: torch.dtype = torch.int64,
         device: torch.device | str | None = None,
     ) -> torch.Tensor:
-        """Generate uniform random integers in [low, high).
-
-        Parameters
-        ----------
-        size
-            Shape of the output tensor.
-        low
-            Lower bound (inclusive).
-        high
-            Upper bound (exclusive).
-        dtype
-            Data type of the output tensor.
-        device
-            Device of the output tensor. If `None`, the tensor is created on the default device.
-
-        Returns
-        -------
-            Tensor of random integers.
+        """
+        Generate a tensor of uniformly distributed random integers in [low, high).
+        
+        Parameters:
+            size (int or Sequence[int]): Shape of the output tensor.
+            low (int): Inclusive lower bound of the sampled integers.
+            high (int): Exclusive upper bound of the sampled integers.
+            dtype (torch.dtype): Desired integer dtype of the result.
+            device (torch.device or str or None): If provided, the result is moved to this device; otherwise the tensor is produced on the generator's device.
+        
+        Returns:
+            torch.Tensor: Tensor of shape `size` containing integers in the interval [low, high) with the requested `dtype`.
         """
         check_bounds(low, high, dtype)
         size_ = (size,) if isinstance(size, int) else size
@@ -111,24 +105,21 @@ class RandomGenerator:
         dtype: torch.dtype = torch.float32,
         device: torch.device | str | None = None,
     ) -> torch.Tensor:
-        """Generate uniform random floats in [low, high).
-
-        Parameters
-        ----------
-        size
-            Shape of the output tensor.
-        low
-            Lower bound.
-        high
-            Upper bound.
-        dtype
-            Data type of the output tensor.
-        device
-            Device of the output tensor. If `None`, the tensor is created on the default device.
-
-        Returns
-        -------
-            Tensor of random floats.
+        """
+        Generate a tensor of uniform random values in [low, high).
+        
+        Parameters:
+            size (int or Sequence[int]): Shape of the output tensor.
+            low (float or torch.Tensor): Lower bound (inclusive) of the sampling interval.
+            high (float or torch.Tensor): Upper bound (exclusive) of the sampling interval.
+            dtype (torch.dtype): Data type of the output tensor.
+            device (torch.device or str or None): Device for the returned tensor. If `None`, the tensor is created on the internal generator's device; otherwise the result is moved to `device`.
+        
+        Returns:
+            torch.Tensor: Tensor of shape `size` and dtype `dtype` containing samples drawn uniformly from [low, high).
+        
+        Raises:
+            ValueError: If bounds are invalid (e.g., low > high or bounds outside the representable range for `dtype`).
         """
         check_bounds(low, high, dtype)
         tensor = (
@@ -169,22 +160,17 @@ class RandomGenerator:
         high: float = 1.0,
         device: torch.device | str | None = None,
     ) -> torch.Tensor:
-        """Generate a float64 tensor with uniform distribution in [low, high).
-
-        Parameters
-        ----------
-        size
-            Shape of the output tensor.
-        low
-            Lower bound.
-        high
-            Upper bound.
-        device
-            Device of the output tensor. If `None`, the tensor is created on the generator device.
-
-        Returns
-        -------
-            Tensor of float64 random numbers.
+        """
+        Generate a tensor of uniformly distributed float64 values in [low, high).
+        
+        Parameters:
+            size (Sequence[int] | int): Shape of the output tensor.
+            low (float): Lower bound (inclusive).
+            high (float): Upper bound (exclusive).
+            device (torch.device | str | None): Device for the output tensor; if `None`, the generator's device is used.
+        
+        Returns:
+            torch.Tensor: Tensor of dtype torch.float64 and shape `size` with values sampled uniformly from [low, high).
         """
         return self._rand(size, low, high, torch.float64, device=device)
 
@@ -195,24 +181,24 @@ class RandomGenerator:
         high: float = 1.0,
         device: torch.device | str | None = None,
     ) -> torch.Tensor:
-        """Generate a complex64 tensor with uniform amplitude in [low, high).
-
-        The phase is uniformly distributed in [-π, π].
-
-        Parameters
-        ----------
-        size
-            Shape of the output tensor.
-        low
-            Lower bound for amplitude (must be non-negative).
-        high
-            Upper bound for amplitude.
-        device
-            Device of the output tensor. If `None`, the tensor is created on the generator device.
-
-        Returns
-        -------
-            Tensor of complex64 random numbers.
+        """
+        Generate a complex64 tensor whose amplitudes are uniformly sampled in [low, high) and whose phases are uniformly sampled in [-π, π].
+        
+        Parameters:
+            size:
+                Shape of the output tensor.
+            low:
+                Lower bound for amplitude; must be greater than or equal to 0.
+            high:
+                Upper bound for amplitude.
+            device:
+                Device of the output tensor. If None, the tensor is created on the generator's device.
+        
+        Returns:
+            torch.Tensor: Complex64 tensor of shape `size` with sampled complex values.
+        
+        Raises:
+            ValueError: If `low < 0`.
         """
         if low < 0:
             raise ValueError('low/high refer to the amplitude and must be positive')
@@ -285,22 +271,17 @@ class RandomGenerator:
         high: int = 1 << 15,
         device: torch.device | str | None = None,
     ) -> torch.Tensor:
-        """Generate an int16 tensor with uniform distribution in [low, high).
-
-        Parameters
-        ----------
-        size
-            Shape of the output tensor.
-        low
-            Lower bound (inclusive).
-        high
-            Upper bound (exclusive).
-        device
-            Device of the output tensor. If `None`, the tensor is created on the generator device.
-
-        Returns
-        -------
-            Tensor of int16 random numbers.
+        """
+        Generate an int16 tensor of uniformly distributed random values in [low, high).
+        
+        Parameters:
+            size (Sequence[int] | int): Shape of the output tensor.
+            low (int): Lower bound (inclusive).
+            high (int): Upper bound (exclusive).
+            device (torch.device | str | None): Device for the output tensor; if `None`, the tensor is produced on the generator's device.
+        
+        Returns:
+            torch.Tensor: Tensor of dtype `torch.int16` with the requested shape containing random integers in [low, high).
         """
         return self._randint(size, low, high, dtype=torch.int16, device=device)
 
@@ -337,23 +318,21 @@ class RandomGenerator:
         high: int = (1 << 63) - 1,
         device: torch.device | str | None = None,
     ) -> torch.Tensor:
-        """Generate an int64 tensor with uniform distribution in [low, high).
-
-        Parameters
-        ----------
-        size
-            Shape of the output tensor.
-        low
-            Lower bound (inclusive).
-        high
-            Upper bound (exclusive).
-            Maximum value is (1 << 63) - 1 due to https://github.com/pytorch/pytorch/issues/81446
-        device
-            Device of the output tensor. If `None`, the tensor is created on the generator device.
-
-        Returns
-        -------
-            Tensor of int64 random numbers.
+        """
+        Generate an int64 tensor whose entries are uniformly sampled from [low, high).
+        
+        Parameters:
+            size:
+                Shape of the output tensor (an int or a sequence of ints).
+            low:
+                Lower bound (inclusive).
+            high:
+                Upper bound (exclusive). Maximum allowed value is (1 << 63) - 1 due to PyTorch int64 limits.
+            device:
+                Device for the output tensor. If None, the tensor is created on the generator's device.
+        
+        Returns:
+            Tensor of dtype `torch.int64` with the requested shape, containing values in [low, high).
         """
         return self._randint(size, low, high, dtype=torch.int64, device=device)
 
@@ -364,59 +343,52 @@ class RandomGenerator:
         high: int = 1 << 8,
         device: torch.device | str | None = None,
     ) -> torch.Tensor:
-        """Generate a uint8 tensor with uniform distribution in [low, high).
-
-        Parameters
-        ----------
-        size
-            Shape of the output tensor.
-        low
-            Lower bound (inclusive).
-        high
-            Upper bound (exclusive).
-        device
-            Device of the output tensor. If `None`, the tensor is created on the generator device.
-
-        Returns
-        -------
-            Tensor of uint8 random numbers.
+        """
+        Generates a tensor of random `torch.uint8` values sampled uniformly from [low, high).
+        
+        Parameters:
+            size (Sequence[int] | int): Shape of the output tensor.
+            low (int): Inclusive lower bound of the sampled values.
+            high (int): Exclusive upper bound of the sampled values.
+            device (torch.device | str | None): Device for the output tensor; if `None`, uses the generator's device.
+        
+        Returns:
+            torch.Tensor: Tensor with dtype `torch.uint8` containing values in the interval [low, high).
         """
         return self._randint(size, low, high, dtype=torch.uint8, device=device)
 
     def bool_tensor(self, size: Sequence[int] | int = (1,), device: torch.device | str | None = None) -> torch.Tensor:
-        """Generate boolean tensor of given size.
-
-        Parameters
-        ----------
-        size
-            Shape of the output tensor.
-        device
-            Device of the output tensor. If `None`, the tensor is created on the generator device.
+        """
+        Generate a boolean tensor with uniformly random True/False values.
+        
+        Parameters:
+            size (Sequence[int] | int): Shape of the output tensor. Defaults to (1,).
+            device (torch.device | str | None): Device for the output tensor. If None, the tensor is created on the generator's device.
+        
+        Returns:
+            torch.Tensor: Tensor of dtype `torch.bool` containing randomly sampled `True` or `False` values.
         """
         return self.uint8_tensor(size, low=0, high=2, device=device).bool()
 
     def bool(self) -> bool:
-        """Generate a random boolean value.
-
-        Returns
-        -------
-            Random boolean.
+        """
+        Produce a random boolean value.
+        
+        Returns:
+            `true` if the sampled value equals 1, `false` otherwise.
         """
         return self.uint8(0, 2) == 1
 
     def float32(self, low: float = 0.0, high: float = 1.0) -> float:
-        """Generate a float32 scalar with uniform distribution in [low, high).
-
-        Parameters
-        ----------
-        low
-            Lower bound.
-        high
-            Upper bound.
-
-        Returns
-        -------
-            Random float32 number.
+        """
+        Generate a uniformly distributed scalar in [low, high).
+        
+        Parameters:
+            low (float): Lower bound (inclusive).
+            high (float): Upper bound (exclusive).
+        
+        Returns:
+            float: A random `float32` value sampled uniformly from [low, high).
         """
         return self.float32_tensor((1,), low, high).item()
 
@@ -845,34 +817,28 @@ class RandomGenerator:
         return ''.join([chr(self.uint8(32, 127)) for _ in range(size)])
 
     def rand_like(self, x: torch.Tensor, low: float = 0.0, high: float = 1.0) -> torch.Tensor:
-        """Generate a tensor with the same shape, device, and dtype as `x`, filled with uniform random numbers.
-
-        Parameters
-        ----------
-        x
-            Reference tensor.
-        low
-            Lower bound.
-        high
-            Upper bound.
-
-        Returns
-        -------
-            Random tensor with the same shape and dtype as `x`.
+        """
+        Create a tensor matching x's shape and device filled with uniform random values in [low, high).
+        
+        Parameters:
+            x (torch.Tensor): Reference tensor whose shape, dtype, and device are used.
+            low (float): Lower bound (inclusive) of the uniform interval.
+            high (float): Upper bound (exclusive) of the uniform interval.
+        
+        Returns:
+            torch.Tensor: A tensor with the same shape, dtype, and device as `x` containing values sampled uniformly from [low, high).
         """
         return self.rand_tensor(x.shape, x.dtype, low=low, high=high, device=x.device)
 
     def randn_like(self, x: torch.Tensor) -> torch.Tensor:
-        """Generate a tensor with the same shape, device, and dtype as `x`, filled with standard normal random numbers.
-
-        Parameters
-        ----------
-        x
-            Reference tensor.
-
-        Returns
-        -------
-            Random tensor with the same shape and dtype as `x`.
+        """
+        Create a tensor matching `x`'s shape, dtype, and device populated with standard normal (mean 0, std 1) samples.
+        
+        Parameters:
+            x (torch.Tensor): Reference tensor whose shape, dtype, and device are used.
+        
+        Returns:
+            torch.Tensor: Tensor with the same shape, dtype, and device as `x` containing samples from a standard normal distribution.
         """
         return self.randn_tensor(x.shape, x.dtype, device=x.device)
 
@@ -884,24 +850,22 @@ class RandomGenerator:
         high: int | float = 1,
         device: torch.device | str | None = None,
     ) -> torch.Tensor:
-        """Generate a tensor of given shape and dtype with uniform random numbers in [low, high).
-
-        Parameters
-        ----------
-        size
-            Shape of the output tensor.
-        dtype
-            Data type of the output tensor.
-        low
-            Lower bound.
-        high
-            Upper bound.
-        device
-            Device of the output tensor. If `None`, the tensor is created on the default device.
-
-        Returns
-        -------
-            Random tensor.
+        """
+        Generate a tensor of the given shape and dtype with values sampled from a uniform distribution over the specified range.
+        
+        Parameters:
+            size (Sequence[int]): Shape of the output tensor.
+            dtype (torch.dtype): Desired data type of the output tensor.
+            low (float | int): Lower bound of the sampling interval (inclusive for floats/complex amplitude).
+            high (float | int): Upper bound of the sampling interval (exclusive for floats/complex amplitude).
+            device (torch.device | str | None): Device to create the tensor on; if None, uses the generator's/default device.
+        
+        Returns:
+            torch.Tensor: Tensor of shape `size` and dtype `dtype` containing random samples:
+                - For floating dtypes: values in [low, high).
+                - For complex dtypes: complex numbers with amplitude in [low, high) and phase in [-π, π].
+                - For bool: values equally likely `True` or `False`.
+                - For integer dtypes: integer values in [ceil(low), floor(high)).
         """
         if dtype.is_complex:
             real_dtype = torch.float32 if dtype == torch.complex64 else torch.float64
@@ -919,20 +883,16 @@ class RandomGenerator:
     def randn_tensor(
         self, size: Sequence[int], dtype: torch.dtype, device: torch.device | str | None = None
     ) -> torch.Tensor:
-        """Generate a tensor of given shape and dtype with standard normal distribution.
-
-        Parameters
-        ----------
-        size
-            Shape of the output tensor.
-        dtype
-            Data type of the output tensor.
-        device
-            Device of the output tensor. If `None`, the tensor is created on the default device.
-
-        Returns
-        -------
-            Random tensor with normal distribution.
+        """
+        Generates a tensor of the requested shape and dtype with samples drawn from the standard normal distribution.
+        
+        Parameters:
+            size (Sequence[int]): Shape of the output tensor.
+            dtype (torch.dtype): Data type of the output tensor.
+            device (torch.device | str | None): Device for the returned tensor. If `None`, the tensor is created on the generator's device.
+        
+        Returns:
+            torch.Tensor: Tensor of shape `size` and dtype `dtype` containing independent samples from N(0, 1).
         """
         tensor = torch.randn(size=size, generator=self.generator, dtype=dtype, device=self.generator.device)
         return tensor.to(device=device) if device is not None else tensor
@@ -945,7 +905,19 @@ class RandomGenerator:
         dtype: torch.dtype = torch.float32,
         device: torch.device | str | None = None,
     ) -> torch.Tensor:
-        """Generate beta-distributed random numbers using gamma draws."""
+        """
+        Sample values from a Beta(alpha, beta) distribution with the requested shape and dtype.
+        
+        Parameters:
+            size (int | Sequence[int]): Output shape of the returned tensor.
+            alpha (float): Alpha (concentration) parameter of the Beta distribution; must be > 0.
+            beta (float): Beta (concentration) parameter of the Beta distribution; must be > 0.
+            dtype (torch.dtype): Data type of the returned tensor (default: torch.float32).
+            device (torch.device | str | None): Optional device for the returned tensor; when provided the result is moved to this device.
+        
+        Returns:
+            torch.Tensor: Tensor of shape `size` with values in the interval (0, 1), drawn from Beta(alpha, beta) and of the requested dtype.
+        """
         size_ = (size,) if isinstance(size, int) else tuple(size)
         alpha_tensor = torch.full(size_, alpha, dtype=dtype, device=self.generator.device)
         beta_tensor = torch.full(size_, beta, dtype=dtype, device=self.generator.device)
@@ -957,20 +929,22 @@ class RandomGenerator:
     def randperm(
         self, n: int, *, dtype: torch.dtype = torch.int64, device: torch.device | str | None = None
     ) -> torch.Tensor:
-        """Generate a random permutation of integers from 0 to n - 1.
-
+        """
+        Return a tensor with a random permutation of integers from 0 to n - 1.
+        
         Parameters
         ----------
         n
-            Number of elements.
+            Number of elements to permute.
         dtype
             Data type of the output tensor.
         device
-            Device of the output tensor. If `None`, the tensor is created on the generator device.
-
+            Device for the returned tensor; if `None`, the tensor is created on the generator's device.
+        
         Returns
         -------
-            Tensor containing a random permutation.
+        torch.Tensor
+            A 1-D tensor of shape (n,) containing a random permutation of the integers 0..n-1 with the requested dtype.
         """
         tensor = torch.randperm(n, generator=self.generator, dtype=dtype, device=self.generator.device)
         return tensor.to(device=device) if device is not None else tensor
@@ -978,28 +952,21 @@ class RandomGenerator:
     def gaussian_variable_density_samples(
         self, shape: Sequence[int], low: int, high: int, fwhm: float = float('inf'), always_sample: Sequence[int] = ()
     ) -> torch.Tensor:
-        """Generate Gaussian variable density samples.
-
-        Generates indices in [low, high[ with a gaussian weighting.
-
-        Parameters
-        ----------
-        shape
-            Shape of the output tensor. The generated indices are 1D and in the last dimension.
-            All other dimensions are batch dimensions.
-        low
-            Lower bound of the sampling domain.
-        high
-            Upper bound of the sampling domain.
-        fwhm
-            Full-width at half-maximum of the Gaussian.
-        always_sample
-            indices that should always included in the samples.
-            For example, `range(-n_center//2, n_center//2)`
-
-        Returns
-        -------
-            1D tensor of selected indices.
+        """
+        Generate a set of integer indices sampled from [low, high) with a Gaussian-shaped sampling density.
+        
+        Parameters:
+            shape (Sequence[int]): Output shape interpreted as (*batch_dims, n_samples). Sampling is performed along the last dimension; all preceding dimensions are treated as independent batches.
+            low (int): Inclusive lower bound of the integer domain.
+            high (int): Exclusive upper bound of the integer domain.
+            fwhm (float): Full-width at half-maximum of the Gaussian weight used to bias sampling (larger values → flatter distribution). Defaults to infinity (uniform sampling).
+            always_sample (Sequence[int]): Sequence of indices that must appear in every sample (each value should be in [low, high)).
+        
+        Returns:
+            torch.Tensor: Integer tensor of shape (*batch_dims, n_samples) containing sorted indices in [low, high). Each batch contains the requested number of samples and includes the indices from `always_sample`.
+        
+        Raises:
+            ValueError: If n_samples (last element of `shape`) is greater than (high - low), or if more always-sampled indices are requested than n_samples.
         """
         *n_batch, n_samples = shape
         if n_samples > high - low:

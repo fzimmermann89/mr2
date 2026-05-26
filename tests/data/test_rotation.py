@@ -624,6 +624,11 @@ def test_as_euler_degenerate_symmetric_axes(seq_tuple: Sequence[str], intrinsic:
 
 
 def test_inv() -> None:
+    """
+    Verifies that Rotation.inv() produces the multiplicative inverse by checking left- and right-multiplication yield the identity matrix.
+    
+    Asserts that for a batch of random rotations p, p.inv().as_matrix() when multiplied on either side of p.as_matrix() produces the 3x3 identity for each element of the batch.
+    """
     rnd = RandomGenerator(0)
     n = 10
     p = Rotation.random(num=n, random_state=rnd)
@@ -1636,7 +1641,11 @@ def test_random_vmf_randomstate_progression() -> None:
 
 
 def test_apply_improper() -> None:
-    """Test apply with improper rotations"""
+    """
+    Verify that applying an improper rotation produced by invert_axes() negates the rotation's matrix action on vectors.
+    
+    Asserts that for a batch of rotations R and vectors v, r.invert_axes()(v) equals (-R.as_matrix() @ v), ensuring improper-rotation application matches inverting axes (matrix negation) semantics.
+    """
     r = Rotation.random(10, random_state=0, improper=False)
     v = RandomGenerator(0).float32_tensor(size=(10, 3))
     actual = r.invert_axes()(v)
@@ -1655,7 +1664,14 @@ def test_reshape() -> None:
 
 
 def test_permute() -> None:
-    """Test permute"""
+    """
+    Verify that permuting a Rotation's batch dimensions reorders those dimensions without altering rotation data.
+    
+    Checks:
+    - The permuted Rotation has the expected batch shape and the original Rotation's shape is unchanged.
+    - The permuted Rotation's matrices equal the original matrices with the same tensor permutation applied.
+    - Applying a subsequent permutation that reverses the first returns the original Rotation.
+    """
     r = Rotation.random((1, 2, 3), random_state=0, improper=True)
     permuted = r.permute((2, 0, 1))
     assert permuted.shape == (3, 1, 2)
@@ -1761,7 +1777,9 @@ def test_cuda_matrix_roundtrip() -> None:
 
 @pytest.mark.cuda
 def test_cuda_rotvec_roundtrip() -> None:
-    """from_rotvec / as_rotvec preserve device, including python-list reflection flags."""
+    """
+    Ensure Rotation.from_rotvec and Rotation.as_rotvec preserve the CUDA device and respect python-list reflection flags.
+    """
     rotvec = torch.tensor([[0.1, 0.0, 0.0], [0.2, 0.0, 0.0]], device='cuda')
     rotation = Rotation.from_rotvec(rotvec, reflection=[False, True])
     result = rotation.as_rotvec(improper='ignore')
@@ -1782,7 +1800,11 @@ def test_cuda_euler_roundtrip() -> None:
 
 @pytest.mark.cuda
 def test_cuda_directions_roundtrip() -> None:
-    """from_directions / as_directions preserve device."""
+    """
+    Verify that as_directions() and from_directions() preserve CUDA device placement and perform a lossless round trip.
+    
+    Creates a rotation on CUDA, extracts basis directions with as_directions(), reconstructs a Rotation via from_directions(), and asserts the direction tensors and reconstructed Rotation remain on CUDA and are approximately equal to the original.
+    """
     rotation = Rotation.random(random_state=0, device='cuda')
     bx, by, bz = rotation.as_directions()
     rotation2 = Rotation.from_directions(bx, by, bz)

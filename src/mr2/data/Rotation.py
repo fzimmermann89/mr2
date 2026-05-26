@@ -667,31 +667,27 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         reflection: torch.Tensor | NestedSequence[bool] | bool = False,
         inversion: torch.Tensor | NestedSequence[bool] | bool = False,
     ) -> Self:
-        """Initialize from rotation vector.
-
-        A rotation vector is a 3 dimensional vector which is co-directional to the
-        axis of rotation and whose norm gives the angle of rotation.
-
-        Parameters
-        ----------
-        rotvec
-            shape `(..., 3)`, the rotation vectors.
-        degrees
-            If True, then the given angles are assumed to be in degrees,
-            otherwise radians.
-        reflection
-            If True, the resulting transformation will contain a reflection
-            about a plane perpendicular to the rotation axis, resulting in a rotoflection
-            (improper rotation).
-        inversion
-            If True, the resulting transformation will contain an inversion of the coordinate system,
-            resulting in a rotoinversion (improper rotation).
-
-        Returns
-        -------
-        rotation
-            Object containing the rotations represented by the rotation vectors.
-
+        """
+        Construct a Rotation from rotation vectors (axis-angle representation).
+        
+        A rotation vector is a 3D vector whose direction is the rotation axis and whose norm is the rotation angle.
+        
+        Parameters:
+            rotvec (torch.Tensor | Sequence[float]):
+                Rotation vectors with shape (..., 3).
+            degrees (bool):
+                If True, interpret rotation magnitudes in degrees; otherwise in radians.
+            reflection (torch.Tensor | Sequence[bool] | bool):
+                If True for an entry, produce a rotoflection (a rotation combined with a reflection
+                about the plane perpendicular to the rotation axis). Can be a scalar or broadcastable mask.
+            inversion (torch.Tensor | Sequence[bool] | bool):
+                If True for an entry, produce a rotoinversion (a rotation combined with an inversion
+                of the coordinate system). Can be a scalar or broadcastable mask.
+        
+        Returns:
+            Rotation:
+                Rotation object representing the provided rotation vectors, with improperness
+                encoded from `reflection` and `inversion`.
         """
         rotvec_ = torch.as_tensor(rotvec)
         reflection_ = torch.as_tensor(reflection, device=rotvec_.device)
@@ -1216,40 +1212,17 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         vectors: NestedSequence[float] | torch.Tensor | SpatialDimension[torch.Tensor] | SpatialDimension[float],
         inverse: bool = False,
     ) -> torch.Tensor | SpatialDimension[torch.Tensor]:
-        """Apply this rotation to a set of vectors.
-
-        If the original frame rotates to the final frame by this rotation, then
-        its application to a vector can be seen in two ways:
-
-        - As a projection of vector components expressed in the final frame to the original frame.
-        - As the physical rotation of a vector being glued to the original frame as it rotates. In this case the vector
-          components are expressed in the original frame before and after the rotation.
-
-        In terms of rotation matrices, this application is the same as
-        ``self.as_matrix() @ vectors``.
-
-        Parameters
-        ----------
-        vectors
-            Shape(..., 3). Each `vectors[i]` represents a vector in 3D space.
-            A single vector can either be specified with shape `(3, )` or `(1, 3)`.
-            The number of rotations and number of vectors given must follow standard
-            pytorch broadcasting rules.
-        inverse
-            If True then the inverse of the rotation(s) is applied to the input
-            vectors.
-
-        Returns
-        -------
-        rotated_vectors
-            Result of applying rotation on input vectors.
-            Shape depends on the following cases:
-
-                - If object contains a single rotation (as opposed to a stack
-                  with a single rotation) and a single vector is specified with
-                  shape `(3,)`, then `rotated_vectors` has shape `(3,)`.
-                - In all other cases, `rotated_vectors` has shape `(..., 3)`,
-                  where `...` is determined by broadcasting.
+        """
+        Apply this rotation to 3D vector(s).
+        
+        Accepts a tensor of shape (..., 3), a single 3-vector (shape (3,) or (1, 3)), or a SpatialDimension holding x/y/z components. If `inverse` is True, the inverse rotation is applied. Broadcasting between the rotation batch and the input vectors follows PyTorch broadcasting rules.
+        
+        Parameters:
+            vectors: Input vectors to rotate; shape (..., 3) or a SpatialDimension with three components.
+            inverse: If True, apply the inverse of this rotation.
+        
+        Returns:
+            Rotated vectors. If the input was a SpatialDimension the same type is returned with components in the module's fixed axis order. If this Rotation represents a single rotation and the input was a single vector of shape (3,), a 1-D tensor of shape (3,) is returned; otherwise a tensor of shape (..., 3) is returned, where ... is the broadcast batch shape.
         """
         matrix = self.as_matrix()
         if inverse:
@@ -1303,30 +1276,22 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         *,
         device: torch.device | str | None = None,
     ):
-        """Generate uniformly distributed rotations.
-
-        Parameters
-        ----------
-        num
-            Number of random rotations to generate. If `None`, then a
-            single rotation is generated.
-        random_state
-            If `random_state` is `None`, a fresh internal random generator is used.
-            If `random_state` is an int, a new `RandomGenerator` instance is created
-            with that seed.
-            If `random_state` is already a `RandomGenerator` instance then that
-            instance is used directly, and repeated calls advance its state.
-        improper
-            if `True`, only improper rotations are generated. If False, only proper rotations are generated.
-            if "random", then a random mix of proper and improper rotations are generated.
-        device
-            Device on which to materialize the generated rotation. If `None`, the default device is used.
-
-        Returns
-        -------
-        random_rotation
-            Contains a single rotation if `num` is `None`. Otherwise contains a
-            stack of `num` rotations.
+        """
+        Generate uniformly distributed rotations.
+        
+        Parameters:
+            num (int | Sequence[int] | None):
+                Number of rotations to generate. If `None`, a single rotation is returned; if an int, returns that many rotations; if a sequence, returns an array shaped `(*num, 4)`.
+            random_state (int | RandomGenerator | None):
+                Seed or RNG to use. If `None`, a fresh RandomGenerator is created; if an int, a new RandomGenerator is created with that seed; if a RandomGenerator instance is provided, it is used and its state is advanced.
+            improper (bool | Literal['random']):
+                Controls inversion/reflection flags. `False` produces only proper rotations, `True` produces only improper rotations, and `"random"` samples proper/improper per rotation uniformly at random.
+            device (torch.device | str | None):
+                Device where the generated tensors are allocated. If `None`, the default device is used.
+        
+        Returns:
+            Rotation or Rotation batch:
+                A Rotation containing the generated quaternion(s). Returns a single-rotation instance when `num` is `None`, otherwise a batched Rotation with shape corresponding to `num`.
         """
         if random_state is None:
             rng = RandomGenerator(device=device)
@@ -1360,38 +1325,18 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         device: torch.device | str | None = None,
     ):
         """
-        Randomly sample rotations from a von Mises-Fisher distribution.
-
-        Generate rotations from a von Mises-Fisher distribution with a given mean axis and concentration parameter
-        and a 2pi-wrapped Gaussian distribution for the rotation angle.
-
-        Parameters
-        ----------
-        mean_axis
-            shape `(..., 3,)`, the mean axis of the von Mises-Fisher distribution.
-        kappa
-            The concentration parameter of the von Mises-Fisher distribution.
-            small kappa results in a uniform distribution, large kappa results in a peak around the mean axis.
-            similar to the inverse of the variance of a Gaussian distribution.
-        sigma
-            Standard deviation (radians) of the 2pi-wrapped Gaussian distribution used to sample the rotation angle.
-            Use `math.inf` if a uniform distribution is desired.
-        num
-            number of samples to generate. If `None`, a single rotation is generated.
-        random_state
-            If `random_state` is `None`, a fresh internal random generator is used.
-            If `random_state` is an int, a new `RandomGenerator` instance is created
-            with that seed.
-            If `random_state` is already a `RandomGenerator` instance then that
-            instance is used directly, and repeated calls advance its state.
-        device
-            Device on which to materialize the generated rotations. If `None`, the device of `mean_axis` is used
-
-        Returns
-        -------
-        random_rotation
-            a stack of `(num, ...)` rotations.
-
+        Sample rotations whose axes follow a von Mises–Fisher distribution and whose rotation angles follow a 2π-wrapped Gaussian.
+        
+        Parameters:
+            num (int | None): Number of samples to generate. If `None`, a single rotation is returned.
+            mean_axis (torch.Tensor | None): Tensor of shape `(..., 3)` giving the mean direction for the von Mises–Fisher distribution; defaults to (1,0,0) when `None`.
+            kappa (float): Concentration parameter for the von Mises–Fisher distribution (small → near-uniform, large → concentrated about `mean_axis`).
+            sigma (float): Standard deviation (radians) of the wrapped Gaussian used to sample rotation angles; use `math.inf` to draw angles uniformly in [0, 2π).
+            random_state (int | RandomGenerator | None): Seed or `RandomGenerator` to control randomness. If `None`, a fresh generator is created.
+            device (torch.device | str | None): Device for the generated tensors; if `None`, the device of `mean_axis` is used.
+        
+        Returns:
+            Rotation: A single Rotation when `num` is `None`, otherwise a batch of `num` sampled Rotations with shape `(num, ...)`.
         """
         n = 1 if num is None else num
         mu = torch.as_tensor((1.0, 0.0, 0.0) if mean_axis is None else mean_axis, device=device)
@@ -1409,7 +1354,11 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         return cls.from_rotvec(rot_axes * rot_angle.unsqueeze(-1))
 
     def __mul__(self, other: Rotation) -> Self:
-        """For compatibility with sp.spatial.transform.Rotation."""
+        """
+        Deprecated compatibility wrapper for composing two rotations using the legacy `*` operator.
+        
+        Warns about deprecation and returns the composition of `self` and `other` (equivalent to `self @ other`).
+        """
         warnings.warn(
             'Using Rotation*Rotation is deprecated, consider Rotation@Rotation', DeprecationWarning, stacklevel=2
         )
@@ -1458,54 +1407,20 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         return self.__class__(result_quaternions, normalize=True, copy=False, inversion=result_improper)
 
     def __pow__(self, n: float, modulus: None = None):
-        """Compose this rotation with itself `n` times.
-
-        Composition of a rotation `p` with itself can be extended to
-        non-integer `n` by considering the power `n` to be a scale factor
-        applied to the angle of rotation about the rotation's fixed axis. The
-        expression ``q = p ** n`` can also be expressed as
-        ``q = Rotation.from_rotvec(n * p.as_rotvec())``.
-
-        If `n` is negative, then the rotation is inverted before the power
-        is applied. In other words, ``p ** -abs(n) == p.inv() ** abs(n)``.
-
-        Parameters
-        ----------
-        n
-            The number of times to compose the rotation with itself.
-        modulus
-            This overridden argument is not applicable to Rotations and must be
-            `None`.
-
-        Returns
-        -------
-        power
-            If the input Rotation `p` contains `N` multiple rotations, then
-            the output will contain `N` rotations where the `i` th rotation
-            is equal to `p[i] ** n`
-
-        Notes
-        -----
-        For example, a power of 2 will double the angle of rotation, and a
-        power of 0.5 will halve the angle. There are three notable cases: if
-        `n == 1` then the original rotation is returned, if `n == 0`
-        then the identity rotation is returned, and if `n == -1` then
-        ``p.inv()`` is returned.
-
-        For improper rotations, the power of a rotation with a reflection is
-        equivalent to the power of the rotation without the reflection, followed
-        by an reflection if the power is integer and odd. If the power is
-        non-integer, the reflection is never applied.
-        This means that, for example a 0.5 power of a rotation with a reflection
-        applied twice will result in a rotation without a reflection.
-
-        Note that fractional powers `n` which effectively take a root of
-        rotation, do so using the shortest path smallest representation of that
-        angle (the principal root). This means that powers of `n` and `1/n`
-        are not necessarily inverses of each other. For example, a 0.5 power of
-        a +240 degree rotation will be calculated as the 0.5 power of a -120
-        degree rotation, with the result being a rotation of -60 rather than
-        +120 degrees.
+        """
+        Raise this rotation to a real power by scaling its rotation angle about the rotation axis.
+        
+        For real `n`, the operation scales the rotation angle by `n` (equivalently `Rotation.from_rotvec(n * self.as_rotvec())`). Special cases: `n == 0` returns the identity rotation, `n == -1` returns the inverse rotation, and `n == 1` returns a copy of this rotation. When the rotation is marked improper (includes a reflection), the reflection is preserved only for integer, odd powers; non-integer powers produce a proper rotation (no reflection).
+        
+        Parameters:
+            n (float): Power to raise the rotation to; may be non-integer or negative.
+            modulus (None): Must be `None`; provided for API compatibility.
+        
+        Returns:
+            Rotation: A new Rotation where each element in the batch is the corresponding input rotation raised to power `n`.
+        
+        Raises:
+            NotImplementedError: If `modulus` is not `None`.
         """
         if modulus is not None:
             raise NotImplementedError('modulus not supported')
@@ -1529,15 +1444,13 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         return Rotation.from_rotvec(n * self.as_rotvec(), reflection=improper)
 
     def inv(self) -> Self:
-        """Invert this rotation.
-
-        Composition of a rotation with its inverse results in an identity
-        transformation.
-
-        Returns
-        -------
-        inverse
-            Object containing inverse of the rotations in the current instance.
+        """
+        Return the inverse of this rotation.
+        
+        The returned Rotation represents the transformation that composes with the original to produce an identity transformation. The improper/inversion flag is preserved on the result.
+        
+        Returns:
+            inverse (Rotation): Rotation instance containing the inverses of the rotations in this object.
         """
         quaternions = self._quaternions * self._quaternions.new_tensor([-1, -1, -1, 1])
         improper = self._is_improper.clone()
@@ -1606,28 +1519,18 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         return angles
 
     def approx_equal(self, other: Rotation, atol: float = 1e-6, degrees: bool = False) -> torch.Tensor:
-        """Determine if another rotation is approximately equal to this one.
-
-        Equality is measured by calculating the smallest angle between the
-        rotations, and checking to see if it is smaller than `atol`.
-
-        Parameters
-        ----------
-        other
-            Object containing the rotations to measure against this one.
-        atol
-            The absolute angular tolerance, below which the rotations are
-            considered equal.
-        degrees
-            If True and `atol` is given, then `atol` is measured in degrees. If
-            False, then atol is measured in radians.
-
-        Returns
-        -------
-        approx_equal
-            Whether the rotations are approximately equal, bool if object
-            contains a single rotation and Tensor if object contains multiple
-            rotations.
+        """
+        Check whether another rotation equals this one within an angular tolerance.
+        
+        Compares the rotation difference to `atol` (interpreted in degrees when `degrees=True`) and requires the improper/inversion flags to match for equality.
+        
+        Parameters:
+            other (Rotation): Rotation(s) to compare against.
+            atol (float): Absolute angular tolerance. Values below this are considered equal.
+            degrees (bool): If True, interpret `atol` in degrees; otherwise in radians.
+        
+        Returns:
+            bool or torch.Tensor: `True` (or elementwise `True`) if the angular difference is less than `atol` and the improper flags are equal, `False` otherwise.
         """
         if degrees:
             atol = np.deg2rad(atol)
@@ -1662,23 +1565,17 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         return True
 
     def __getitem__(self, indexer: TorchIndexerType) -> Self:
-        """Extract rotation(s) at given index(es) from object.
-
-        Create a new `Rotation` instance containing a subset of rotations
-        stored in this object.
-
-        Parameters
-        ----------
-        indexer
-            Specifies which rotation(s) to extract.
-
-        Returns
-        -------
-        The extracted rotation(s).
-
-        Raises
-        ------
-        `TypeError` if the instance was created as a single rotation.
+        """
+        Create a new Rotation containing the selected element(s) from this batch.
+        
+        Parameters:
+            indexer: Index, slice, or tuple of indices selecting batch entries to extract.
+        
+        Returns:
+            Rotation: A new Rotation containing the selected rotations; the improper/inversion flags are preserved for the selected entries.
+        
+        Raises:
+            TypeError: If this instance represents a single rotation (not subscriptable).
         """
         if self._single:
             raise TypeError('Single rotation is not subscriptable.')
@@ -1690,7 +1587,12 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         return type(self)(quaternions, normalize=False, inversion=inversion)
 
     def __iter__(self) -> Iterator[Self]:
-        """Provide an explicit iterator."""
+        """
+        Iterate over the batch, yielding each Rotation element in order.
+        
+        Returns:
+            Iterator[Self]: Yields individual Rotation instances until the batch is exhausted.
+        """
         index = 0
         while True:
             try:
@@ -1794,18 +1696,16 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         self._quaternions[..., axis] = quat_w
 
     def __setitem__(self, indexer: TorchIndexerType, value: Rotation):
-        """Set rotation(s) at given index(es) from object.
-
-        Parameters
-        ----------
-        indexer
-            Specifies which rotation(s) to replace.
-        value
-            The rotations to set.
-
-        Raises
-        ------
-        `TypeError` if the instance was created as a single rotation.
+        """
+        Replace one or more rotations in this Rotation object at the specified index positions.
+        
+        Parameters:
+            indexer (TorchIndexerType): Indexing expression selecting rotation slots to replace (same semantics as tensor indexing for the batch dimensions).
+            value (Rotation): Rotation instance providing replacement rotations; its batch shape must be compatible with the selected positions.
+        
+        Raises:
+            TypeError: If this Rotation represents a single rotation and therefore is not subscriptable.
+            TypeError: If `value` is not a Rotation instance.
         """
         if self._single:
             raise TypeError('Single rotation is not subscriptable.')
@@ -1828,22 +1728,17 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         *,
         device: torch.device | str | None = None,
     ) -> Self:
-        """Get identity rotation(s).
-
-        Composition with the identity rotation has no effect.
-
-        Parameters
-        ----------
-        shape
-            Number of identity rotations to generate. If `None`, then a
-            single rotation is generated.
-        device
-            Device on which to materialize the identity rotation. If `None`, the default device is used.
-
-        Returns
-        -------
-        identity
-            The identity rotation.
+        """
+        Create identity rotation(s).
+        
+        Parameters:
+            shape:
+                If None, create a single identity rotation. If an int, create that many identities. If a tuple of ints, create a batch with the given shape.
+            device:
+                Device on which to allocate the underlying tensors; if None the default device is used.
+        
+        Returns:
+            Identity rotation or batch of identity rotations with scalar part set to 1 and vector part set to 0.
         """
         match shape:
             case None:
@@ -1865,7 +1760,25 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         *,
         return_sensitivity: Literal[False] = False,
         allow_improper: bool = ...,
-    ) -> tuple[Rotation, torch.Tensor]: ...
+    ) -> tuple[Rotation, torch.Tensor]: """
+        Compute the optimal rotation that best aligns two sets of 3D vectors and return its residual sum of squared distances (and optional sensitivity).
+        
+        Parameters:
+            a: First set of vectors. Shape must be (..., N, 3) or broadcastable to the same shape as `b`. May be a tensor or a sequence convertible to a float tensor.
+            b: Second set of vectors, matching `a` in shape and semantics.
+            weights: Optional per-vector nonnegative weights of shape (N,) or broadcastable to (..., N). If omitted, unit weights are used.
+            return_sensitivity: If `True`, also return a sensitivity tensor describing how the optimal rotation changes with respect to perturbations of the weighted correlation matrix; otherwise only return the rotation and its RSSD.
+            allow_improper: If `False`, force the returned rotation to be proper (determinant +1) by flipping sign when necessary; if `True`, allow improper (determinant -1) solutions.
+        
+        Returns:
+            rotation: A Rotation instance that optimally aligns `a` to `b` under the provided weights.
+            rssd_or_sensitivity: If `return_sensitivity` is `False`, a tensor containing the residual sum of squared distances for each batch. If `return_sensitivity` is `True`, a tensor containing the sensitivity matrix for each batch describing the derivative of the solution with respect to the weighted correlation matrix.
+        
+        Notes:
+            - Inputs are validated for correct last dimension (3) and nonnegative weights.
+            - Single-pair special cases and infinite-weight constraints are handled and reflected in the outputs.
+        """
+        ...
 
     @overload
     @classmethod
@@ -1877,7 +1790,23 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         *,
         return_sensitivity: Literal[True],
         allow_improper: bool = ...,
-    ) -> tuple[Rotation, torch.Tensor, torch.Tensor]: ...
+    ) -> tuple[Rotation, torch.Tensor, torch.Tensor]: """
+        Compute the optimal rotation that aligns weighted vector sets a -> b and also return the fit quality and sensitivity.
+        
+        Parameters:
+            a: One or more source vectors with last dimension 3. Accepted shapes: (..., 3), (n_vecs, 3), or sequences convertible to a tensor; broadcasting across batch dimensions is supported.
+            b: One or more target vectors with the same shape semantics as `a`; must correspond elementwise to `a`.
+            weights: Optional per-vector nonnegative weights with shape (n_vecs,) or broadcastable to the batch; if `None`, equal weights are used.
+            return_sensitivity: When `True`, also return a sensitivity tensor describing the linear response of the optimal rotation to small perturbations of the input (see returns).
+            allow_improper: If `False`, force a proper rotation (determinant +1) by correcting improper solutions; if `True`, allow improper (determinant -1) solutions.
+        
+        Returns:
+            A tuple (rotation, rssd, sensitivity) where:
+            - rotation (Rotation): the optimal rotation aligning `a` to `b` under the provided weights.
+            - rssd (torch.Tensor): residual sum of squared deviations for the fit; has the broadcasted batch shape.
+            - sensitivity (torch.Tensor): tensor of sensitivity matrices that quantify how the optimal rotation changes under small perturbations of the inputs; its leading dimensions match the broadcasted batch and its trailing dimensions encode the per-fit sensitivity matrices.
+        """
+        ...
 
     @classmethod
     def align_vectors(
@@ -2022,47 +1951,22 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         dim: None | int | Sequence[int] = None,
         keepdim: bool = False,
     ) -> Self:
-        r"""Get the mean of the rotations.
-
-        The mean used is the chordal L2 mean (also called the projected or
-        induced arithmetic mean) [HAR2013]_. If `A` is a set of rotation matrices,
-        then the mean `M` is the rotation matrix that minimizes the
-        following loss function:
-        :math:`L(M) = \sum_{i = 1}^{n} w_i \| A_i - M \|^2`,
-
-        where :math:`w_i`'s are the `weights` corresponding to each matrix.
-
-        Optionally, if `A` is a set of Rotation matrices with multiple batch dimensions,
-        the dimensions to reduce over can be specified.
-
-        If the rotations contains improper, the mean will be computed without
-        considering the improper and the result will contain a reflection if
-        the weighted majority of the rotations over which the mean is taken
-        have improper.
-
-        Parameters
-        ----------
-        weights
-            Weights describing the relative importance of the rotations. If
-            `None`, then all values in `weights` are assumed to be
-            equal.
-        dim
-            Batch Dimensions to reduce over. `None` will always return a single Rotation.
-        keepdim
-            Keep reduction dimensions as length-1 dimensions.
-
-
-        Returns
-        -------
-        mean
-            Object containing the mean of the rotations in the current
-            instance.
-
-        References
-        ----------
-        .. [HAR2013] Hartley R, Li H (2013) Rotation Averaging. International Journal of Computer Vision (103)
-           https://link.springer.com/article/10.1007/s11263-012-0601-0
-
+        """
+        Compute the chordal L2 (projected) mean of the rotations over the specified batch dimensions.
+        
+        The mean minimizes the weighted sum of squared Frobenius norms between rotation matrices (the projected arithmetic mean). Improper rotations are excluded from the averaging; the returned rotation is marked improper (a reflection) when the weighted majority of inputs being averaged are improper.
+        
+        Parameters:
+            weights (torch.Tensor | Sequence[float] | None):
+                Per-rotation nonnegative weights broadcastable to the instance batch shape. If `None`, all rotations are weighted equally.
+            dim (int | Sequence[int] | None):
+                Batch dimension(s) to reduce. `None` reduces all batch dimensions and returns a single Rotation.
+            keepdim (bool):
+                If True, retained reduced dimensions as length-1 dimensions in the output batch shape.
+        
+        Returns:
+            Rotation:
+                Rotation object containing the mean quaternion(s). If `keepdim` is True, reduced dimensions are preserved with length 1; if the instance represented a single rotation, a single Rotation is returned.
         """
         if self._single:
             return self.__class__(self._quaternions[0], inversion=self._is_improper, normalize=False)
@@ -2105,17 +2009,16 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         return self.__class__(mean_quaternions, inversion=modal_improper, normalize=False)
 
     def reshape(self, *shape: int | Sequence[int]) -> Self:
-        """Reshape the Rotation object in the batch dimensions.
-
-        Parameters
-        ----------
-        shape
-            The new shape of the Rotation object.
-
-        Returns
-        -------
-        reshaped
-            The reshaped Rotation object.
+        """
+        Reshape the batch dimensions of this Rotation, preserving the quaternion component axis.
+        
+        The provided shape replaces the batch shape; internal quaternion and improper-mask tensors are first broadcast to a common batch shape and then reshaped. The final (component) dimension of the quaternion tensor remains size 4.
+        
+        Parameters:
+            *shape (int | Sequence[int]): New batch shape as integers or sequences of integers; elements are concatenated.
+        
+        Returns:
+            Rotation: A new Rotation instance with data copied and the requested batch shape.
         """
         newshape = []
         for s in shape:
@@ -2131,17 +2034,14 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         )
 
     def permute(self, dims: Sequence[int]) -> Self:
-        """Permute the batch dimensions of the Rotation object.
-
-        Parameters
-        ----------
-        dims
-            The new order of the dimensions.
-
-        Returns
-        -------
-        permuted
-            The permuted Rotation object.
+        """
+        Reorder the Rotation's batch dimensions.
+        
+        Parameters:
+            dims (Sequence[int]): New ordering of the batch axes. Negative indices are interpreted relative to the batch rank (like standard Python indexing). The quaternion component axis (last axis of size 4) is not included in these indices and remains the final axis.
+        
+        Returns:
+            Rotation: A new Rotation whose batch dimensions have been permuted according to `dims`; quaternion components and improper flags are rearranged to match the new batch ordering.
         """
         batch_shape = torch.broadcast_shapes(self._quaternions.shape[:-1], self._is_improper.shape)
         inversion = self._is_improper.expand(batch_shape).permute(*dims)
@@ -2152,17 +2052,14 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         return self.__class__(quaternions, inversion=inversion, copy=True)
 
     def expand(self, *shape: int | Sequence[int]) -> Self:
-        """Expand the Rotation object in the batch dimensions.
-
-        Parameters
-        ----------
-        shape
-            The new shape of the Rotation object.
-
-        Returns
-        -------
-        expanded
-            The expanded Rotation object.
+        """
+        Expand this Rotation's batch dimensions to the given shape.
+        
+        Parameters:
+            shape (int | Sequence[int]): One or more integers or integer sequences specifying the target batch shape. The quaternion component dimension is preserved.
+        
+        Returns:
+            Rotation: A Rotation with batch dimensions expanded to the requested shape.
         """
         newshape = []
         for s in shape:
