@@ -102,6 +102,20 @@ def test_dictionary_matching_op_not_differentiable() -> None:
         _ = operator(y.requires_grad_(True))
 
 
+@pytest.mark.xfail(
+    strict=True, reason='Known issue: a zero-norm dictionary atom normalizes to NaN and can win matching.'
+)
+def test_dictionary_matching_op_rejects_zero_norm_dictionary_entry() -> None:
+    """Normalized dictionary matching is undefined for a zero-signal candidate."""
+
+    def model(parameter: torch.Tensor) -> tuple[torch.Tensor]:
+        return (torch.stack((parameter, parameter)),)
+
+    operator = DictionaryMatchOp(model)
+    with pytest.raises(ValueError, match=r'zero|norm'):
+        operator.append(torch.tensor([0.0, 1.0]))
+
+
 @pytest.mark.cuda
 def test_dictionary_matching_op_cuda() -> None:
     """Test dictionary matching operator works on CUDA devices."""

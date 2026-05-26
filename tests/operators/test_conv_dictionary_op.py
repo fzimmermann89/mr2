@@ -233,6 +233,21 @@ def test_conv_dictionary_wrong_pad_mode():
         _ = ConvSynthesisDictionaryOp(kernel, 'my_pad_mode')  # type: ignore[arg-type]
 
 
+@pytest.mark.xfail(strict=True, reason='Known issue: symmetric padding makes even kernels return an extra pixel.')
+@pytest.mark.parametrize('operator_class', [ConvAnalysisDictionaryOp, ConvSynthesisDictionaryOp])
+def test_conv_dictionary_even_kernel_preserves_spatial_shape(operator_class) -> None:
+    """Accepted even-sized filters should retain the documented spatial-shape contract."""
+    rng = RandomGenerator(seed=0)
+    kernel = rng.float32_tensor(size=(1, 2, 2))
+    x = (
+        rng.float32_tensor(size=(4, 4))
+        if operator_class is ConvAnalysisDictionaryOp
+        else rng.float32_tensor(size=(1, 4, 4))
+    )
+    output = operator_class(kernel)(x)[0]
+    assert output.shape[-2:] == (4, 4)
+
+
 def test_conv_dictionary_real_complex_combination():
     """Test that a warning is raised a real-valued input is used with a complex-valued kernel."""
     img_shape = (4, 32, 32)
