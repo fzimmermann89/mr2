@@ -273,6 +273,8 @@ def _quaternion_to_euler(quaternion: torch.Tensor, seq: str, extrinsic: bool):
     angles += (angles < -torch.pi) * 2 * torch.pi
     angles -= (angles > torch.pi) * 2 * torch.pi
     return angles
+
+
 def _align_vectors(
     a: torch.Tensor,
     b: torch.Tensor,
