@@ -173,7 +173,6 @@ def test_f_and_g_None() -> None:
     assert (pdhg_solution == initial_values[0]).all()
 
 
-@pytest.mark.xfail(strict=True, reason='Known issue: automatic PDHG step sizes divide by a zero operator norm.')
 def test_pdhg_automatic_stepsize_for_zero_operator_is_finite() -> None:
     """Automatic step selection should handle valid objectives whose coupling operator is zero."""
     (solution,) = pdhg(

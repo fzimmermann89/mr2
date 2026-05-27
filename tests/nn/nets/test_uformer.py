@@ -57,9 +57,6 @@ def test_uformer_backward() -> None:
         assert not parameter.grad.isnan().any(), f'{name}.grad is NaN'
 
 
-@pytest.mark.xfail(
-    strict=True, reason='Known issue: learned window modulator is too small for unaligned spatial input.'
-)
 def test_lewin_transformer_block_supports_non_window_aligned_input() -> None:
     """LeWin should preserve the non-aligned input support implemented by window attention."""
     block = LeWinTransformerBlock(n_dim=2, n_channels_per_head=4, n_heads=1, window_size=2)

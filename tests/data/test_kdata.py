@@ -86,7 +86,6 @@ def test_KData_from_file_diff_nky_for_rep(ismrmrd_cart_invalid_reps) -> None:
     assert kdata.data.shape[-3] == 1, 'k2 should be 1'
 
 
-@pytest.mark.xfail(strict=True, reason='Known issue: variable-length filtering leaves acquisition state inconsistent.')
 def test_KData_from_file_variable_readout_filters_all_associated_state(ismrmrd_cart_variable_readout) -> None:
     """Dropped variable-length acquisitions must also be removed from header and trajectory state."""
     with pytest.warns(UserWarning, match='Acquisitions have different shape'):
@@ -94,7 +93,6 @@ def test_KData_from_file_variable_readout_filters_all_associated_state(ismrmrd_c
     assert torch.broadcast_shapes(kdata.data.shape, kdata.traj.shape) == kdata.data.shape
 
 
-@pytest.mark.xfail(strict=True, reason='Known issue: reshape fallback warning contains malformed label text.')
 def test_KData_reshape_by_idx_warning_names_irregular_labels(ismrmrd_cart_invalid_reps) -> None:
     """The irregular-layout warning should identify the labels considered during reshape."""
     expected_labels = 'average/slice/contrast/phase/repetition/set/user0/user1/user2/user3/user4/user7'

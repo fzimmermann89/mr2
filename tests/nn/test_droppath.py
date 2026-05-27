@@ -31,7 +31,6 @@ def test_droppath_drop_all() -> None:
     assert (y == 0).all()
 
 
-@pytest.mark.xfail(strict=True, reason='Known issue: full scaled dropping divides the mask by zero.')
 def test_droppath_drop_all_with_keep_scaling_is_finite() -> None:
     """Full drop should not create NaN activations when keep scaling is enabled."""
     output = DropPath(1.0, scale_by_keep=True)(torch.ones(3, 4))

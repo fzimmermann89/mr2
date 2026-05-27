@@ -256,7 +256,6 @@ def test_traj_from_ismrmrd_filter(ismrmrd_cart_bodycoil_and_surface_coil) -> Non
     assert traj.shape == (1, 1, 1, 1, 1)  # trajectory is all zeros
 
 
-@pytest.mark.xfail(strict=True, reason='Known issue: additional ISMRMRD trajectory coordinates are silently discarded.')
 def test_traj_from_ismrmrd_rejects_more_than_three_coordinates(ismrmrd_cart_four_trajectory_coordinates) -> None:
     """Trajectory imports should reject unsupported coordinate dimensions instead of dropping data."""
     with pytest.raises(ValueError, match=r'trajectory.*3|three.*trajectory'):

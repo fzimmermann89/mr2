@@ -233,7 +233,6 @@ def test_conv_dictionary_wrong_pad_mode():
         _ = ConvSynthesisDictionaryOp(kernel, 'my_pad_mode')  # type: ignore[arg-type]
 
 
-@pytest.mark.xfail(strict=True, reason='Known issue: symmetric padding makes even kernels return an extra pixel.')
 @pytest.mark.parametrize('operator_class', [ConvAnalysisDictionaryOp, ConvSynthesisDictionaryOp])
 def test_conv_dictionary_even_kernel_preserves_spatial_shape(operator_class) -> None:
     """Accepted even-sized filters should retain the documented spatial-shape contract."""
