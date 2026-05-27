@@ -410,50 +410,67 @@ def test_dataclass_concatenate() -> None:
     assert concatenated.split(dim=0, size=10) == (a, b, c)
 
 
-class _SampleWithRotation(Dataclass):
-    """Helper dataclass: a tensor plus a `Rotation` field for concatenation tests."""
+def test_dataclass_concatenate_rotation_and_spatial_dimension() -> None:
+    """Test concatenation of rotation and spatial dimension."""
 
-    data: torch.Tensor
-    orientation: Rotation
+    class SampleWithRotationandSpatialDimension(Dataclass):
+        """Test dataclass"""
 
+        data: torch.Tensor
+        orientation: Rotation
+        spatial_dimension: SpatialDimension[int]
 
-def test_dataclass_concatenate_expands_broadcasted_rotation_field() -> None:
-    """Rotations broadcast against larger sibling tensors must follow the parent concat size."""
-    # Use distinct per-entry values so `_reduce_repeats_` does not collapse the concat dim.
-    a = _SampleWithRotation(
-        data=torch.arange(12, dtype=torch.float32).reshape(12, 1, 1, 1, 1),
+    a = SampleWithRotationandSpatialDimension(
+        data=torch.arange(12 * 2, dtype=torch.float32).reshape(12, 1, 1, 1, 2),
         orientation=Rotation.identity((1, 1, 1, 1, 1)),
+        spatial_dimension=SpatialDimension(1, 2, 3),
     )
-    b = _SampleWithRotation(
-        data=torch.arange(12, 24, dtype=torch.float32).reshape(12, 1, 1, 1, 1),
+    b = SampleWithRotationandSpatialDimension(
+        data=torch.arange(12, dtype=torch.float32).reshape(12, 1, 1, 1, 1),
         orientation=Rotation.from_euler('z', 1.0).reshape(1, 1, 1, 1, 1),
+        spatial_dimension=SpatialDimension(1, 2, 3),
     )
 
     c = a.concatenate(b, dim=0)
 
-    assert c.data.shape == (24, 1, 1, 1, 1)
+    assert c.data.shape == (24, 1, 1, 1, 2)
     assert c.orientation.shape == (24, 1, 1, 1, 1)
-    assert torch.equal(c.data.flatten(), torch.arange(24, dtype=torch.float32))
+    assert c.spatial_dimension == SpatialDimension(1, 2, 3)
+    expected = torch.cat((a.data, b.data.expand(-1, -1, -1, -1, 2)), dim=0)
+    assert torch.equal(c.data, expected)
 
 
-def test_dataclass_concatenate_broadcasts_non_concat_dims() -> None:
-    """Different-shape inputs must be broadcast in all non-concat dimensions before concat."""
-    rng = RandomGenerator(0)
-    a = _SampleWithRotation(
-        data=rng.float32_tensor((2, 1, 4)),
-        orientation=Rotation.identity((1, 1, 4)),
+def test_dataclass_concatenate_scalar_shape() -> None:
+    """Test concatenation of scalar-shaped tensor and rotation fields."""
+
+    class SampleWithRotationandSpatialDimension(Dataclass):
+        """Test dataclass"""
+
+        data: torch.Tensor
+        orientation: Rotation
+        spatial_dimension: SpatialDimension[int]
+
+    a = SampleWithRotationandSpatialDimension(
+        data=torch.tensor(1.0),
+        orientation=Rotation.identity(),
+        spatial_dimension=SpatialDimension(1, 2, 3),
     )
-    b = _SampleWithRotation(
-        data=rng.float32_tensor((3, 5, 4)),
-        orientation=Rotation.identity((1, 5, 4)),
+    b = SampleWithRotationandSpatialDimension(
+        data=torch.tensor(2.0),
+        orientation=Rotation.from_euler('z', 1.0),
+        spatial_dimension=SpatialDimension(1, 2, 3),
     )
 
     c = a.concatenate(b, dim=0)
 
-    assert c.data.shape == (5, 5, 4)
-    # `Rotation` is all-identity here, so `_reduce_repeats_` may collapse the
-    # broadcasted dim; check the effective broadcast shape instead.
-    assert c.shape == (5, 5, 4)
+    expected_data = torch.cat((a.data.expand(1), b.data.expand(1)), dim=0)
+    expected_orientation = a.orientation.reshape(1).concatenate(b.orientation.reshape(1), dim=0)
+
+    assert c.data.shape == (2,)
+    assert c.orientation.shape == (2,)
+    assert c.spatial_dimension == SpatialDimension(1, 2, 3)
+    assert torch.equal(c.data, expected_data)
+    assert torch.equal(c.orientation.as_quat(), expected_orientation.as_quat())
 
 
 def test_dataclass_equal() -> None:

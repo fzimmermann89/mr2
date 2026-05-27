@@ -58,3 +58,31 @@ def test_ssim_complex_uses_imaginary_part() -> None:
     (real_ssim,) = SSIM(target.real)(test.real)
 
     assert complex_ssim < real_ssim
+
+
+def test_ssim_stays_finite_in_degenerate_cases() -> None:
+    """SSIM should return finite values and gradients for degenerate but valid inputs."""
+    target = torch.ones((1, 7, 7, 7), dtype=torch.float32)
+    prediction = torch.ones((1, 7, 7, 7), dtype=torch.float32, requires_grad=True)
+    mask = torch.zeros((1, 7, 7, 7), dtype=torch.bool)
+
+    (result,) = SSIM(target, weight=mask, data_range=torch.tensor(1.0))(prediction)
+
+    assert torch.isfinite(result)
+    torch.testing.assert_close(result, torch.tensor(0.0))
+
+    result.backward()
+    assert prediction.grad is not None
+    assert torch.isfinite(prediction.grad).all()
+
+    target = torch.tensor([[[1.0]]], dtype=torch.float32)
+    prediction = torch.tensor([[[1.0]]], dtype=torch.float32, requires_grad=True)
+
+    (result,) = SSIM(target)(prediction)
+
+    assert torch.isfinite(result)
+    torch.testing.assert_close(result, torch.tensor(1.0))
+
+    result.backward()
+    assert prediction.grad is not None
+    assert torch.isfinite(prediction.grad).all()
