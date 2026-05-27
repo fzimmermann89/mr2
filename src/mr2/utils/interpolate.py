@@ -70,14 +70,21 @@ def _interp_along_axis(x: torch.Tensor, xp: torch.Tensor, fp: torch.Tensor, axis
     return torch.lerp(y0, y1, weight)
 
 
-def interp(x: torch.Tensor, xp: torch.Tensor, fp: torch.Tensor) -> torch.Tensor:
+def interp(
+    x: torch.Tensor,
+    xp: torch.Tensor,
+    fp: torch.Tensor,
+    *,
+    left: torch.Tensor | float | None = None,
+    right: torch.Tensor | float | None = None,
+) -> torch.Tensor:
     """One-dimensional linear interpolation for monotonically increasing sample points.
 
     Implements numpy.interp
 
     Evaluates the function at the given coordinates x based on the known points (xp, fp).
-    Out-of-bounds values are clamped to fp[0] and fp[-1], matching the default
-    behavior of numpy.interp.
+    Out-of-bounds values default to fp[0] and fp[-1], matching the default behavior
+    of numpy.interp. Custom left/right fill values can be provided.
 
     Parameters
     ----------
@@ -88,6 +95,10 @@ def interp(x: torch.Tensor, xp: torch.Tensor, fp: torch.Tensor) -> torch.Tensor:
         The tensor will be sorted internally if needed.
     fp
         1d tensor of y coordinates matching the length of xp.
+    left
+        Fill value for x < xp[0]. If None, uses fp[0].
+    right
+        Fill value for x > xp[-1]. If None, uses fp[-1].
 
     Returns
     -------
@@ -107,7 +118,14 @@ def interp(x: torch.Tensor, xp: torch.Tensor, fp: torch.Tensor) -> torch.Tensor:
         if not torch.all(xp[:-1] < xp[1:]):
             raise ValueError('xp must not contain repeated entries.')
 
-    return _interp_along_axis(x, xp, fp, axis=0)
+    y = _interp_along_axis(x, xp, fp, axis=0)
+
+    if left is not None:
+        y = torch.where(x < xp[0], torch.as_tensor(left, dtype=y.dtype, device=y.device), y)
+    if right is not None:
+        y = torch.where(x > xp[-1], torch.as_tensor(right, dtype=y.dtype, device=y.device), y)
+
+    return y
 
 
 def interpolate(
