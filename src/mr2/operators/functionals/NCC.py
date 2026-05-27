@@ -73,18 +73,16 @@ def _windowed_ncc3d(
     if weight is None:
         weight_local = local_sum(target.new_ones(target.shape))
         valid = torch.ones_like(weight_local, dtype=torch.bool)
+        target_local = local_sum(target)
+        prediction_local = local_sum(prediction)
+        target2_local = local_sum(target.square())
+        prediction2_local = local_sum(prediction.square())
+        cross_local = local_sum(target * prediction)
     else:
         weight_float = weight.to(dtype=torch.float32)
         weight_local = local_sum(weight_float)
         valid = local_sum((weight_float > 0).to(dtype=weight_float.dtype)) == window_volume
         weight_local = weight_local * valid
-
-    target_local = local_sum(target)
-    prediction_local = local_sum(prediction)
-    target2_local = local_sum(target.square())
-    prediction2_local = local_sum(prediction.square())
-    cross_local = local_sum(target * prediction)
-    if weight is not None:
         target_local = local_sum(weight_float * target) * valid
         prediction_local = local_sum(weight_float * prediction) * valid
         target2_local = local_sum(weight_float * target.square()) * valid
