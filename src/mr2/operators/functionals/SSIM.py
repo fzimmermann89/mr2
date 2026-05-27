@@ -5,7 +5,6 @@ from typing import Literal, cast
 import torch
 
 from mr2.operators.Operator import Operator
-from mr2.utils.sliding_window import sliding_window
 
 
 def ssim3d(
@@ -87,43 +86,48 @@ def ssim3d(
         target, prediction, weight = cast(
             tuple[torch.Tensor, torch.Tensor, torch.Tensor], torch.broadcast_tensors(target, prediction, weight)
         )
-        weight = sliding_window(weight, window_shape=window, dim=(-3, -2, -1))
-        # Set weights to 0 for windows that are not fully inside the mask
-        weight = weight * ~torch.isclose(weight, torch.tensor(0, dtype=weight.dtype)).any((-3, -2, -1), keepdim=True)
-        weight = weight.mean((-1, -2, -3), dtype=torch.float32).moveaxis((0, 1, 2), (-3, -2, -1))
-        weight /= weight.sum(dim=(-3, -2, -1), keepdim=True)  # Normalization for mean
-
     else:
         target, prediction = cast(tuple[torch.Tensor, torch.Tensor], torch.broadcast_tensors(target, prediction))
+    leading_shape = target.shape[:-3]
+    window_volume = window[0] * window[1] * window[2]
 
-    target_window = sliding_window(target, window_shape=window, dim=(-3, -2, -1)).movedim((0, 1, 2), (-6, -5, -4))
+    def local_mean(tensor: torch.Tensor) -> torch.Tensor:
+        tensor = tensor.reshape(-1, 1, *tensor.shape[-3:])
+        mean = torch.nn.functional.avg_pool3d(tensor, kernel_size=window, stride=1)
+        return mean.reshape(*leading_shape, *mean.shape[-3:])
+
+    def local_max(tensor: torch.Tensor) -> torch.Tensor:
+        tensor = tensor.reshape(-1, 1, *tensor.shape[-3:])
+        maximum = torch.nn.functional.max_pool3d(tensor, kernel_size=window, stride=1)
+        return maximum.reshape(*leading_shape, *maximum.shape[-3:])
+
+    if weight is not None:
+        weight = weight.to(dtype=torch.float32)
+        # Set weights to 0 for windows that are not fully inside the mask.
+        valid = local_mean((weight > 0).to(dtype=weight.dtype)) == 1
+        weight = local_mean(weight) * valid
+        weight /= weight.sum(dim=(-3, -2, -1), keepdim=True).clamp_min(1)
 
     if data_range is None:
         if weight is None:
-            target_max = target_window.amax((-3, -2, -1)).amax((-3, -2, -1), keepdim=True)
-            target_min = target_window.amin((-3, -2, -1)).amin((-3, -2, -1), keepdim=True)
+            target_max = target.amax((-3, -2, -1), keepdim=True)
+            target_min = target.amin((-3, -2, -1), keepdim=True)
         else:
-            target_max = torch.where(weight > 0, target_window.amax((-3, -2, -1)), -torch.inf).amax(
-                (-3, -2, -1), keepdim=True
-            )
-            target_min = torch.where(weight > 0, target_window.amin((-3, -2, -1)), torch.inf).amin(
-                (-3, -2, -1), keepdim=True
-            )
+            target_max = torch.where(weight > 0, local_max(target), -torch.inf).amax((-3, -2, -1), keepdim=True)
+            target_min = torch.where(weight > 0, -local_max(-target), torch.inf).amin((-3, -2, -1), keepdim=True)
         data_range_ = target_max - target_min
     else:
         data_range_ = data_range
+    data_range_ = data_range_.clamp_min(torch.finfo(target.dtype).eps)
 
-    x_window = sliding_window(prediction, window_shape=window, dim=(-3, -2, -1)).movedim((0, 1, 2), (-6, -5, -4))
+    mean_tgt = local_mean(target)
+    mean_img = local_mean(prediction)
 
-    mean_tgt = target_window.mean(dim=(-3, -2, -1))
-    mean_img = x_window.mean(dim=(-3, -2, -1))
+    mean_tgt_tgt = local_mean(target.square())
+    mean_img_img = local_mean(prediction.square())
+    mean_tgt_img = local_mean(target * prediction)
 
-    mean_tgt_tgt = (target_window**2).mean(dim=(-3, -2, -1))
-    mean_img_img = (x_window**2).mean(dim=(-3, -2, -1))
-    mean_tgt_img = (target_window * x_window).mean(dim=(-3, -2, -1))
-
-    n = x_window.shape[-3:].numel()
-    cov_norm = n / (n - 1)
+    cov_norm = window_volume / max(window_volume - 1, 1)
     cov_tgt = cov_norm * (mean_tgt_tgt - mean_tgt * mean_tgt)
     cov_img = cov_norm * (mean_img_img - mean_img * mean_img)
     cov_tgt_img = cov_norm * (mean_tgt_img - mean_tgt * mean_img)
@@ -136,17 +140,17 @@ def ssim3d(
     b2 = cov_tgt + cov_img + c2
 
     ssim_map = (a1 * a2) / (b1 * b2)
+    if weight is not None:
+        ssim_map = torch.where(weight > 0, ssim_map, torch.zeros_like(ssim_map))
 
     if reduction == 'full':
         if weight is not None:
             return (ssim_map * weight).sum((-3, -2, -1)).mean()
-        else:
-            return ssim_map.mean()
+        return ssim_map.mean()
     elif reduction == 'volume':
         if weight is not None:
             return (ssim_map * weight).sum(dim=(-3, -2, -1))
-        else:
-            return ssim_map.mean(dim=(-3, -2, -1))
+        return ssim_map.mean(dim=(-3, -2, -1))
     elif reduction == 'none':
         return ssim_map
 

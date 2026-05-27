@@ -237,29 +237,51 @@ def test_slice_projection_op_forward_mode_autodiff(
 
 
 @pytest.mark.cuda
-def test_slice_projection_op_cuda() -> None:
-    """Test slice projection operator works on CUDA devices."""
+def test_slice_projection_op_cpu_cuda_consistency() -> None:
+    """Construction on CPU and CUDA produces numerically equivalent operators."""
+    input_shape = SpatialDimension(12, 12, 12)
+    output_shape = SpatialDimension(1, 12, 12)
+
+    shift_cpu = torch.tensor([0.0, 1.0])
+    shift_cuda = shift_cpu.cuda()
+
+    rot_cpu = Rotation.identity((2,))
+    rot_cuda = rot_cpu.to('cuda')
     rng = RandomGenerator(0)
-    input_shape = SpatialDimension(10, 20, 30)
-    slice_rotation = Rotation.random(4)
-    slice_shift = rng.float32_tensor(4)
-    slice_profile = SliceGaussian(1.0)
     u = rng.float32_tensor(input_shape.zyx)
 
-    # Create on CPU, transfer to GPU, run on GPU
-    sliceprojection_op = SliceProjectionOp(
+    op_cpu = SliceProjectionOp(
         input_shape=input_shape,
-        slice_rotation=slice_rotation,
-        slice_shift=slice_shift,
-        slice_profile=slice_profile,
-        optimize_for='forward',
+        output_shape=output_shape,
+        slice_rotation=rot_cpu,
+        slice_shift=shift_cpu,
+        slice_profile=2.0,
+        optimize_for='both',
     )
-    operator = sliceprojection_op.H @ sliceprojection_op
-    operator.cuda()
-    (result,) = operator(u.cuda())
-    assert result.is_cuda
+    op_cuda_create = SliceProjectionOp(
+        input_shape=input_shape,
+        output_shape=output_shape,
+        slice_rotation=rot_cuda,
+        slice_shift=shift_cuda,
+        slice_profile=2.0,
+        optimize_for='both',
+    )
 
-    # Creation on GPU is not supported (see docstring)
+    op_cuda_move = SliceProjectionOp(
+        input_shape=input_shape,
+        output_shape=output_shape,
+        slice_rotation=rot_cpu,
+        slice_shift=shift_cpu,
+        slice_profile=2.0,
+        optimize_for='both',
+    ).cuda()
+
+    (result_cpu,) = op_cpu.gram(u)
+    (result_cuda_move,) = op_cuda_move.gram(u.cuda())
+    (result_cuda_create,) = op_cuda_create.gram(u.cuda())
+
+    torch.testing.assert_close(result_cuda_move.cpu(), result_cpu, rtol=1e-4, atol=1e-5)
+    torch.testing.assert_close(result_cuda_create.cpu(), result_cpu, rtol=1e-4, atol=1e-5)
 
 
 def test_slice_projection_op_width() -> None:

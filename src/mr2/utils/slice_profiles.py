@@ -4,9 +4,9 @@ import abc
 from collections.abc import Sequence
 from math import log, pi
 
-import numpy as np
 import torch
 
+from mr2.utils.interpolate import interp
 from mr2.utils.TensorAttributeMixin import TensorAttributeMixin
 from mr2.utils.unit_conversion import GYROMAGNETIC_RATIO_PROTON
 
@@ -250,8 +250,20 @@ class SliceInterpolate(SliceProfileBase):
             Intensities of the measured profile.
         """
         super().__init__()
-        self._xs = positions.detach().cpu().float().numpy()
-        self._weights = values.detach().cpu().float().numpy()
+        if positions.ndim != 1 or values.ndim != 1:
+            raise ValueError('positions and values must be one-dimensional.')
+        if positions.shape != values.shape:
+            raise ValueError('positions and values must have the same shape.')
+        if positions.numel() < 2:
+            raise ValueError('positions and values must contain at least two samples.')
+        sorter = torch.argsort(positions)
+        positions = positions[sorter]
+        values = values[sorter]
+        if not torch.all(positions[:-1] < positions[1:]):
+            raise ValueError('positions must not contain repeated entries.')
+
+        self._xs = positions
+        self._weights = values
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Evaluate the interpolated slice profile at a position.
@@ -267,6 +279,7 @@ class SliceInterpolate(SliceProfileBase):
         """
         if x.requires_grad:
             raise NotImplementedError('Interpolated profile does not support gradients.')
-        x_np = x.detach().cpu().numpy()
-        y_np = torch.as_tensor(np.interp(x_np, self._xs, self._weights, 0, 0))
-        return y_np.to(x.device)
+
+        xs = self._xs.to(device=x.device, dtype=x.dtype)
+        weights = self._weights.to(device=x.device, dtype=x.dtype)
+        return interp(x, xs, weights, left=0.0, right=0.0)
