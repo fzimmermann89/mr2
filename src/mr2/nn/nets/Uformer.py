@@ -98,6 +98,8 @@ class LeWinTransformerBlock(CondMixin, Module):
 
     def forward(self, x: torch.Tensor, *, cond: torch.Tensor | None = None) -> torch.Tensor:
         """Apply the transformer block."""
+        # TODO(issue): Tile the learned modulator with ceil counts and crop to x.shape[1:],
+        # or reject unaligned inputs; floor tiling fails before attention can pad remainders.
         modulator = self.modulator.tile([t // s for t, s in zip(x.shape[1:], self.modulator.shape, strict=False)])
         x_mod = self.norm1(x) + modulator
         x_attn = self.attn(x_mod)

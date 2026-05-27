@@ -46,6 +46,8 @@ class MultiHeadAttention(Module):
         """
         super().__init__()
         n_channels_kv = n_channels_cross if n_channels_cross is not None else n_channels_in
+        # TODO(issue): Validate the query channel/head split and project cross-attention keys and
+        # values to the query attention width; using n_channels_cross breaks unequal inputs.
         channels_per_head_q = n_channels_in // n_heads
         channels_per_head_kv = n_channels_kv // n_heads
         self.to_q = Linear(n_channels_in, channels_per_head_q * n_heads)

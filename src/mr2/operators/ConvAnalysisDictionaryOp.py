@@ -91,6 +91,8 @@ class ConvAnalysisDictionaryOp(LinearOperator):
             )
 
         n_dim = self.kernel.ndim - 1
+        # TODO(issue): Reject even spatial kernels or use asymmetric total padding of k - 1;
+        # symmetric k // 2 padding returns an extra pixel and breaks shape-preserving reshape.
         pad = tuple(p for k in self.kernel.shape[1:] for p in (k // 2, k // 2))
 
         spatial_shape = x.shape[-n_dim:]

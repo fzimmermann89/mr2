@@ -36,6 +36,8 @@ class TransposedAttention(Module):
         super().__init__()
         self.n_heads = n_heads
         self.temperature = Parameter(torch.ones(n_heads, 1, 1))
+        # TODO(issue): Validate n_channels_in % n_heads == 0 before grouped-convolution setup;
+        # otherwise construction fails with an opaque groups/channel incompatibility error.
         channels_per_head = n_channels_in // n_heads
         self.to_qkv = convND(n_dim)(n_channels_in, channels_per_head * n_heads * 3, kernel_size=1)
         self.qkv_dwconv = convND(n_dim)(
