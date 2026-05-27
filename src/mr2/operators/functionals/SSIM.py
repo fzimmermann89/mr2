@@ -106,7 +106,7 @@ def ssim3d(
         # Set weights to 0 for windows that are not fully inside the mask.
         valid = local_mean((weight > 0).to(dtype=weight.dtype)) == 1
         weight = local_mean(weight) * valid
-        weight /= weight.sum(dim=(-3, -2, -1), keepdim=True)  # Normalization for mean
+        weight /= weight.sum(dim=(-3, -2, -1), keepdim=True).clamp_min(1)
 
     if data_range is None:
         if weight is None:
@@ -118,6 +118,7 @@ def ssim3d(
         data_range_ = target_max - target_min
     else:
         data_range_ = data_range
+    data_range_ = data_range_.clamp_min(torch.finfo(target.dtype).eps)
 
     mean_tgt = local_mean(target)
     mean_img = local_mean(prediction)
@@ -126,7 +127,7 @@ def ssim3d(
     mean_img_img = local_mean(prediction.square())
     mean_tgt_img = local_mean(target * prediction)
 
-    cov_norm = window_volume / (window_volume - 1)
+    cov_norm = window_volume / max(window_volume - 1, 1)
     cov_tgt = cov_norm * (mean_tgt_tgt - mean_tgt * mean_tgt)
     cov_img = cov_norm * (mean_img_img - mean_img * mean_img)
     cov_tgt_img = cov_norm * (mean_tgt_img - mean_tgt * mean_img)
@@ -139,6 +140,8 @@ def ssim3d(
     b2 = cov_tgt + cov_img + c2
 
     ssim_map = (a1 * a2) / (b1 * b2)
+    if weight is not None:
+        ssim_map = torch.where(weight > 0, ssim_map, torch.zeros_like(ssim_map))
 
     if reduction == 'full':
         if weight is not None:
