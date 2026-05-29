@@ -493,6 +493,51 @@ def test_dataclass_swapdims() -> None:
     assert a.shape == (10, 20)
 
 
+def test_dataclass_squeeze_none() -> None:
+    """Test squeeze method without an explicit dimension."""
+    a = A()
+    b = a.unsqueeze(0).squeeze()
+    assert b.shape == a.shape
+    assert b == a
+
+
+def test_dataclass_squeeze_dim() -> None:
+    """Test squeeze method with an explicit dimension."""
+    a = A()
+    b = a.unsqueeze(0).squeeze(0)
+    assert b.shape == a.shape
+    assert b == a
+
+
+def test_dataclass_squeeze_dims() -> None:
+    """Test squeeze method with multiple dimensions."""
+    a = A()
+    b = a.unsqueeze(0).unsqueeze(-1).squeeze((0, -1))
+    assert b.shape == a.shape
+    assert b == a
+
+
+def test_dataclass_unsqueeze() -> None:
+    """Test unsqueeze method."""
+    a = A()
+    assert a.unsqueeze(0).shape == (1, 10, 20)
+    assert a.unsqueeze(1).shape == (10, 1, 20)
+    assert a.unsqueeze(-1).shape == (10, 20, 1)
+
+
+def test_dataclass_unsqueeze_multiple() -> None:
+    """Test unsqueeze method with multiple dimensions."""
+    a = A()
+    assert a.unsqueeze(1, n=2).shape == (10, 1, 1, 20)
+
+
+def test_dataclass_unsqueeze_invalid() -> None:
+    """Test unsqueeze method with invalid input."""
+    a = A()
+    with pytest.raises(ValueError, match='n must be non-negative'):
+        a.unsqueeze(0, n=-1)
+
+
 def test_dataclass_rearrange_permute() -> None:
     """Test rearrange method of the dataclass."""
     a = A()
