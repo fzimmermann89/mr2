@@ -7,8 +7,7 @@ on:
   pull_request:
 
 permissions:
-  contents: write
-  packages: read
+  contents: read
 
 defaults:
   run:
@@ -37,13 +36,6 @@ jobs:
     name: Run notebook
     needs: get_notebooks
     runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
-      contents: write
-      packages: read
-    container:
-      image: ghcr.io/fzimmermann89/mr2_py311:latest
-      options: --user root
     strategy:
       fail-fast: false
       matrix:
@@ -52,8 +44,20 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v6
 
-      - name: Install mr2 and dependencies
-        run: pip install --index-url=https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple/ --upgrade --upgrade-strategy "eager" -e .[notebooks]
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            ci/requirements/recommended.txt
+
+      - name: Install recommended environment
+        run: |
+          python -m pip install -r ci/requirements/recommended.txt
+          python -m pip install ismrmrd==1.14.2
+          python -m pip install -e ".[notebooks]"
 
       - name: Notebook name
         run: |
@@ -101,24 +105,32 @@ jobs:
           RUNNER: ${{ toJson(runner) }}
 
   create_documentation:
-    name: Build and deploy documentation
+    name: Build documentation
     needs: run_notebook
     runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/fzimmermann89/mr2_py311:latest
-      options: --user runner
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0 # fetch history for github links
+          fetch-depth: 0
           fetch-tags: true
 
-      - name: Install mr2 and dependencies
-        run: pip install --index-url=https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple/ --upgrade --upgrade-strategy "eager" -e .[docs]
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            ci/requirements/recommended.txt
+
+      - name: Install recommended environment
+        run: |
+          python -m pip install -r ci/requirements/recommended.txt
+          python -m pip install ismrmrd==1.14.2
+          python -m pip install -e ".[docs]"
 
       - name: Download executed notebook ipynb files
-        id: download
         uses: actions/download-artifact@v8
         with:
           path: ./docs/source/_notebooks/
@@ -136,21 +148,15 @@ jobs:
           name: Documentation
           path: docs/build/html/
 
-      # if the one of above steps fails the "artifact-url" will be an empty string
-      - name: Dump documentation info
-        if: always()
-        run: |
-          echo "${{ steps.upload_docs.outputs.artifact-url }}" > artifact_url
+      - name: Store documentation artifact URL
+        run: echo "${{ steps.upload_docs.outputs.artifact-url }}" > artifact_url
 
       - name: Upload docs-metadata artifact
-        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: artifact_url
           path: artifact_url
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-
-  # Cancel in-progress runs when a new workflow with the same group name is triggered
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}

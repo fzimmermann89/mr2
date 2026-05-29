@@ -101,5 +101,7 @@ We are still in pre-release mode and do not guarantee a stable API / strict sema
 
 Compatibility
 =============
-We aim to always be compatible with the latest stable PyTorch release and the latest Python version supported by pytorch. We are compatible with one previous Python version.
+We test three environments: the minimum supported Python and dependency versions, the recommended
+environment (currently Python 3.12 with PyTorch 2.10), and the latest supported Python with the latest
+stable PyTorch release. The recommended environment is also available as a Docker image.
 Our type hints will usually only be valid with the latest PyTorch version.

@@ -10,15 +10,16 @@ jobs:
   pre-commit:
     name: Pre-commit
     runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/fzimmermann89/mr2_py311:latest
-      options: --user runner
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
       - uses: pre-commit/action@v3.0.1
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-
-  # Cancel in-progress runs when a new workflow with the same group name is triggered
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}

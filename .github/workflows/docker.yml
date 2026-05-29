@@ -1,4 +1,4 @@
-name: Build and test docker
+name: Build and test Docker
 
 on:
   pull_request:
@@ -8,153 +8,96 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: ghcr.io/fzimmermann89/mr2_py312
 
 jobs:
-  get_dockerfiles:
-    name: Get list of Docker files for different containers
-    runs-on: ubuntu-latest
-    outputs:
-      docker_toml: ${{ steps.filter.outputs.docker_toml }}
-      docker_tasks: ${{ steps.set-matrix.outputs.docker_tasks }}
-    steps:
-      - name: Checkout mr2 repo
-        uses: actions/checkout@v6
-
-      - name: Check if files in docker or the toml file has been modified
-        uses: dorny/paths-filter@v4
-        id: filter
-        with:
-          filters: |
-            docker_toml:
-              - 'docker/*'
-              - '.github/workflows/docker.yml'
-
-      - name: Do we need to do something?
-        run: |
-          echo "Push to main? ${{ github.event_name }} "
-          echo "Rebuild containers? ${{ steps.filter.outputs.docker_toml }}"
-
-      - name: Define docker image names
-        id: set-matrix
-        if: steps.filter.outputs.docker_toml == 'true' || github.event_name == 'push'
-        run: |
-          # docker_tasks is a list of pairs (dictionaries) with keys 'filepath' and 'image_name' like:
-          # [{"filepath": "docker/Dockerfile_x1", "image_name": "ghcr.io/fzimmermann89/mr2_x1"}, ...]
-          docker_tasks=$(find docker -type f -name 'Dockerfile_*' | jq -R -s -c 'split("\n")[:-1]' | \
-          jq -r -c 'map({filepath: ., image_name:  . | sub("docker/Dockerfile"; "ghcr.io\/fzimmermann89\/mr2")})')
-          echo "docker_tasks: $docker_tasks"
-          echo "docker_tasks=$docker_tasks" >> $GITHUB_OUTPUT
-
-      - name: Dockerfile overview
-        if: steps.filter.outputs.docker_toml == 'true' || github.event_name == 'push'
-        run: |
-          echo "final list of docker_tasks: ${{ steps.set-matrix.outputs.docker_tasks }}"
-
-  push_test:
-    name: Create test images and push to GCR
-    needs: get_dockerfiles
-    if: needs.get_dockerfiles.outputs.docker_toml == 'true' || github.event_name == 'push'
+  validate-pr:
+    name: Build and test recommended image
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        docker_task: ${{ fromJson(needs.get_dockerfiles.outputs.docker_tasks) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Get image basename
-        id: image_name
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build candidate image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile_py312
+          load: true
+          push: false
+          tags: ${{ env.IMAGE_NAME }}:candidate
+          cache-from: type=gha,scope=mr2_py312
+          cache-to: type=gha,mode=max,scope=mr2_py312
+
+      - name: Run PyTest in candidate image
+        env:
+          ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}
         run: |
-          echo "dockerfile_basename=$(basename ${{ matrix.docker_task.filepath }})" >> $GITHUB_OUTPUT
+          docker run --rm \
+            -e ZENODO_TOKEN \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -w /tmp \
+            "${IMAGE_NAME}:candidate" \
+            bash -lc 'python -c "import torch; assert torch.__version__.startswith(\"2.10.0\"); assert torch.version.cuda is None; print(torch.__version__)" && python -m pip install --user --no-cache-dir pytest pytest-cov coverage codecov pytest-github-actions-annotate-failures && python -m pytest /workspace/tests -m "not cuda"'
+
+  publish:
+    name: Build, test, and publish recommended image
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Login to GitHub Packages
+      - name: Build candidate image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile_py312
+          load: true
+          push: false
+          tags: ${{ env.IMAGE_NAME }}:candidate
+          cache-from: type=gha,scope=mr2_py312
+          cache-to: type=gha,mode=max,scope=mr2_py312
+
+      - name: Run PyTest in candidate image
+        env:
+          ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}
+        run: |
+          docker run --rm \
+            -e ZENODO_TOKEN \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -w /tmp \
+            "${IMAGE_NAME}:candidate" \
+            bash -lc 'python -c "import torch; assert torch.__version__.startswith(\"2.10.0\"); assert torch.version.cuda is None; print(torch.__version__)" && python -m pip install --user --no-cache-dir pytest pytest-cov coverage codecov pytest-github-actions-annotate-failures && python -m pytest /workspace/tests -m "not cuda"'
+
+      - name: Login to GitHub Container Registry
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          cache-from: type=gha,scope=${{ steps.image_name.outputs.dockerfile_basename }}
-          cache-to: type=gha,mode=max,scope=${{ steps.image_name.outputs.dockerfile_basename }}
-          file: ${{ matrix.docker_task.filepath }}
-          push: true
-          tags: ${{ matrix.docker_task.image_name }}:test
-
-  test:
-    name: Test docker containers
-    needs: [get_dockerfiles, push_test]
-    if: needs.get_dockerfiles.outputs.docker_toml == 'true' || github.event_name == 'push'
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
-      contents: write
-    strategy:
-      matrix:
-        docker_task: ${{ fromJson(needs.get_dockerfiles.outputs.docker_tasks) }}
-    # runs within Docker container
-    container:
-      image: ${{ matrix.docker_task.image_name }}:test
-      options: --user runner
-
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v6
-
-      - name: Install mr2 and dependencies
+      - name: Publish tested image
         run: |
-          # for the test of minimal requirements we do not want to update dependencies
-          # the image_url is like ghcr.io/fzimmermann89/mr2_py310_minimal, we want to check the last part after the last slash
-          image_url="${{ matrix.docker_task.image_name }}"
-          if [ "${image_url##*/}" = "mr2_py310_minimal" ]; then
-            pip install .[tests]
-          elif [ "${image_url##*/}" = "mr2_runner" ]; then
-            pip install --upgrade --upgrade-strategy eager .[tests]
-          else
-            pip install --index-url=https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple/ --upgrade --upgrade-strategy eager .[tests]
-          fi
+          docker tag "${IMAGE_NAME}:candidate" "${IMAGE_NAME}:latest"
+          docker push "${IMAGE_NAME}:latest"
 
-      - name: Install pytest-github-actions-annotate-failures plugin
-        run: pip install pytest-github-actions-annotate-failures
-
-      - name: Run PyTest
-        run: |
-          python -m pytest -m "not cuda"
-
-  push_latest:
-    name: Pull latest images and push to GCR with new tag
-    needs: [get_dockerfiles, test]
-    if: needs.get_dockerfiles.outputs.docker_toml == 'true' || github.event_name == 'push'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    strategy:
-      matrix:
-        docker_task: ${{ fromJson(needs.get_dockerfiles.outputs.docker_tasks) }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Login to GitHub Packages
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: fzimmermann89
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Pull and push Docker image with new tag
-        run: |
-            docker pull ${{ matrix.docker_task.image_name }}:test
-            docker tag ${{ matrix.docker_task.image_name }}:test ${{ matrix.docker_task.image_name }}:latest
-            docker push ${{ matrix.docker_task.image_name}}:latest
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
