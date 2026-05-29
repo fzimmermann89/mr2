@@ -84,8 +84,8 @@ class SliceProjectionOp(LinearOperator):
 
     The projection will be done by sparse matrix multiplication.
 
-    `slice_rotation`, `slice_shift`, and `slice_profile` can have (multiple) batch dimensions. These dimensions will
-    be broadcasted to a common shape and added to the front of the volume.
+    `slice_rotation`, `slice_shift`, `global_offset`, and `slice_profile` can have (multiple) batch dimensions.
+    These dimensions will be broadcasted to a common shape and added to the front of the volume.
     Different settings for different volume batches are NOT supported, consider creating multiple
     operators if required.
     """
@@ -99,6 +99,7 @@ class SliceProjectionOp(LinearOperator):
         output_shape: SpatialDimension[int] | None = None,
         slice_rotation: Rotation | None = None,
         slice_shift: float | Tensor = 0.0,
+        global_offset: SpatialDimension[Tensor] | None = None,
         slice_profile: TensorFunction | np.ndarray | NestedSequence[TensorFunction] | float = 2.0,
         optimize_for: Literal['forward', 'adjoint', 'both'] = 'both',
     ):
@@ -111,7 +112,7 @@ class SliceProjectionOp(LinearOperator):
 
         The projection will be done by sparse matrix multiplication.
 
-        Rotation, shift, and profile can have (multiple) batch dimensions. These dimensions will
+        Rotation, shift, global offset, and profile can have (multiple) batch dimensions. These dimensions will
         be broadcasted to a common shape and added to the front of the volume.
         Different settings for different volume batches are NOT supported, consider creating multiple
         operators if required.
@@ -133,6 +134,8 @@ class SliceProjectionOp(LinearOperator):
         slice_shift
             Offset of the plane in the volume perpendicular plane from the center of the volume.
             (The center of a 4 pixel volume is between 1 and 2.)
+        global_offset
+            Additional offset of the rotated plane in global volume coordinates `(z, y, x)`.
         slice_profile
             A function returning the relative intensity of the slice profile at a position x
             (relative to the nominal profile center). This can also be a nested Sequence or an
@@ -151,14 +154,38 @@ class SliceProjectionOp(LinearOperator):
 
         slice_shift_tensor = cast(Tensor, torch.atleast_1d(torch.as_tensor(slice_shift)))
 
+        devices = []
+        batch_shape = [slice_shift_tensor.shape, slice_profile_array.shape]
+        if slice_rotation is not None:
+            devices.append(slice_rotation.device)
+            batch_shape.append(slice_rotation.shape)
+        if isinstance(slice_shift, Tensor):
+            devices.append(slice_shift_tensor.device)
+        if global_offset is not None:
+            global_offset = global_offset.apply(lambda el: torch.atleast_1d(torch.as_tensor(el)))
+            assert global_offset.device is not None
+            devices.append(global_offset.device)
+            batch_shape.append(global_offset.shape)
+        if len(set(devices)) > 1:
+            raise ValueError('slice_rotation, slice_shift, and global_offset must be on the same device')
+        device = devices[0] if devices else torch.device('cpu')
         if slice_rotation is None:
-            device = slice_shift_tensor.device
             slice_rotation = Rotation.identity(device=device)
-        else:
-            device = slice_rotation.device
-            if isinstance(slice_shift, Tensor) and slice_shift_tensor.device != device:
-                raise ValueError('slice_shift and slice_rotation must be on the same device')
-            slice_shift_tensor = slice_shift_tensor.to(device)
+
+        slice_shift_tensor = slice_shift_tensor.to(device)
+        batch_shape = torch.broadcast_shapes(*batch_shape)
+        assert isinstance(batch_shape, torch.Size)  # mypy
+
+        slice_shift_tensor = torch.broadcast_to(slice_shift_tensor, batch_shape).flatten()
+        slice_rotation = slice_rotation.expand(*batch_shape).reshape(-1)
+        zero = torch.zeros_like(slice_shift_tensor)
+        local_offset = SpatialDimension(slice_shift_tensor, zero, zero)
+
+        if global_offset is not None:
+            global_offset = global_offset.to(device=device)
+            global_offset = global_offset.apply(lambda el: torch.broadcast_to(el, batch_shape).flatten())
+            local_offset = local_offset + slice_rotation(global_offset, inverse=True)
+        local_offset = local_offset.apply(lambda el: torch.broadcast_to(el, slice_shift_tensor.shape))
 
         max_shape = max(input_shape.z, input_shape.y, input_shape.x)
         if output_shape is None:
@@ -184,24 +211,21 @@ class SliceProjectionOp(LinearOperator):
                 ' i.e. the profile should be greater then 1e-6 in (-0.5, 0.5)'
             )
 
-        batch_shapes = torch.broadcast_shapes(slice_rotation.shape, slice_shift_tensor.shape, slice_profile_array.shape)
-        assert isinstance(batch_shapes, torch.Size)  # mypy
-        slice_rotation = slice_rotation.expand(*batch_shapes).reshape(-1)
-        slice_shift_tensor = torch.broadcast_to(slice_shift_tensor, batch_shapes).flatten()
-        widths = np.broadcast_to(np.vectorize(_find_width)(slice_profile_array), batch_shapes).ravel()
-        slice_profile_array = np.broadcast_to(slice_profile_array, batch_shapes).ravel()
+        widths = np.broadcast_to(np.vectorize(_find_width)(slice_profile_array), batch_shape).ravel()
+        slice_profile_array = np.broadcast_to(slice_profile_array, batch_shape).ravel()
+
         matrix = SliceProjectionOp.join_matrices(
             [
                 SliceProjectionOp.projection_matrix(
                     input_shape,
                     output_shape,
-                    offset=torch.stack([shift, shift.new_zeros(()), shift.new_zeros(())]),
+                    offset=torch.stack(offset),
                     slice_function=f,
                     rotation=rot,
                     w=int(w),
                 )
-                for rot, shift, f, w in zip(
-                    slice_rotation, slice_shift_tensor, slice_profile_array, widths, strict=True
+                for rot, *offset, f, w in zip(
+                    slice_rotation, *local_offset.zyx, slice_profile_array, widths, strict=True
                 )
             ]
         )
@@ -223,7 +247,7 @@ class SliceProjectionOp(LinearOperator):
             else:
                 raise ValueError("optimize_for must be one of 'forward', 'adjoint', 'both'")
 
-        self._range_shape: tuple[int] = (*batch_shapes, 1, output_shape.y, output_shape.x)
+        self._range_shape: tuple[int] = (*batch_shape, 1, output_shape.y, output_shape.x)
         self._domain_shape = input_shape.zyx
 
     def __call__(self, x: Tensor) -> tuple[Tensor]:
