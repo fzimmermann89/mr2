@@ -121,6 +121,7 @@ filterwarnings = [
     "ignore:The \\.grad attribute of a Tensor that is not a leaf Tensor is being accessed:UserWarning", # torch dynamo bug in flex attention
     "ignore:`torch.jit.script` is deprecated:DeprecationWarning", # torch 2.10
     "ignore:`torch.jit.script_method` is deprecated", # torch 2.10
+    "ignore:Due to '_pack_'.*Structure will use memory layout compatible with MSVC.*:DeprecationWarning:ismrmrd\\.acquisition", # ismrmrd on Python 3.14
 ]
 markers = ["cuda : Tests only to be run when cuda device is available"]
 
