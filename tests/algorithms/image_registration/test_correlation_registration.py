@@ -60,6 +60,24 @@ def test_correlation_registration_3d() -> None:
     torch.testing.assert_close(shift.x, torch.full_like(shift.x, -3.0), atol=1e-2, rtol=0)
 
 
+def test_correlation_registration_search_mask() -> None:
+    """search_mask restricts the recovered shift to the allowed region."""
+    y = torch.linspace(-1.0, 1.0, 32)
+    x = torch.linspace(-1.0, 1.0, 32)
+    yy, xx = torch.meshgrid(y, x, indexing='ij')
+    fixed = torch.exp(-(yy.square() + xx.square()) / 0.05)[None, None, None]
+    moving = torch.zeros_like(fixed)
+    moving[..., 3:, :] = fixed[..., :-3, :]
+
+    search_mask = torch.zeros(1, 1, 1, 32, 32, dtype=torch.bool)
+    search_mask[..., 16:, :] = True
+
+    shift = correlation_registration(fixed, moving, search_mask=search_mask)
+
+    torch.testing.assert_close(shift.z, torch.zeros_like(shift.z))
+    assert shift.y.item() >= 0
+
+
 def test_correlation_registration_with_mask() -> None:
     """Test masked correlation registration."""
     y = torch.linspace(-1.0, 1.0, 48)
