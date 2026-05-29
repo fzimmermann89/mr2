@@ -26,6 +26,17 @@ In most cases, you can replace `mrpro` by `mr2` in you code and everything works
 - **Bug reports:** <https://github.com/fzimmermann89/mr2/issues>
 - **Try it out:** [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/fzimmermann89/mr2)
 
+## Changes compared to MRpro
+
+MRtwo keeps the MRpro reconstruction and data model, but adds several larger extensions. Some of these features or fixes have already been backported to MRpro, and others might be backported in the future in the same or similar form.
+
+- **Bloch-McConnell simulation:** MRtwo includes a Bloch-McConnell simulation framework for multi-pool magnetization models with exchange, relaxation, chemical shift, off-resonance, and RF pulse effects. This enables quantitative MRI and CEST-style workflows that need coupled exchanging pools rather than single-pool signal models.
+- **MR2 file format:** MRtwo dataclasses can be saved and restored with the MR2 HDF5-based format using `save_as_mr2` and `from_mr2`. This gives native round-tripping for objects such as `KData`, `IData`, headers, trajectories, tensors, rotations, and nested dataclasses without converting through ISMRMRD or DICOM.
+- **Image registration:** MRtwo adds an image-registration module with affine, spline, and correlation-based registration utilities, including subpixel correlation registration, for building registration and motion-estimation workflows directly in the MRtwo operator/data ecosystem.
+- **Neural network module:** `mr2.nn` provides MRI-oriented PyTorch components, including N-dimensional convolution and pooling helpers, normalization layers, residual blocks, FiLM conditioning, Fourier features, positional encodings, attention blocks, data-consistency layers, and ready-to-use models such as UNet, BasicCNN, MLP, VAE, Restormer, SwinIR, Uformer, HourglassTransformer, and DiT.
+- **Additional reconstruction and qMRI tools:** MRtwo adds differentiable dictionary matching, ADMM and BiCG solvers, ROVir coil compression, improved coil-sensitivity estimation with optional extrapolation, and smaller helper operators such as lookup-table interpolation.
+- **Bug fixes and robustness improvements:** MRtwo includes fixes and follow-up improvements for CUDA execution, reconstruction setup, slice projection, interpolation, dictionary matching, PCA compression, tensor/device handling, and compatibility with newer PyTorch and ISMRMRD versions.
+
 ## Main features
 - **Data handling** Custom dataclasses for fast data subsetting, sorting, rearranging
 - **Neural Network Block** Common blocks and networks used for ML based MRI reconstruction
