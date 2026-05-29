@@ -162,6 +162,8 @@ class SliceProjectionOp(LinearOperator):
         if isinstance(slice_shift, Tensor):
             devices.append(slice_shift_tensor.device)
         if global_offset is not None:
+            global_offset = global_offset.apply(lambda el: torch.atleast_1d(torch.as_tensor(el)))
+            assert global_offset.device is not None
             devices.append(global_offset.device)
             batch_shape.append(global_offset.shape)
         if len(set(devices)) > 1:
