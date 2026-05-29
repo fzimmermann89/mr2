@@ -117,6 +117,29 @@ def test_slice_projection_op_cube_shift(axis: Literal['x', 'y', 'z'], match_shif
     assert (slice2d > 0.01).sum() == match_shift
 
 
+@pytest.mark.parametrize('axis', ['x', 'y', 'z'])
+def test_slice_projection_op_global_offset(axis: Literal['x', 'y', 'z']) -> None:
+    input_shape = SpatialDimension(21, 21, 21)
+    slice_rotation = Rotation.from_euler(axis, 90, degrees=True)
+    global_offset = SpatialDimension(
+        z=torch.tensor(1.0),
+        y=torch.tensor(2.0),
+        x=torch.tensor(3.0),
+    )
+    volume = torch.zeros(input_shape.zyx)
+    volume[10 + 1, 10 + 2, 10 + 3] = 1
+
+    operator = SliceProjectionOp(
+        input_shape=input_shape,
+        slice_rotation=slice_rotation,
+        global_offset=global_offset,
+        slice_profile=1.0,
+    )
+    (slice2d,) = operator(volume)
+
+    assert (slice2d > 0.01).sum() == 1
+
+
 def test_slice_projection_width_error() -> None:
     input_shape = SpatialDimension(1, 1, 1)
     slice_profile = 0.99
@@ -139,6 +162,7 @@ def test_slice_projection_op_slice_batching() -> None:
     input_shape = SpatialDimension(10, 20, 30)
     slice_rotation = Rotation.random((5, 1), 0)
     slice_shift = rng((5, 3))
+    global_offset = SpatialDimension(z=rng((5, 1)), y=rng((1, 3)), x=torch.tensor(0.0))
     xp = torch.linspace(-2, 2, 100)
     yp = (xp.abs() < 1).float()
     interpolated_profile = SliceInterpolate(xp, yp)
@@ -147,6 +171,7 @@ def test_slice_projection_op_slice_batching() -> None:
         input_shape=input_shape,
         slice_rotation=slice_rotation,
         slice_shift=slice_shift,
+        global_offset=global_offset,
         slice_profile=slice_profile,
     )
     u = rng(input_shape.zyx)
