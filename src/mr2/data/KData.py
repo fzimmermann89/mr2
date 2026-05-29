@@ -352,14 +352,13 @@ class KData(Dataclass):
         """Squeeze KData along the specified dimensions."""
         shape = self.shape
         n_dim = len(shape)
-        dims_set = (
-            set(normalize_indices(n_dim, dim))
-            if dim is not None
-            else {i for i, size in enumerate(shape) if size == 1}
-        )
+        if dim is None:
+            dims_set = {i for i, size in enumerate(shape) if size == 1}
+        else:
+            dims_set = set(normalize_indices(n_dim, dim))
         if dims_set and n_dim - len(dims_set) < 5:
             warnings.warn(
-                'Squeezing leaves fewer dimensions than the usual (*other, coil, k2, k1, k0) alignment.',
+                'Squeezing leaves fewer dimensions than the usual (*other, coil, k2, k1, k0).',
                 stacklevel=2,
             )
 
