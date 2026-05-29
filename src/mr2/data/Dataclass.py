@@ -18,7 +18,13 @@ from typing_extensions import Any, Protocol, Self, TypeVar, dataclass_transform,
 
 from mr2.utils.indexing import HasIndex, Indexer
 from mr2.utils.reduce_repeat import reduce_repeat
-from mr2.utils.reshape import broadcast_shapes_except, broadcasted_concatenate, broadcasted_rearrange, normalize_index
+from mr2.utils.reshape import (
+    broadcast_shapes_except,
+    broadcasted_concatenate,
+    broadcasted_rearrange,
+    normalize_index,
+    normalize_indices,
+)
 from mr2.utils.summarize import summarize_object
 from mr2.utils.typing import TorchIndexerType
 
@@ -957,6 +963,50 @@ class Dataclass:
 
         new = shallowcopy(self)
         return new.apply_(apply_rearrange, memo=memo, recurse=False)
+
+    def squeeze(self, dim: int | Sequence[int] | None = None) -> Self:
+        """Squeeze the dataclass along the specified dimensions.
+
+        Parameters
+        ----------
+        dim
+            Dimensions to squeeze. The selected broadcasted dimensions must be singleton.
+            If `None`, all singleton dimensions are squeezed.
+        """
+        shape = self.shape
+        n_dim = len(shape)
+        dims_set = (
+            set(normalize_indices(n_dim, dim))
+            if dim is not None
+            else {i for i, size in enumerate(shape) if size == 1}
+        )
+        if not dims_set:
+            return self
+
+        input_axes = ['1' if i in dims_set else f'dim{i}' for i in range(n_dim)]
+        output_axes = [f'dim{i}' for i in range(n_dim) if i not in dims_set]
+        return self.rearrange(f'{" ".join(input_axes)} -> {" ".join(output_axes)}')
+
+    def unsqueeze(self, dim: int, n: int = 1) -> Self:
+        """Unsqueeze the dataclass at a specific dimension.
+
+        Parameters
+        ----------
+        dim
+            Dimension at which to insert singleton dimensions.
+        n
+            Number of singleton dimensions to insert.
+        """
+        if n < 0:
+            raise ValueError('n must be non-negative')
+        if n == 0:
+            return self
+
+        n_dim = self.ndim
+        dim = normalize_index(n_dim + 1, dim)
+        axes = [f'dim{i}' for i in range(n_dim)]
+        output_axes = [*axes[:dim], *['1'] * n, *axes[dim:]]
+        return self.rearrange(f'{" ".join(axes)} -> {" ".join(output_axes)}')
 
     def swapdims(self, dim0: int, dim1: int) -> Self:
         """Swap two dimensions of the dataclass.

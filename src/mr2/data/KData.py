@@ -348,6 +348,31 @@ class KData(Dataclass):
         traj = KTrajectory(kz, ky, kx, self.traj.grid_detection_tolerance, self.traj.repeat_detection_tolerance)
         return type(self)(header=header._reduce_repeats_(), data=data, traj=traj._reduce_repeats_())
 
+    def squeeze(self, dim: int | Sequence[int] | None = None) -> Self:
+        """Squeeze KData along the specified dimensions."""
+        shape = self.shape
+        n_dim = len(shape)
+        dims_set = (
+            set(normalize_indices(n_dim, dim))
+            if dim is not None
+            else {i for i, size in enumerate(shape) if size == 1}
+        )
+        if dims_set and n_dim - len(dims_set) < 5:
+            warnings.warn(
+                'Squeezing leaves fewer dimensions than the usual (*other, coil, k2, k1, k0) alignment.',
+                stacklevel=2,
+            )
+
+        for d in dims_set:
+            if d >= n_dim - 4:
+                warnings.warn(
+                    f'Squeezing removes the assumed {("coil", "k2", "k1", "k0")[d - (n_dim - 4)]} dimension. '
+                    'This can cause misalignment of other dimensions with the assumed '
+                    '(*other, coil, k2, k1, k0) alignment.',
+                    stacklevel=2,
+                )
+        return super().squeeze(dim)
+
     def to_file(self, filename: FileOrPath) -> None:
         """Save KData as ISMRMRD dataset to file.
 
