@@ -975,11 +975,10 @@ class Dataclass:
         """
         shape = self.shape
         n_dim = len(shape)
-        dims_set = (
-            set(normalize_indices(n_dim, dim))
-            if dim is not None
-            else {i for i, size in enumerate(shape) if size == 1}
-        )
+        if dim is None:
+            dims_set = {i for i, size in enumerate(shape) if size == 1}
+        else:
+            dims_set = set(normalize_indices(n_dim, dim))
         if not dims_set:
             return self
 
