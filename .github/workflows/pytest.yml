@@ -32,6 +32,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -48,7 +50,7 @@ jobs:
 
       - name: Install latest CPU PyTorch
         if: matrix.environment == 'latest'
-        run: python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+        run: python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple/
 
       - name: Install MRtwo and test dependencies
         run: python -m pip install ".[tests]" pytest-github-actions-annotate-failures

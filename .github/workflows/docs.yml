@@ -20,6 +20,8 @@ jobs:
     steps:
       - name: Checkout mr2 repo
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - id: set-matrix
         run: |
@@ -43,6 +45,8 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -112,6 +116,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          persist-credentials: false
           fetch-depth: 0
           fetch-tags: true
 
