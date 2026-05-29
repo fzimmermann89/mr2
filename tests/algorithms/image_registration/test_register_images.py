@@ -1,7 +1,6 @@
 """Tests for multi-level image registration."""
 
 import torch
-
 from mr2.algorithms.image_registration.register_images import register_images
 from mr2.data import SpatialDimension
 from mr2.operators import GridSamplingOp

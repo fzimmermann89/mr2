@@ -1,7 +1,6 @@
 """Tests for correlation-based image registration."""
 
 import torch
-
 from mr2.algorithms.image_registration.correlation_registration import correlation_registration
 from mr2.data import SpatialDimension
 

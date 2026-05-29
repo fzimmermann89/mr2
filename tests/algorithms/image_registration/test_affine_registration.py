@@ -2,7 +2,6 @@
 
 import pytest
 import torch
-
 from mr2.algorithms.image_registration.affine_registration import affine_registration
 from mr2.data import SpatialDimension
 from mr2.operators import GridSamplingOp
