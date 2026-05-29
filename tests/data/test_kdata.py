@@ -93,6 +93,27 @@ def test_KData_reshape_by_idx_idempotent(ismrmrd_cart) -> None:
     assert kdata.shape == kdata_reshaped.shape
 
 
+@pytest.mark.parametrize(
+    ('index', 'dim', 'axis_name'),
+    [
+        ((..., slice(0, 1), slice(None), slice(None), slice(None)), -4, 'coil'),
+        ((..., slice(None), slice(0, 1), slice(None), slice(None)), -3, 'k2'),
+        ((..., slice(None), slice(None), slice(0, 1), slice(None)), -2, 'k1'),
+        ((..., slice(None), slice(None), slice(None), slice(0, 1)), -1, 'k0'),
+    ],
+)
+def test_KData_squeeze_warns_for_named_data_axes(
+    consistently_shaped_kdata: KData,
+    index,
+    dim: int,
+    axis_name: str,
+) -> None:
+    """Test KData squeeze warnings use KData axis names."""
+    kdata = consistently_shaped_kdata[index]
+    with pytest.warns(UserWarning, match=f'assumed {axis_name} dimension'):
+        kdata.squeeze(dim)
+
+
 def test_KData_calibration_lines(ismrmrd_cart_with_calibration_lines) -> None:
     """Correct handling of calibration lines."""
     # Exclude calibration lines
