@@ -83,6 +83,8 @@ jobs:
           github.event.workflow_run.head_branch == 'main' &&
           github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v8

@@ -85,7 +85,11 @@ kdata = KData.from_file(data_file.name, KTrajectoryPulseq(seq_path=seq_file.name
 Full example: <https://github.com/fzimmermann89/mr2/blob/main/examples/scripts/comparison_trajectory_calculators.py>
 
 ## Development
+
 `pip install -e ".[dev]"`
+
+MRtwo requires PyTorch 2.3.1 or newer. CI currently validates the minimum
+supported CPU build, PyTorch 2.3.1, and the recommended CPU build, PyTorch 2.10.0.
 
 ### Docker
 
