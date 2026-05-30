@@ -85,7 +85,7 @@ kdata = KData.from_file(data_file.name, KTrajectoryPulseq(seq_path=seq_file.name
 Full example: <https://github.com/fzimmermann89/mr2/blob/main/examples/scripts/comparison_trajectory_calculators.py>
 
 ## Development
- ``` pip install -e ".[dev]" ```
+`pip install -e ".[dev]"`
 
 ### Docker
 
