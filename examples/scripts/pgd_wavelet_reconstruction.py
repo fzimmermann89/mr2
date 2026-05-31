@@ -123,7 +123,7 @@ img_direct_24 = direct_reconstruction_24(kdata_24spokes)
 # stopping of the 24 spokes data. We use it as a comparison and as an initial guess for FISTA.
 
 # %%
-sense_reconstruction = mr2.algorithms.reconstruction.IterativeSENSEReconstruction(
+sense_reconstruction = mr2.algorithms.reconstruction.RegularizedIterativeSENSEReconstruction(
     kdata_24spokes,
     n_iterations=8,
     csm=direct_reconstruction_24.csm_op,

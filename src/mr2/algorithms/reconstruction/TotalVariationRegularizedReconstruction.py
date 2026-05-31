@@ -151,16 +151,7 @@ class TotalVariationRegularizedReconstruction(DirectReconstruction):
 
         (right_hand_side,) = acquisition_operator.H(kdata.data)
 
-        if self.dcf_op is not None:
-            (u,) = (acquisition_operator.H @ self.dcf_op)(kdata.data)
-            (v,) = (acquisition_operator.H @ self.dcf_op @ acquisition_operator)(u)
-            u_flat = u.flatten(start_dim=-3)
-            v_flat = v.flatten(start_dim=-3)
-            initial_value = (
-                unsqueeze_right(torch.linalg.vecdot(u_flat, u_flat) / torch.linalg.vecdot(v_flat, u_flat), 3) * u
-            )
-        else:
-            initial_value = torch.zeros_like(right_hand_side)
+        initial_value = self._iterative_initial_value(acquisition_operator, kdata.data, right_hand_side)
 
         (initial_value,) = cg(
             acquisition_operator.gram,
