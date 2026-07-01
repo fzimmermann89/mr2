@@ -18,7 +18,7 @@ jobs:
       docker_tasks: ${{ steps.set-matrix.outputs.docker_tasks }}
     steps:
       - name: Checkout mr2 repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Check if files in docker or the toml file has been modified
         uses: dorny/paths-filter@v4
@@ -64,7 +64,7 @@ jobs:
         docker_task: ${{ fromJson(needs.get_dockerfiles.outputs.docker_tasks) }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Get image basename
         id: image_name
@@ -109,7 +109,7 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install mr2 and dependencies
         run: |
@@ -144,7 +144,7 @@ jobs:
         docker_task: ${{ fromJson(needs.get_dockerfiles.outputs.docker_tasks) }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Login to GitHub Packages
         uses: docker/login-action@v4

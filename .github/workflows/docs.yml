@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout mr2 repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - id: set-matrix
         run: |
@@ -50,7 +50,7 @@ jobs:
         notebook_path: ${{ fromJson(needs.get_notebooks.outputs.notebook_paths) }}
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install mr2 and dependencies
         run: pip install --index-url=https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple/ --upgrade --upgrade-strategy "eager" -e .[notebooks]
@@ -109,7 +109,7 @@ jobs:
       options: --user runner
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0 # fetch history for github links
           fetch-tags: true
