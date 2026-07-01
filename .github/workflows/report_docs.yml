@@ -112,7 +112,7 @@ jobs:
 
       - name: Upload pages
         id: upload_pages
-        uses: actions/upload-pages-artifact@v4
+        uses: actions/upload-pages-artifact@v5
         with:
           path: html_build
 
