@@ -93,8 +93,8 @@ def pgd(
     convergent_iterates_variant
         by default, the algorithm updates the variable t as originally described in [BE2009]_.
         If set to `True`, the algorithm updates t as suggested by [CHAM2015]_,
-        i.e. at iteration :math:`n`, :math:`t_n = \frac{n+a-1}{a}`, with chosen :math:`a=3`.
-        This choice ensures the theoretical convergence of solution.
+        i.e. :math:`t_n = \frac{n+a-1}{a}` for :math:`n \geq 1`, with chosen :math:`a=3`.
+        This choice ensures the theoretical convergence of the iterates.
     callback
         function to be called at each iteration. This can be used to monitor the progress of the algorithm.
         If it returns `False`, the algorithm stops at that iteration.
@@ -156,7 +156,8 @@ def pgd(
                 raise RuntimeError('Stepsize to small.')
 
         if convergent_iterates_variant:
-            t = (iteration + 2) / 3
+            # Zero-based loop iteration i computes t_{i+2}, starting with t_2 = 4/3.
+            t = (iteration + 4) / 3
         else:
             t = (1 + math.sqrt(1 + 4 * t_old**2)) / 2
 
