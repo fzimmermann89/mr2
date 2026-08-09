@@ -292,6 +292,30 @@ def ismrmrd_cart_invalid_reps(tmp_path_factory):
 
 
 @pytest.fixture(scope='session')
+def ismrmrd_cart_variable_readout(ellipse_phantom, tmp_path_factory):
+    """Cartesian data with one readout shorter than all remaining readouts."""
+    ismrmrd_filename = tmp_path_factory.mktemp('mr2') / 'ismrmrd_cart_variable_readout.h5'
+    return IsmrmrdRawTestData(
+        filename=ismrmrd_filename,
+        noise_level=0.0,
+        phantom=ellipse_phantom.phantom,
+        variable_readout_length=True,
+    )
+
+
+@pytest.fixture(scope='session')
+def ismrmrd_cart_four_trajectory_coordinates(ellipse_phantom, tmp_path_factory):
+    """Cartesian data with an unsupported fourth trajectory coordinate."""
+    ismrmrd_filename = tmp_path_factory.mktemp('mr2') / 'ismrmrd_cart_four_trajectory_coordinates.h5'
+    return IsmrmrdRawTestData(
+        filename=ismrmrd_filename,
+        noise_level=0.0,
+        phantom=ellipse_phantom.phantom,
+        trajectory_dimensions=4,
+    )
+
+
+@pytest.fixture(scope='session')
 def ismrmrd_cart_random_us(ellipse_phantom, tmp_path_factory):
     """Randomly undersampled cartesian data set with repetitions."""
     ismrmrd_filename = tmp_path_factory.mktemp('mr2') / 'ismrmrd_cart.h5'

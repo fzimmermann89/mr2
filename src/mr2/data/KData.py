@@ -204,6 +204,8 @@ class KData(Dataclass):
                 'Please open an issue of you need to handle this kind of data.',
                 stacklevel=1,
             )
+        # TODO(issue): Apply the same keep mask to acquisitions, acq_info, and trajectory inputs when
+        # dropping variable-length readouts; otherwise retained data no longer matches its metadata.
         data = torch.stack(
             [
                 torch.as_tensor(acq.data[..., pre : acq.data.shape[-1] - post], dtype=torch.complex64)
@@ -313,6 +315,8 @@ class KData(Dataclass):
             # For different other combinations we have different numbers of aquisistions,
             # so we can only reshape to (acquisitions, coils, 1, 1, k0)
             # This might be an user error.
+            # TODO(issue): Format this warning as one f-string, including the separator space, so it
+            # reports the actual OTHER_LABELS rather than a literal join expression.
             warnings.warn(
                 f'There are different numbers of acquisistions in'
                 'different combinations of labels {"/".join(OTHER_LABELS)}: \n'

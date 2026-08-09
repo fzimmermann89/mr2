@@ -5,6 +5,7 @@ from typing import cast
 import pytest
 import torch
 from mr2.nn.nets import Uformer
+from mr2.nn.nets.Uformer import LeWinTransformerBlock
 
 
 @pytest.mark.parametrize('torch_compile', [True, False], ids=['compiled', 'uncompiled'])
@@ -54,3 +55,10 @@ def test_uformer_backward() -> None:
     for name, parameter in uformer.named_parameters():
         assert parameter.grad is not None, f'{name}.grad is None'
         assert not parameter.grad.isnan().any(), f'{name}.grad is NaN'
+
+
+def test_lewin_transformer_block_supports_non_window_aligned_input() -> None:
+    """LeWin should preserve the non-aligned input support implemented by window attention."""
+    block = LeWinTransformerBlock(n_dim=2, n_channels_per_head=4, n_heads=1, window_size=2)
+    x = torch.zeros(1, 4, 15, 16)
+    assert block(x).shape == x.shape

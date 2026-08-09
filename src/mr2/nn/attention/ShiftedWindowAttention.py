@@ -60,6 +60,8 @@ class ShiftedWindowAttention(Module):
         self.window_size = window_size
         self.shifted = shifted
         self.features_last = features_last
+        # TODO(issue): Reject n_channels_in values not divisible by n_heads before constructing
+        # projections; floor division creates a layer that cannot consume its declared input.
         channels_per_head = n_channels_in // n_heads
         self.to_qkv = Linear(channels_per_head * n_heads, 3 * channels_per_head * n_heads)
         self.to_out = Linear(channels_per_head * n_heads, n_channels_out)

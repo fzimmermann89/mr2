@@ -187,6 +187,8 @@ class KTrajectory(Dataclass):
                     'Consider adding it to the header.'
                 )
 
+        # TODO(issue): Handle 1/2/3/>3 coordinate cases explicitly and reject unsupported extra
+        # coordinates instead of letting from_tensor() silently discard them.
         if traj.shape[-1] != 3:  # enforce 3D trajectory
             zero = torch.zeros_like(traj[..., :1])
             traj = torch.cat([traj, *([zero] * (3 - traj.shape[-1]))], dim=-1)
