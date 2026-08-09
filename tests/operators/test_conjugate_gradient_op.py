@@ -1,7 +1,11 @@
 """Tests the conjugate gradient operator."""
 
+from importlib import import_module
+from unittest.mock import patch
+
+import pytest
 import torch
-from mr2.operators import ConjugateGradientOp, EinsumOp, LinearOperatorMatrix
+from mr2.operators import ConjugateGradientOp, EinsumOp, IdentityOp, LinearOperatorMatrix
 from mr2.utils import RandomGenerator
 
 
@@ -70,3 +74,48 @@ def test_conjugate_gradient_op_least_squares_gradcheck_implicit(size: int = 10, 
     )
     alpha = torch.tensor(0.1, dtype=torch.float64, requires_grad=True)
     torch.autograd.gradcheck(op, (alpha, y, x0), fast_mode=True)
+
+
+def test_conjugate_gradient_op_implicit_solver_settings() -> None:
+    """Configured solver settings and initial value are used with implicit differentiation."""
+    rhs = torch.ones(4, requires_grad=True)
+    initial = torch.full_like(rhs, 2.0)
+    op = ConjugateGradientOp(
+        lambda _: IdentityOp(),
+        lambda value: (value,),
+        implicit_backward=True,
+        tolerance=1e-3,
+        max_iterations=17,
+    )
+    conjugate_gradient_module = import_module('mr2.operators.ConjugateGradientOp')
+    with patch.object(
+        conjugate_gradient_module, 'cg', side_effect=[(rhs.detach(),), (torch.ones_like(rhs),)]
+    ) as cg_mock:
+        (solution,) = op(rhs, initial_value=(initial,))
+        solution.sum().backward()
+
+    forward_call, backward_call = cg_mock.call_args_list
+    assert forward_call.kwargs['initial_value'] == (initial,)
+    assert forward_call.kwargs['max_iterations'] == 17
+    assert forward_call.kwargs['tolerance'] == 2e-3
+    torch.testing.assert_close(backward_call.args[1], torch.ones_like(rhs))
+    assert 'initial_value' not in backward_call.kwargs
+    assert backward_call.kwargs['max_iterations'] == 17
+    assert backward_call.kwargs['tolerance'] == 2e-3
+    assert rhs.grad is not None
+    torch.testing.assert_close(rhs.grad, torch.ones_like(rhs))
+
+
+@pytest.mark.parametrize('implicit_backward', [True, False])
+def test_conjugate_gradient_op_detaches_differentiable_initial_value(implicit_backward: bool) -> None:
+    """The initial value is a non-differentiable warm start for both backward modes."""
+    rhs = torch.ones(4, requires_grad=True)
+    initial = torch.zeros_like(rhs, requires_grad=True)
+    op = ConjugateGradientOp(lambda _: IdentityOp(), lambda value: (value,), implicit_backward=implicit_backward)
+
+    with pytest.warns(UserWarning, match='constant warm start'):
+        (solution,) = op(rhs, initial_value=(initial,))
+    solution.sum().backward()
+
+    assert initial.grad is None
+    torch.testing.assert_close(rhs.grad, torch.ones_like(rhs))
