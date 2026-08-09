@@ -271,7 +271,7 @@ def test_slice_projection_op_cpu_cuda_consistency() -> None:
     shift_cuda = shift_cpu.cuda()
 
     rot_cpu = Rotation.identity((2,))
-    rot_cuda = rot_cpu.to('cuda')
+    rot_cuda = Rotation.identity((2,), device='cuda')
     rng = RandomGenerator(0)
     u = rng.float32_tensor(input_shape.zyx)
 
