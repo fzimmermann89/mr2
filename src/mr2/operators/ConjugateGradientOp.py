@@ -45,7 +45,7 @@ class ConjugateGradientFunction(torch.autograd.Function):
             *inputs: torch.Tensor,
         ) -> tuple[torch.Tensor, ...]:
             """Apply the function. Required for mypy."""
-            return super().apply(operator_factory, rhs_factory, *inputs)
+            return super().apply(operator_factory, rhs_factory, initial_value, max_iterations, tolerance, *inputs)
 
     @staticmethod
     def forward(

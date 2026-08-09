@@ -31,12 +31,12 @@ URL_TEMPLATE = (
 )
 
 # includes background
-ALL_CLASSES = ('bck', 'skl', 'gry', 'wht', 'csf', 'mrw', 'dura', 'fat', 'fat2', 'mus', 'm-s', 'ves')  # noqa: typos
+ALL_CLASSES = ('bck', 'skl', 'gry', 'wht', 'csf', 'mrw', 'dura', 'fat', 'fat2', 'mus', 'm-s', 'ves')  # typos: ignore
 VERSION = 1
 # ~/.cache/mr2/brainweb on Linux, %AppData%\Local\mr2\brainweb on Windows
 CACHE_DIR_BRAINWEB = Path(platformdirs.user_cache_dir('mr2')) / 'brainweb'
 K = TypeVar('K')
-TClassNames = Literal['skl', 'gry', 'wht', 'csf', 'mrw', 'dura', 'fat', 'fat2', 'mus', 'm-s', 'ves']  # noqa: typos
+TClassNames = Literal['skl', 'gry', 'wht', 'csf', 'mrw', 'dura', 'fat', 'fat2', 'mus', 'm-s', 'ves']  # typos: ignore
 BRAINWEBSHAPE = (362, 434, 362)
 
 
@@ -231,7 +231,7 @@ VALUES_3T_RANDOMIZED: Mapping[TClassNames, BrainwebTissue] = MappingProxyType(
     {
         'skl': BrainwebTissue((0.000, 2.000), (0.000, 0.010), (0.00, 0.05), (-0.2, 0.2)),
         'gry': BrainwebTissue((1.200, 2.000), (0.080, 0.120), (0.70, 1.00), (-0.2, 0.2)),
-        'wht': BrainwebTissue((0.800, 1.500), (0.060, 0.100), (0.50, 0.90), (-0.2, 0.2)),  # noqa:typos
+        'wht': BrainwebTissue((0.800, 1.500), (0.060, 0.100), (0.50, 0.90), (-0.2, 0.2)),  # typos: ignore
         'csf': BrainwebTissue((2.000, 4.000), (1.300, 2.000), (0.90, 1.00), (-0.2, 0.2)),
         'mrw': BrainwebTissue((0.400, 0.600), (0.060, 0.100), (0.70, 1.00), (-0.2, 0.2)),
         'dura': BrainwebTissue((2.000, 2.800), (0.200, 0.500), (0.90, 1.00), (-0.2, 0.2)),
@@ -302,7 +302,7 @@ def download_brainweb(
         for i, x in enumerate(values):
             values[i] = np.clip(x - np.min(x[50], (0, 1)), 0, 4096)
         sum_values = sum(values)
-        values.pop(ALL_CLASSES.index('bck'))  # noqa: typos
+        values.pop(ALL_CLASSES.index('bck'))  # typos: ignore
         for i, x in enumerate(values):
             x = np.divide(x, sum_values, out=np.zeros_like(x, dtype=float), where=sum_values != 0)
             x[sum_values == 0] = 0
@@ -332,7 +332,7 @@ def download_brainweb(
                 chunks=(4, 4, 4, values.shape[-1]) if compress else None,
                 compression='lzf' if compress else None,
             )
-            f.attrs['classnames'] = [c for c in ALL_CLASSES if c != 'bck']  # noqa: typos
+            f.attrs['classnames'] = [c for c in ALL_CLASSES if c != 'bck']  # typos: ignore
             f.attrs['subject'] = int(subject)
             f.attrs['version'] = VERSION
 
