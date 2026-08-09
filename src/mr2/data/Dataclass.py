@@ -322,7 +322,7 @@ class Dataclass:
         If other conversions are desired, please use the `~torch.Tensor.to` method of
         the fields directly.
 
-        If the copy argument is set to `True` (default), a deep copy will be returned
+        If the copy argument is set to `True`, a deep copy will be returned
         even if no conversion is necessary.
         If two fields are views of the same data before, in the result they will be independent
         copies if copy is set to `True` or a conversion is necessary.
