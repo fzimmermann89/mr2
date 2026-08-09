@@ -19,45 +19,38 @@ jobs:
       actions: read
       pull-requests: write
     steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v8
-        with:
-          run-id: ${{ github.event.workflow_run.id }}
-          # needs to be explicitly set
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          name: artifact_url
-
-      # actually, artifact name and run-id do define the artifact url
-      # since the artifact can be downloaded, with only run-id and name
-      # however, it looks more clear to propagate the docs artifact URL via another artifact
-      - name: Set docs artifact URL to env
-        run: |
-          echo "artifact-url=$(cat artifact_url)" >> $GITHUB_ENV
-
       - name: Get PR number
         id: pr-context
         env:
-          # Token required for GH CLI:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Best practice for scripts is to reference via ENV at runtime. Avoid using the expression syntax in the script content directly:
           PR_TARGET_REPO: ${{ github.repository }}
-          # If the PR is from a fork, prefix it with `<owner-login>:`, otherwise only the PR branch name is relevant:
           PR_BRANCH: |-
             ${{
               (github.event.workflow_run.head_repository.owner.login != github.event.workflow_run.repository.owner.login)
                 && format('{0}:{1}', github.event.workflow_run.head_repository.owner.login, github.event.workflow_run.head_branch)
                 || github.event.workflow_run.head_branch
             }}
-        # Query the PR number by repo + branch, then assign to step output:
         run: |
           gh pr view --repo "${PR_TARGET_REPO}" "${PR_BRANCH}" \
               --json 'number' --jq '"number=\(.number)"' \
               >> "${GITHUB_OUTPUT}"
 
+      - name: Download documentation metadata
+        if: github.event.workflow_run.conclusion == 'success'
+        id: download_metadata
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          name: artifact_url
 
-      # if the build of docs was successful the "artifact-url" will be non-empty
-      - name: Update PR with link to summary
-        if: ${{ env.artifact-url != '' }}
+      - name: Set documentation artifact URL
+        if: steps.download_metadata.outcome == 'success'
+        run: echo "DOCS_ARTIFACT_URL=$(cat artifact_url)" >> "${GITHUB_ENV}"
+
+      - name: Update PR with documentation link
+        if: env.DOCS_ARTIFACT_URL != ''
         uses: edumserrano/find-create-or-update-comment@v3
         with:
           issue-number: ${{ steps.pr-context.outputs.number }}
@@ -66,13 +59,12 @@ jobs:
           body: |
             <!-- documentation build ${{ steps.pr-context.outputs.number }} -->
             ### :books: Documentation
-            :file_folder: [Download as zip](${{ env.artifact-url }})
-            :mag: [View online](https://zimf.de/zipserve/${{ env.artifact-url }}/)
+            :file_folder: [Download as zip](${{ env.DOCS_ARTIFACT_URL }})
+            :mag: [View online](https://zimf.de/zipserve/${{ env.DOCS_ARTIFACT_URL }}/)
           edit-mode: replace
 
-      # if the build of docs failed the "artifact-url" will be an empty string
-      - name: Report failure of docs build
-        if: ${{ env.artifact-url == '' }}
+      - name: Report documentation build failure
+        if: github.event.workflow_run.conclusion != 'success' || env.DOCS_ARTIFACT_URL == ''
         uses: edumserrano/find-create-or-update-comment@v3
         with:
           issue-number: ${{ steps.pr-context.outputs.number }}
@@ -81,7 +73,7 @@ jobs:
           body: |
             <!-- documentation build ${{ steps.pr-context.outputs.number }} -->
             ### :books: Documentation
-            :x: Documentation build failed
+            :x: Documentation build did not produce a report (`${{ github.event.workflow_run.conclusion }}`)
 
             Check the Sphinx Docs Workflow
           edit-mode: replace
@@ -92,12 +84,11 @@ jobs:
     if: >-
       ${{ github.event.workflow_run.event == 'push' &&
           github.event.workflow_run.head_branch == 'main' &&
-          github.event.workflow_run.conclusion != 'cancelled' &&
-          github.event.workflow_run.conclusion != 'skipped' }}
+          github.event.workflow_run.conclusion == 'success' }}
     permissions:
-        actions: read
-        pages: write
-        id-token: write
+      actions: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -111,7 +102,6 @@ jobs:
           path: html_build
 
       - name: Upload pages
-        id: upload_pages
         uses: actions/upload-pages-artifact@v4
         with:
           path: html_build
@@ -119,4 +109,3 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
-

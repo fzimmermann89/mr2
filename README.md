@@ -8,7 +8,7 @@
 
 </h1><br>
 
-[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://pypi.org/project/mrtwo/)
+[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)](https://pypi.org/project/mrtwo/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Coverage Bagde](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/fzimmermann89/f688ae5c6e8daec44ac7f8fc4067e93f/raw/coverage.json)](https://github.com/fzimmermann89/mr2/actions?query=workflow%3A%22%22Report+PyTest%22%22)
 [![arXiv](https://img.shields.io/badge/arXiv-2507.23129-b31b1b.svg)](https://arxiv.org/abs/2507.23129)
@@ -85,4 +85,16 @@ kdata = KData.from_file(data_file.name, KTrajectoryPulseq(seq_path=seq_file.name
 Full example: <https://github.com/fzimmermann89/mr2/blob/main/examples/scripts/comparison_trajectory_calculators.py>
 
 ## Development
- ``` pip install -e ".[dev]" ```
+
+`pip install -e ".[dev]"`
+
+MRtwo requires PyTorch 2.3.1 or newer. CI currently validates the minimum
+supported CPU build, PyTorch 2.3.1, and the recommended CPU build, PyTorch 2.10.0.
+
+### Docker
+
+A notebook-capable image for the recommended environment (Python 3.12 and PyTorch 2.10) is available from GHCR:
+
+```bash
+docker pull ghcr.io/fzimmermann89/mr2_py312:latest
+```
