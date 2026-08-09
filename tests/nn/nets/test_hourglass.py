@@ -5,9 +5,10 @@ from typing import cast
 import pytest
 import torch
 from mr2.nn.nets import HourglassTransformer
-from tests.conftest import minimal_torch_26
+from tests.conftest import maximum_python_313, minimal_torch_26
 
 
+@maximum_python_313
 @minimal_torch_26
 @torch.no_grad()
 @pytest.mark.parametrize('torch_compile', [True, False], ids=['compiled', 'uncompiled'])
@@ -41,6 +42,7 @@ def test_hourglass_forward(torch_compile: bool, device: str) -> None:
     assert y.shape == (1, 1, 16, 16)
 
 
+@maximum_python_313
 @minimal_torch_26
 @pytest.mark.cuda
 def test_hourglass_backward() -> None:

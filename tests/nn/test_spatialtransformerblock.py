@@ -7,7 +7,9 @@ import pytest
 import torch
 from mr2.nn.attention import SpatialTransformerBlock
 from mr2.utils import RandomGenerator
-from tests.conftest import minimal_torch_26
+from tests.conftest import maximum_python_313, minimal_torch_26
+
+flex_attention_marks = (minimal_torch_26, maximum_python_313)
 
 
 @minimal_torch_26
@@ -23,9 +25,9 @@ from tests.conftest import minimal_torch_26
     ('channels', 'cond_dim', 'attention_neighborhood', 'features_last', 'norm', 'input_shape'),
     [
         pytest.param(32, 16, None, True, 'group', (16, 16), id='2d-cond-group-last-global'),
-        pytest.param(64, 16, 7, False, 'group', (16, 16), marks=minimal_torch_26, id='2d-cond-group-first-NA'),
-        pytest.param(64, 16, 5, True, 'group', (16, 16), marks=minimal_torch_26, id='2d-cond-group-last-NA'),
-        pytest.param(64, 0, 7, True, 'rms', (16, 8, 16), marks=minimal_torch_26, id='3d-nocond-rms-last-NA'),
+        pytest.param(64, 16, 7, False, 'group', (16, 16), marks=flex_attention_marks, id='2d-cond-group-first-NA'),
+        pytest.param(64, 16, 5, True, 'group', (16, 16), marks=flex_attention_marks, id='2d-cond-group-last-NA'),
+        pytest.param(64, 0, 7, True, 'rms', (16, 8, 16), marks=flex_attention_marks, id='3d-nocond-rms-last-NA'),
     ],
 )
 def test_spatialtransformerblock_backward(
@@ -92,9 +94,9 @@ def test_spatialtransformerblock_backward(
     ('channels', 'cond_dim', 'attention_neighborhood', 'features_last', 'norm', 'input_shape'),
     [
         pytest.param(32, 16, None, True, 'group', (16, 16), id='2d-cond-group-last-global'),
-        pytest.param(64, 16, 5, True, 'group', (16, 16), marks=minimal_torch_26, id='2d-cond-group-last-NA'),
-        pytest.param(64, 16, 7, False, 'group', (16, 16), marks=minimal_torch_26, id='2d-cond-group-first-NA'),
-        pytest.param(64, 0, 7, True, 'rms', (16, 8, 16), marks=minimal_torch_26, id='3d-nocond-rms-last-NA'),
+        pytest.param(64, 16, 5, True, 'group', (16, 16), marks=flex_attention_marks, id='2d-cond-group-last-NA'),
+        pytest.param(64, 16, 7, False, 'group', (16, 16), marks=flex_attention_marks, id='2d-cond-group-first-NA'),
+        pytest.param(64, 0, 7, True, 'rms', (16, 8, 16), marks=flex_attention_marks, id='3d-nocond-rms-last-NA'),
     ],
 )
 def test_spatialtransformerblock_forward(

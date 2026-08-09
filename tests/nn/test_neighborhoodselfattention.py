@@ -4,9 +4,10 @@ import pytest
 import torch
 from mr2.nn.attention.NeighborhoodSelfAttention import NeighborhoodSelfAttention
 from mr2.utils import RandomGenerator
-from tests.conftest import minimal_torch_26
+from tests.conftest import maximum_python_313, minimal_torch_26
 
 
+@maximum_python_313
 @minimal_torch_26
 @pytest.mark.parametrize(
     'device',
@@ -69,6 +70,7 @@ def test_neighborhood_self_attention_backward(
     assert attention.to_out.bias.grad is not None, 'No gradient computed for to_out.bias'
 
 
+@maximum_python_313
 @minimal_torch_26
 @pytest.mark.cuda
 @pytest.mark.parametrize(
@@ -97,6 +99,7 @@ def test_neighborhood_attention_variants(kernel_size: int, dilation: int, circul
     assert output.shape == x.shape, f'Output shape {output.shape} != input shape {x.shape}'
 
 
+@maximum_python_313
 @minimal_torch_26
 @pytest.mark.parametrize(
     ('kernel_size', 'circular', 'input_shape'),
