@@ -1,7 +1,9 @@
 """Tests the conjugate gradient operator."""
 
+from unittest.mock import patch
+
 import torch
-from mr2.operators import ConjugateGradientOp, EinsumOp, LinearOperatorMatrix
+from mr2.operators import ConjugateGradientOp, EinsumOp, IdentityOp, LinearOperatorMatrix
 from mr2.utils import RandomGenerator
 
 
@@ -70,3 +72,21 @@ def test_conjugate_gradient_op_least_squares_gradcheck_implicit(size: int = 10, 
     )
     alpha = torch.tensor(0.1, dtype=torch.float64, requires_grad=True)
     torch.autograd.gradcheck(op, (alpha, y, x0), fast_mode=True)
+
+
+def test_conjugate_gradient_op_implicit_solver_settings() -> None:
+    """Configured solver settings and initial value are used with implicit differentiation."""
+    rhs = torch.ones(4)
+    initial = torch.full_like(rhs, 2.0)
+    op = ConjugateGradientOp(
+        lambda _: IdentityOp(),
+        lambda value: (value,),
+        implicit_backward=True,
+        tolerance=1e-3,
+        max_iterations=17,
+    )
+    with patch('mr2.operators.ConjugateGradientOp.cg', return_value=(rhs,)) as cg_mock:
+        op(rhs, initial_value=(initial,))
+    assert cg_mock.call_args.kwargs['initial_value'] == (initial,)
+    assert cg_mock.call_args.kwargs['max_iterations'] == 17
+    assert cg_mock.call_args.kwargs['tolerance'] == 2e-3
