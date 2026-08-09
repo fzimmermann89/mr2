@@ -119,6 +119,7 @@ filterwarnings = [
     "ignore:.*In the future, this object will be coerced as if it was first converted using.*:FutureWarning", # numpy 1.2
     "ignore:.*load_module.*:DeprecationWarning", # torch compile in torch<2.6
     "ignore:The \\.grad attribute of a Tensor that is not a leaf Tensor is being accessed:UserWarning", # torch dynamo bug in flex attention
+    "ignore:\\s*Online softmax is disabled on the fly since Inductor decides to\\s+split the reduction\\. Cut an issue to PyTorch if this is an\\s+important use case and you want to speed it up with online\\s+softmax\\.\\s*:UserWarning:torch\\._inductor\\.lowering$",
     "ignore:`torch.jit.script` is deprecated:DeprecationWarning", # torch 2.10
     "ignore:`torch.jit.script_method` is deprecated", # torch 2.10
     "ignore:`torch\\.jit\\.script(_method)?` is not supported in Python 3\\.14\\+ and may break.*:DeprecationWarning", # torch 2.10 on Python 3.14

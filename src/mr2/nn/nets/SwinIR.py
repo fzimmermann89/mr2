@@ -25,6 +25,7 @@ class SwinTransformerLayer(Module):
         mlp_ratio: int = 4,
         emb_dim: int = 0,
         p_droppath: float = 0.0,
+        shifted: bool = False,
     ):
         """Initialize SwinTransformerLayer.
 
@@ -44,10 +45,12 @@ class SwinTransformerLayer(Module):
             Dimension of conditioning input. If 0, no FiLM conditioning is used.
         p_droppath
             Droppath probability for MLP
+        shifted
+            Whether to use shifted windows.
         """
         super().__init__()
         self.norm1 = instanceNormND(n_dim)(n_channels)
-        self.attn = ShiftedWindowAttention(n_dim, n_channels, n_channels, n_heads, window_size)
+        self.attn = ShiftedWindowAttention(n_dim, n_channels, n_channels, n_heads, window_size, shifted=shifted)
         self.norm2 = Sequential(instanceNormND(n_dim)(n_channels))
         if emb_dim > 0:
             self.norm2.append(FiLM(channels=n_channels, cond_dim=emb_dim))
@@ -125,9 +128,16 @@ class ResidualSwinTransformerBlock(Module):
         self.layers = Sequential(
             *(
                 SwinTransformerLayer(
-                    n_dim, n_channels, n_heads, window_size, emb_dim=emb_dim, p_droppath=p_droppath, mlp_ratio=mlp_ratio
+                    n_dim,
+                    n_channels,
+                    n_heads,
+                    window_size,
+                    emb_dim=emb_dim,
+                    p_droppath=p_droppath,
+                    mlp_ratio=mlp_ratio,
+                    shifted=bool(index % 2),
                 )
-                for _ in range(depth)
+                for index in range(depth)
             )
         )
         self.conv = convND(n_dim)(n_channels, n_channels, 3, padding=1)

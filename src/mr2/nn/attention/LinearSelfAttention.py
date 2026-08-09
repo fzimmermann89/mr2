@@ -43,6 +43,10 @@ class LinearSelfAttention(Module):
             or the second dimension, as common in image models.
         """
         super().__init__()
+        if n_heads <= 0:
+            raise ValueError('n_heads must be positive')
+        if n_channels_in % n_heads:
+            raise ValueError('n_channels_in must be divisible by n_heads')
         self.features_last = features_last
         self.eps = eps
         self.n_heads = n_heads
@@ -61,7 +65,7 @@ class LinearSelfAttention(Module):
 
         Returns
         -------
-            Tensor after attention, same shape as input.
+            Tensor after attention with `n_channels_out` channels and the same spatial shape as the input.
         """
         return super().__call__(x)
 
@@ -82,14 +86,13 @@ class LinearSelfAttention(Module):
         query = self.kernel_function(query)
         key = self.kernel_function(key)
 
-        # trick to avoid second attention calculation: add normalization slot
-        value = torch.nn.functional.pad(value, (0, 0, 0, 1), mode='constant', value=1.0)
-
-        value_key = value @ key.transpose(-1, -2)
-        value_key_query = value_key @ query
-        normalization = value_key_query[..., -1:, :] + self.eps
-        attn = value_key_query[..., :-1, :] / normalization
-        attn = attn.moveaxis(1, -1).flatten(-2)  # join heads and channels
+        # Append a constant value channel to calculate the numerator and its
+        # normalizer with the same two matrix multiplications.
+        value = torch.nn.functional.pad(value, (0, 1), mode='constant', value=1.0)
+        attn = query @ (key.transpose(-1, -2) @ value)
+        normalization = attn[..., -1:] + self.eps
+        attn = attn[..., :-1] / normalization
+        attn = rearrange(attn, 'batch head sequence channels -> batch sequence (head channels)')
         out = self.to_out(attn)
         out = out.to(orig_dtype)
         out = out.unflatten(-2, spatial_shape)
