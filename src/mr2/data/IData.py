@@ -3,7 +3,7 @@
 import datetime
 import re
 import warnings
-from collections.abc import Generator, Sequence
+from collections.abc import Iterable
 from pathlib import Path
 
 import nibabel
@@ -103,7 +103,7 @@ class IData(Dataclass):
         return cls(header=iheader, data=data)
 
     @classmethod
-    def from_dicom_files(cls, filenames: Sequence[str | Path] | Generator[Path, None, None] | str | Path) -> Self:
+    def from_dicom_files(cls, filenames: Iterable[str | Path] | str | Path) -> Self:
         """Read multiple DICOM files and return IData object.
 
         DICOM images can be saved as single-frame or multi-frame images [DCMMF]_.
@@ -128,7 +128,7 @@ class IData(Dataclass):
         else:
             # Use natsort to ensure correct order of filenames like img_1.dcm, img_2.dcm, ..., img_10.dcm
             datasets = [dcmread(filename) for filename in sorted(filenames, key=_natural_key)]
-        if not datasets:  # check datasets (not filenames) to allow for filenames to be a Generator
+        if not datasets:  # check datasets (not filenames) to allow for filenames to be an iterator
             raise ValueError('No dicom files specified')
 
         header = IHeader.from_dicom(*datasets)

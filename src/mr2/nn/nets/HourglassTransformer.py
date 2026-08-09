@@ -34,7 +34,7 @@ class HourglassTransformer(UNetBase):
         n_channels_out: int,
         n_features: Sequence[int] | int,
         depths: Sequence[int] | int = 3,
-        attention_neighborhood: Sequence[None | int] | int | None = 11,
+        attention_neighborhood: Sequence[int | None] | int | None = 11,
         n_heads: int | Sequence[int] = 4,
         cond_dim: int = 0,
     ):

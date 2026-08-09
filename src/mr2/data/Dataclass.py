@@ -350,7 +350,7 @@ class Dataclass:
 
         def parse1(
             device: str | torch.device | int | None = None,
-            dtype: None | torch.dtype = None,
+            dtype: torch.dtype | None = None,
             non_blocking: bool = False,
             copy: bool = False,
             memory_format: torch.memory_format = torch.preserve_format,
@@ -592,7 +592,7 @@ class Dataclass:
         -------
             The device of the fields or `None` if no field implements a `device` attribute.
         """
-        device: None | torch.device = None
+        device: torch.device | None = None
         for _, data in self.items():
             if not hasattr(data, 'device'):
                 continue
