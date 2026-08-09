@@ -17,6 +17,11 @@ LinearOperatorMatrixFactory = Callable[..., LinearOperatorMatrix]
 T = TypeVar('T', torch.Tensor, bool)
 
 
+def _validate_initial_value(initial_value: tuple[torch.Tensor, ...] | None) -> None:
+    if initial_value is not None and any(value.requires_grad for value in initial_value):
+        raise ValueError('initial_value is a constant warm start and must not require gradients.')
+
+
 class ConjugateGradientCTX(torch.autograd.function.FunctionCtx):
     """Only used for type hinting."""
 
@@ -39,22 +44,26 @@ class ConjugateGradientFunction(torch.autograd.Function):
             cls,
             operator_factory: Callable[..., LinearOperatorMatrix | LinearOperator],
             rhs_factory: Callable[..., tuple[torch.Tensor, ...]],
+            initial_value: tuple[torch.Tensor, ...] | None,
+            max_iterations: int,
+            tolerance: float,
             *inputs: torch.Tensor,
         ) -> tuple[torch.Tensor, ...]:
-            """Apply the function. Required for mypy."""
-            return super().apply(operator_factory, rhs_factory, *inputs)
+            """Apply with a constant warm start. Required for mypy."""
+            return super().apply(operator_factory, rhs_factory, initial_value, max_iterations, tolerance, *inputs)
 
     @staticmethod
     def forward(
         ctx: ConjugateGradientCTX,
         operator_factory: Callable[..., LinearOperatorMatrix | LinearOperator],
         rhs_factory: Callable[..., tuple[torch.Tensor, ...]],
+        initial_value: tuple[torch.Tensor, ...] | None,
+        max_iterations: int,
+        tolerance: float,
         *inputs: torch.Tensor,
-        initial_value: tuple[torch.Tensor, ...] | None = None,
-        max_iterations: int = 10000,
-        tolerance: float = 1e-7,
     ) -> tuple[torch.Tensor, ...]:
         """Forward pass of the conjugate gradient operator."""
+        _validate_initial_value(initial_value)
         operator = operator_factory(*inputs)
         rhs = rhs_factory(*inputs)
         rhs_norm = sum((r.abs().square().sum() for r in rhs), torch.tensor(0.0)).sqrt().item()
@@ -89,7 +98,7 @@ class ConjugateGradientFunction(torch.autograd.Function):
         with torch.enable_grad():
             rhs = ctx.rhs_factory(*inputs)
             operator = ctx.operator_factory(*inputs)
-        inputs_with_grad = tuple(x for x, need_grad in zip(inputs, ctx.needs_input_grad[2:], strict=True) if need_grad)
+        inputs_with_grad = tuple(x for x, need_grad in zip(inputs, ctx.needs_input_grad[5:], strict=True) if need_grad)
         if inputs_with_grad:
             rhs_norm = sum((r.abs().square().sum() for r in grad_output), torch.tensor(0.0)).sqrt().item()
             tol_ = ctx.tolerance * max(rhs_norm, 1e-6)  # clip in case rhs is 0
@@ -107,8 +116,8 @@ class ConjugateGradientFunction(torch.autograd.Function):
         else:
             grad_iter = iter(())
 
-        grad_input = tuple(next(grad_iter) if need else None for need in ctx.needs_input_grad[2:])
-        return (None, None, *grad_input)  # operator_factory, rhs_factory, *inputs
+        grad_input = tuple(next(grad_iter) if need else None for need in ctx.needs_input_grad[5:])
+        return (None, None, None, None, None, *grad_input)
 
 
 class ConjugateGradientOp(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]]):
@@ -198,7 +207,7 @@ class ConjugateGradientOp(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch
         parameters
             The parameters passed to the operator and right-hand side factory functions.
         initial_value
-            The initial value for the conjugate gradient method.
+            A constant warm start for the conjugate gradient method. Its elements must not require gradients.
             If `None`, the initial value is set to zero.
 
         Returns
@@ -218,8 +227,16 @@ class ConjugateGradientOp(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch
             Prefer calling the instance of the ConjugateGradientOp as ``operator(x)`` over directly calling this method.
             See this PyTorch `discussion <https://discuss.pytorch.org/t/is-model-forward-x-the-same-as-model-call-x/33460/3>`_.
         """
+        _validate_initial_value(initial_value)
         if self.implicit_backward:
-            solution = ConjugateGradientFunction.apply(self.operator_factory, self.rhs_factory, *parameters)
+            solution = ConjugateGradientFunction.apply(
+                self.operator_factory,
+                self.rhs_factory,
+                initial_value,
+                self.max_iterations,
+                self.tolerance,
+                *parameters,
+            )
         else:  # unrolled CG
             op = self.operator_factory(*parameters)
             rhs = self.rhs_factory(*parameters)

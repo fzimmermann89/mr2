@@ -222,7 +222,7 @@ skip-magic-trailing-comma = false
 locale = "en-us"
 check-filename = false
 extend-ignore-re = [
-    "(?Rm)^.*(#|//)\\s*noqa:\\s*typos", # "# noqa: typos" to ignore typos
+    "(?Rm)^.*(#|//)\\s*typos:\\s*ignore", # "# typos: ignore" to ignore typos
 ]
 
 [tool.typos.default.extend-words]

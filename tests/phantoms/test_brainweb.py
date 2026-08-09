@@ -86,7 +86,7 @@ def brainweb_test_data(tmp_path_factory, n_subjects=1):
             f.create_dataset('classes', data=fake_data.to(torch.uint8))
 
             # Store metadata
-            f.attrs['classnames'] = [c for c in ALL_CLASSES if c != 'bck']  # noqa: typos
+            f.attrs['classnames'] = [c for c in ALL_CLASSES if c != 'bck']  # typos: ignore
             f.attrs['subject'] = subject
             f.attrs['version'] = 1
     return test_dir
