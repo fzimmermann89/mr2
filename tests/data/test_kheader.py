@@ -2,6 +2,7 @@
 
 import torch
 from mr2.data import KHeader
+from mr2.data.enums import TrajectoryType
 from mr2.data.traj_calculators.KTrajectoryCalculator import DummyTrajectory
 
 
@@ -19,6 +20,16 @@ def test_kheader_set_missing_defaults(random_mandatory_ismrmrd_header, random_ac
     kheader = KHeader.from_ismrmrd(random_mandatory_ismrmrd_header, random_acq_info, defaults=defaults)
     assert kheader is not None
     assert kheader.trajectory is defaults['trajectory']
+
+
+def test_kheader_invalid_trajectory_type(random_mandatory_ismrmrd_header, random_acq_info) -> None:
+    """Invalid free-text trajectory types fall back to OTHER."""
+    random_mandatory_ismrmrd_header.encoding[0].trajectory = 'invalid'
+    defaults = {'trajectory': DummyTrajectory()}
+
+    kheader = KHeader.from_ismrmrd(random_mandatory_ismrmrd_header, random_acq_info, defaults=defaults)
+
+    assert kheader.trajectory_type is TrajectoryType.OTHER
 
 
 def test_kheader_verify_None(random_mandatory_ismrmrd_header, random_acq_info) -> None:
