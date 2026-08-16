@@ -6,7 +6,8 @@ from torch.nn import GELU, Module
 from mr2.nn.attention.ShiftedWindowAttention import ShiftedWindowAttention
 from mr2.nn.DropPath import DropPath
 from mr2.nn.FiLM import FiLM
-from mr2.nn.ndmodules import convND, instanceNormND
+from mr2.nn.LayerNorm import LayerNorm
+from mr2.nn.ndmodules import convND
 from mr2.nn.Sequential import Sequential
 
 
@@ -49,9 +50,9 @@ class SwinTransformerLayer(Module):
             Whether to use shifted windows.
         """
         super().__init__()
-        self.norm1 = instanceNormND(n_dim)(n_channels)
+        self.norm1 = LayerNorm(n_channels, features_last=False)
         self.attn = ShiftedWindowAttention(n_dim, n_channels, n_channels, n_heads, window_size, shifted=shifted)
-        self.norm2 = Sequential(instanceNormND(n_dim)(n_channels))
+        self.norm2 = Sequential(LayerNorm(n_channels, features_last=False))
         if emb_dim > 0:
             self.norm2.append(FiLM(channels=n_channels, cond_dim=emb_dim))
         self.mlp = Sequential(

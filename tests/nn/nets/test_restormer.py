@@ -4,7 +4,18 @@ from typing import cast
 
 import pytest
 import torch
-from mr2.nn.nets import Restormer
+from mr2.nn.LayerNorm import LayerNorm
+from mr2.nn.nets.Restormer import Restormer, RestormerBlock
+
+
+def test_restormer_block_normalization() -> None:
+    """Restormer blocks normalize channels at each spatial position."""
+    block = RestormerBlock(n_dim=2, n_channels=4, n_heads=1, mlp_ratio=2)
+    norm2 = block.norm2[0]
+    assert isinstance(block.norm1, LayerNorm)
+    assert isinstance(norm2, LayerNorm)
+    assert not block.norm1.features_last
+    assert not norm2.features_last
 
 
 @pytest.mark.parametrize('torch_compile', [True, False], ids=['compiled', 'uncompiled'])

@@ -10,7 +10,8 @@ from mr2.nn.attention.TransposedAttention import TransposedAttention
 from mr2.nn.CondMixin import CondMixin
 from mr2.nn.FiLM import FiLM
 from mr2.nn.join import Concat
-from mr2.nn.ndmodules import convND, instanceNormND
+from mr2.nn.LayerNorm import LayerNorm
+from mr2.nn.ndmodules import convND
 from mr2.nn.nets.UNet import UNetBase, UNetDecoder, UNetEncoder
 from mr2.nn.PixelShuffle import PixelShuffleUpsample, PixelUnshuffleDownsample
 from mr2.nn.Sequential import Sequential
@@ -94,9 +95,9 @@ class RestormerBlock(CondMixin, Module):
             Dimension of conditioning input. If 0, no conditioning is applied.
         """
         super().__init__()
-        self.norm1 = Sequential(instanceNormND(n_dim)(n_channels))
+        self.norm1 = LayerNorm(n_channels, features_last=False)
         self.attn = TransposedAttention(n_dim, n_channels, n_channels, n_heads)
-        self.norm2 = Sequential(instanceNormND(n_dim)(n_channels))
+        self.norm2 = Sequential(LayerNorm(n_channels, features_last=False))
         self.ffn = GDFN(n_dim, n_channels, mlp_ratio)
         if cond_dim > 0:
             self.norm2.append(FiLM(channels=n_channels, cond_dim=cond_dim))
@@ -175,13 +176,12 @@ class Restormer(UNetBase):
             raise ValueError('n_blocks and n_heads must have the same length.')
 
         def blocks(n_heads: int, n_blocks: int):
-            layers = Sequential(
-                *(RestormerBlock(n_dim, n_channels_per_head * n_heads, n_heads, mlp_ratio) for _ in range(n_blocks))
+            return Sequential(
+                *(
+                    RestormerBlock(n_dim, n_channels_per_head * n_heads, n_heads, mlp_ratio, cond_dim)
+                    for _ in range(n_blocks)
+                )
             )
-
-            if cond_dim > 0 and n_blocks > 1:
-                layers.insert(1, FiLM(channels=n_channels_per_head * n_heads, cond_dim=cond_dim))
-            return layers
 
         first_block = convND(n_dim)(n_channels_in, n_channels_per_head, kernel_size=3, stride=1, padding=1, bias=False)
         encoder_blocks = [blocks(head, block) for head, block in zip(n_heads[:-1], n_blocks[:-1], strict=True)]
@@ -209,10 +209,8 @@ class Restormer(UNetBase):
             for head in n_heads[-2::-1]
         ]
         decoder_blocks = [blocks(head, block) for head, block in zip(n_heads[:-1], n_blocks[:-1], strict=True)][::-1]
-        last_block = Sequential(
-            *(RestormerBlock(n_dim, n_channels_per_head, n_heads[0], mlp_ratio) for _ in range(n_refinement_blocks)),
-            convND(n_dim)(n_channels_per_head, n_channels_out, kernel_size=3, stride=1, padding=1),
-        )
+        last_block = blocks(n_heads[0], n_refinement_blocks)
+        last_block.append(convND(n_dim)(n_channels_per_head, n_channels_out, kernel_size=3, stride=1, padding=1))
         decoder = UNetDecoder(
             blocks=decoder_blocks,
             up_blocks=up_blocks,
