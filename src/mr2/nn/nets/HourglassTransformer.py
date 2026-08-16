@@ -83,7 +83,6 @@ class HourglassTransformer(UNetBase):
         dim_group = (tuple(range(-n_dim - 1, -1)),)
         encoder_blocks: list[Module] = []
         decoder_blocks: list[Module] = []
-        merge_blocks: list[Module] = []
         down_blocks: list[Module] = []
         up_blocks: list[Module] = []
         for channels, depth, neighborhood, head in zip(
@@ -119,15 +118,18 @@ class HourglassTransformer(UNetBase):
                     norm='rms',
                 )
             )
-            merge_blocks.append(Interpolate())
         for channels, channels_next in pairwise(n_features_):
             down_blocks.append(
                 PixelUnshuffleDownsample(n_dim, channels, channels_next, downscale_factor=2, features_last=True)
             )
             up_blocks.append(PixelShuffleUpsample(n_dim, channels_next, channels, upscale_factor=2, features_last=True))
 
+        decoder_blocks.reverse()
+        up_blocks.reverse()
+        merge_blocks = [Interpolate() for _ in decoder_blocks]
+
         last_block = Sequential(
-            PixelShuffleUpsample(n_dim, n_features_[-1], n_channels_out, upscale_factor=2, features_last=True),
+            PixelShuffleUpsample(n_dim, n_features_[0], n_channels_out, upscale_factor=2, features_last=True),
             move_channels_last.H,  # moves channels back to front
         )
         middle_block = SpatialTransformerBlock(
