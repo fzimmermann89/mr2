@@ -26,7 +26,7 @@ def test_hourglass_forward(torch_compile: bool, device: str) -> None:
         n_channels_in=1,
         n_channels_out=1,
         depths=1,
-        n_features=64,
+        n_features=(16, 32, 64),
         attention_neighborhood=(7, 7, None),
         cond_dim=32,
     )
