@@ -329,7 +329,7 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
         else:
             return NotImplemented
 
-    def __or__(self, other: LinearOperator) -> mr2.operators.LinearOperatorMatrix:
+    def __or__(self, other: LinearOperator) -> mr2.operators.LinearOperatorMatrix:  # type: ignore[override]
         """Horizontal stacking of two LinearOperators.
 
         ``A|B`` is a `~mr2.operators.LinearOperatorMatrix` with two columns,
