@@ -3,7 +3,7 @@
 # Here we use an iterative reconstruction method to reconstruct images from ISMRMRD 2D radial data.
 
 # %% [markdown]
-# We use the `~mr2.algorithms.reconstruction.IterativeSENSEReconstruction` class to solve
+# We use the `~mr2.algorithms.reconstruction.RegularizedIterativeSENSEReconstruction` class to solve
 # the following reconstruction problem:
 #
 # Let's assume we have obtained the k-space data $y$ from an image $x$ with an acquisition model (Fourier transforms,
@@ -29,8 +29,8 @@
 # ```
 
 # %% [markdown]
-# ## Using `~mr2.algorithms.reconstruction.IterativeSENSEReconstruction`
-# First, we demonstrate the use of `~mr2.algorithms.reconstruction.IterativeSENSEReconstruction`, before we
+# ## Using `~mr2.algorithms.reconstruction.RegularizedIterativeSENSEReconstruction`
+# First, we demonstrate the use of `~mr2.algorithms.reconstruction.RegularizedIterativeSENSEReconstruction`, before we
 # peek behind the scenes and implement the reconstruction manually.
 #
 # ## Read-in the raw data
@@ -75,15 +75,15 @@ img_direct = direct_reconstruction(kdata)
 
 # %% [markdown]
 # ### Setting up the iterative SENSE reconstruction
-# Now let's use the `~mr2.algorithms.reconstruction.IterativeSENSEReconstruction` class to reconstruct the image
-# using the iterative SENSE algorithm.
+# Now let's use the `~mr2.algorithms.reconstruction.RegularizedIterativeSENSEReconstruction` class to reconstruct the
+# image using the iterative SENSE algorithm.
 #
 # We first set up the reconstruction. Here, we reuse the the Fourier operator, the DCFs and the coil sensitivity maps
 # from ``direct_reconstruction``. We use *early stopping* after 4 iterations by setting `n_iterations`.
 #
 # ```{note}
 # When setting up the reconstruction we can also provide the `~mr2.data.KData` and let
-#  `~mr2.algorithms.reconstruction.IterativeSENSEReconstruction` figure
+#  `~mr2.algorithms.reconstruction.RegularizedIterativeSENSEReconstruction` figure
 # out the Fourier operator, estimate the coil sensitivity maps, and choose a density weighting.\
 # We can also provide `~mr2.data.KData` and some information, such as the sensitivity maps.
 # In that case, the reconstruction will automatically determine the missing information based
@@ -91,7 +91,7 @@ img_direct = direct_reconstruction(kdata)
 # ```
 
 # %%
-iterative_sense_reconstruction = mr2.algorithms.reconstruction.IterativeSENSEReconstruction(
+iterative_sense_reconstruction = mr2.algorithms.reconstruction.RegularizedIterativeSENSEReconstruction(
     fourier_op=direct_reconstruction.fourier_op,
     csm=direct_reconstruction.csm_op,
     dcf=direct_reconstruction.dcf_op,
@@ -109,8 +109,9 @@ img = iterative_sense_reconstruction(kdata)
 # %% [markdown]
 # ## Behind the scenes
 # We now peek behind the scenes to see how the iterative SENSE reconstruction is implemented. We perform all steps
-# `~mr2.algorithms.reconstruction.IterativeSENSEReconstruction` does when initialized with only an `~mr2.data.KData`
-# object, i.e., we need to set up a Fourier operator, estimate coil sensitivity maps, and the density weighting.
+# `~mr2.algorithms.reconstruction.RegularizedIterativeSENSEReconstruction` does when initialized with only an
+# `~mr2.data.KData` object, i.e., we need to set up a Fourier operator, estimate coil sensitivity maps, and the
+# density weighting.
 # without reusing anything from ``direct_reconstruction```.
 
 
@@ -189,7 +190,7 @@ initial_value = u * scale
 # %% [markdown]
 # ## Display the results
 # We can now compare the results of the iterative SENSE reconstruction with the direct reconstruction.
-# Both versions, the one using the `~mr2.algorithms.reconstruction.IterativeSENSEReconstruction` class
+# Both versions, the one using the `~mr2.algorithms.reconstruction.RegularizedIterativeSENSEReconstruction` class
 # and the manual implementation should result in identical images.
 
 # %% tags=["hide-cell"] mystnb={"code_prompt_show": "Show plotting details"}

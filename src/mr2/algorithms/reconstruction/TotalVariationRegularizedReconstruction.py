@@ -6,6 +6,7 @@ from collections.abc import Callable, Sequence
 
 import torch
 
+from mr2.algorithms.optimizers.cg import cg
 from mr2.algorithms.optimizers.pdhg import pdhg
 from mr2.algorithms.prewhiten_kspace import prewhiten_kspace
 from mr2.algorithms.reconstruction.DirectReconstruction import DirectReconstruction
@@ -39,6 +40,9 @@ class TotalVariationRegularizedReconstruction(DirectReconstruction):
     tolerance: float
     """Tolerance of PDHG for relative change of the primal solution."""
 
+    initialization_iterations: int
+    """Number of CG iterations used to initialize PDHG."""
+
     regularization_dim: Sequence[int]
     """Dimensions along which the total variation reguarization is applied :math:`i`."""
 
@@ -55,6 +59,7 @@ class TotalVariationRegularizedReconstruction(DirectReconstruction):
         *,
         max_iterations: int = 100,
         tolerance: float = 0,
+        initialization_iterations: int = 5,
         regularization_dim: Sequence[int],
         regularization_weight: float | Sequence[float] | Sequence[torch.Tensor],
     ) -> None:
@@ -83,6 +88,9 @@ class TotalVariationRegularizedReconstruction(DirectReconstruction):
             Maximum number of PDHG iterations
         tolerance
             Tolerance of PDHG for relative change of the primal solution; if zero, `max_iterations` of PDHG are run.
+        initialization_iterations
+            Number of unregularized CG iterations used to initialize PDHG. If DCF is available, the CG is initialized
+            with the scaled density compensated direct reconstruction.
         regularization_dim
             Dimensions along which the total variation reguarization is applied (:math:`i`).
         regularization_weight
@@ -101,6 +109,7 @@ class TotalVariationRegularizedReconstruction(DirectReconstruction):
         super().__init__(kdata, fourier_op, csm, noise, dcf)
         self.max_iterations = max_iterations
         self.tolerance = tolerance
+        self.initialization_iterations = initialization_iterations
 
         if len(regularization_dim) != len(set(regularization_dim)):
             raise ValueError('Repeated values are not allowed in regularization_dim')
@@ -134,14 +143,23 @@ class TotalVariationRegularizedReconstruction(DirectReconstruction):
         acquisition_operator = self.fourier_op @ self.csm_op if self.csm_op is not None else self.fourier_op
         l2_norm_squared = L2NormSquared(target=kdata.data)
 
-        # TV regularization
         nabla_operator = FiniteDifferenceOp(dim=regularization_dim, mode='forward')
         l1_norm = L1NormViewAsReal(
             weight=unsqueeze_right(self.regularization_weight.to(kdata.data.device), kdata.data.ndim)
         )
         operator = LinearOperatorMatrix(((acquisition_operator,), (nabla_operator,)))
 
-        initial_value = acquisition_operator.H(self.dcf_op(kdata.data)[0] if self.dcf_op is not None else kdata.data)[0]
+        (right_hand_side,) = acquisition_operator.H(kdata.data)
+
+        initial_value = self._iterative_initial_value(acquisition_operator, kdata.data, right_hand_side)
+
+        (initial_value,) = cg(
+            acquisition_operator.gram,
+            right_hand_side,
+            initial_value=initial_value,
+            max_iterations=self.initialization_iterations,
+            tolerance=0,
+        )
 
         (img_tensor,) = pdhg(
             f=ProximableFunctionalSeparableSum(l2_norm_squared, l1_norm),
