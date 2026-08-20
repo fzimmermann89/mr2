@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING
 
 import torch
 from typing_extensions import Self
 
+from mr2.data.enums import TrajType
 from mr2.data.IData import IData
+from mr2.data.IHeader import IHeader
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.utils.interpolate import apply_lowres
+from mr2.utils.smap import smap
 
 if TYPE_CHECKING:
     from mr2.data.KData import KData
@@ -48,6 +52,76 @@ def get_downsampled_size(
 
 class CsmData(IData, init=False):
     """Coil sensitivity map class."""
+
+    @classmethod
+    def from_kdata_espirit(
+        cls,
+        acs: KData,
+        singular_value_threshold: float = 0.02,
+        kernel_width: int = 6,
+        crop_threshold: float = 0.3,
+    ) -> CsmData:
+        """ESPIRiT sensitivity estimation.
+
+        Estimate coil sensitivity maps from fully sampled Cartesian calibration
+        k-space data.
+
+        Parameters
+        ----------
+        acs
+            Fully sampled Cartesian calibration k-space data.
+            This can be obtained by indexing into the `KData` object.
+            For non-Cartesian data, density compensation and adjoint NUFFT regridding is applied
+            before ESPIRiT estimation.
+        singular_value_threshold
+            threshold for the singular value decomposition
+        kernel_width
+            width of the kernel for the espirit algorithm
+        crop_threshold
+            threshold for the crop of the espirit algorithm
+
+        Raises
+        ------
+        ValueError
+            If `acs` is not fully sampled Cartesian k-space data.
+        """
+        from mr2.algorithms.csm.espirit import espirit
+
+        if all(traj_type & TrajType.ONGRID for traj_type in acs.traj.type_along_k210):
+            if acs.traj.shape[-3:] != acs.header.encoding_matrix.zyx:
+                raise ValueError('ESPIRiT requires fully sampled Cartesian k-space data without missing samples.')
+            kspace_data = acs.data
+        else:
+            from mr2.data.DcfData import DcfData
+            from mr2.operators.FastFourierOp import FastFourierOp
+            from mr2.operators.FourierOp import FourierOp
+
+            warnings.warn(
+                'ESPIRiT requires Cartesian k-space data. Regridding non-Cartesian data using density compensation, '
+                'adjoint NUFFT, and FFT before sensitivity estimation.',
+                stacklevel=2,
+            )
+            dcf = DcfData.from_traj_voronoi(acs.traj).as_operator()
+            fourier_op = FourierOp.from_kdata(acs)
+            fft_op = FastFourierOp(
+                dim=(-3, -2, -1), recon_matrix=acs.header.recon_matrix, encoding_matrix=acs.header.recon_matrix
+            )
+            (kspace_data,) = fft_op(*fourier_op.adjoint(*dcf(acs.data)))
+
+        csm_data = smap(
+            lambda c: espirit(
+                c,
+                img_shape=acs.header.recon_matrix,
+                singular_value_threshold=singular_value_threshold,
+                kernel_width=kernel_width,
+                crop_threshold=crop_threshold,
+                n_iterations=10,
+            ),
+            kspace_data,
+            passed_dimensions=(-4, -3, -2, -1),  # coils, z, y, x
+        )
+        csm = cls(header=IHeader.from_kheader(acs.header), data=csm_data)
+        return csm
 
     @classmethod
     def from_kdata_walsh(
