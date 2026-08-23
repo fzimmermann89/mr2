@@ -10,7 +10,8 @@ import torch
 
 matrix = mr2.data.SpatialDimension(z=1, y=64, x=64)
 img = mr2.phantoms.EllipsePhantom().image_space(matrix)
-b0_map = mr2.phantoms.random_b0map(matrix, fov=matrix * 1e-3, l_max=3, sigma_ppm=1000, seed=1)
+coefficients = mr2.phantoms.random_b0_sh_coefficients(max_degree=3, sigma=1000, seed=1)
+b0_map = mr2.phantoms.b0map_from_sh_coefficients(matrix, fov=matrix * 1e-3, coefficients=coefficients)
 
 # %% [markdown]
 # Let's have a look at the field map
@@ -18,7 +19,7 @@ b0_map = mr2.phantoms.random_b0map(matrix, fov=matrix * 1e-3, l_max=3, sigma_ppm
 import matplotlib.pyplot as plt
 
 plt.imshow(b0_map.squeeze())
-plt.colorbar(label='ppm')
+plt.colorbar(label='Hz')
 plt.title('B$_0$ Field map (Inhomogeneity)')
 plt.axis('off')
 plt.tight_layout()
