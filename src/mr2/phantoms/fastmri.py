@@ -105,10 +105,9 @@ class FastMRIImageDataset(torch.utils.data.Dataset):
     """FastMRI Image Dataset.
 
     This dataset returns image tensors for single slices of the FastMRI brain or knee dataset.
-    It filteres and resamples the files such that the returned images have a consistent shape
-    of 320x320 before augmentations.
+    It filters and resamples the files such that the returned images have a configurable, consistent shape.
 
-    The returned images are complex valued and will have shape ``(1, 1, 1, 320, 320)`` if coil combined or
+    With the default output shape, the returned complex images have shape ``(1, 1, 1, 320, 320)`` if coil combined or
     ``(1, n_coils, 1, 320, 320)`` otherwise.
 
     The data has to be downloaded beforehand. See https://fastmri.med.nyu.edu/ for more information.
@@ -120,6 +119,7 @@ class FastMRIImageDataset(torch.utils.data.Dataset):
         coil_combine: bool = False,
         augment: Callable[[torch.Tensor, int], torch.Tensor] | None = None,
         allowed_n_coils: Sequence[int] | None = (16, 15),
+        output_shape: Sequence[int] = (320, 320),
     ):
         """Initialize the dataset.
 
@@ -135,14 +135,18 @@ class FastMRIImageDataset(torch.utils.data.Dataset):
         augment
             Augmentation function. Will be called with the image and the index of the slices.
             If `coil_combine` is `True`, the function will be called with the complex valued coil combined image
-            with shape (1, 320, 320) otherwise with the complex valued coil images with shape (n_coils, 320, 320).
-            `None` means no augmentation.
+            with shape ``(1, *output_shape)``, otherwise with the complex valued coil images with shape
+            ``(n_coils, *output_shape)``. `None` means no augmentation.
         allowed_n_coils
             List of allowed number of coils. If `None`, all coils are allowed.
             The knee training set has 15 coils consistently, while the brain dataset has
             roughly 1300 files with 16 coils, 1100 files with 20 coils and 800 files with 4 coils.
             Only used if `coil_combine` is `False`.
+        output_shape
+            Spatial shape ``(y, x)`` of the returned images.
         """
+        if len(output_shape) != 2 or any(size < 1 for size in output_shape):
+            raise ValueError('output_shape must contain two positive integers.')
         slices = []
         self._filenames = []
         for fn in Path(path).rglob('*.h5') if isinstance(path, str | Path | PathLike) else path:
@@ -176,6 +180,7 @@ class FastMRIImageDataset(torch.utils.data.Dataset):
         self._accum_slices = torch.tensor(slices).cumsum(dim=0)
         self._coil_combine = coil_combine
         self.augment = augment
+        self.output_shape = tuple(output_shape)
 
     def __len__(self) -> int:
         """Get length (number of slices) of the dataset."""
@@ -202,8 +207,8 @@ class FastMRIImageDataset(torch.utils.data.Dataset):
             )
             # we use an fft instead of ifft to already flip the image
             img = torch.fft.fftshift(torch.fft.fft2(torch.fft.fftshift(data, dim=(-2, -1))), dim=(-2, -1))
-            # finally, we crop to the new recon_fov of 320x320 to remove oversampling
-            img = pad_or_crop(img, (320, 320), dim=(-2, -1))
+            # Finally, crop to the requested field of view.
+            img = pad_or_crop(img, self.output_shape, dim=(-2, -1))
             if self._coil_combine:
                 csm = apply_lowres(
                     lambda x: inati(x.unsqueeze(1), smoothing_width=5).squeeze(1), (32, 32), dim=(-2, -1)
