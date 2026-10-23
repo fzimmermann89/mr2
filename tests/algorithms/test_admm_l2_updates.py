@@ -86,7 +86,8 @@ def test_primal_unchanged_is_not_convergence() -> None:
 
 
 @pytest.mark.parametrize(('tolerance', 'expected_iterations'), [(0.0, 3), (1e-5, 1)])
-def test_zero_data(tolerance: float, expected_iterations: int) -> None:
+@pytest.mark.parametrize('cg_tolerance', [0.0, 1e-6])
+def test_zero_data(tolerance: float, expected_iterations: int, cg_tolerance: float) -> None:
     """Zero residuals terminate safely with zero norm scales; callbacks still run."""
     data = torch.zeros(2, 3, dtype=torch.complex128)
     statuses: list[ADMML2Status] = []
@@ -100,6 +101,7 @@ def test_zero_data(tolerance: float, expected_iterations: int) -> None:
         tau=1,
         max_iterations=3,
         tolerance=tolerance,
+        cg_tolerance=cg_tolerance,
         callback=statuses.append,
     )
     assert len(statuses) == expected_iterations
