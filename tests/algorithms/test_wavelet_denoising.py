@@ -164,12 +164,12 @@ def test_large_scalar_threshold() -> None:
         wavelet_denoising(image.float(), (-1,), torch.tensor(1e40, dtype=torch.float64), wavelet_name='haar')
 
 
-@pytest.mark.parametrize('spatial_dims', [2, 3])
+@pytest.mark.parametrize('spatial_dims', [1, 2, 3])
 @pytest.mark.parametrize('dtype', [torch.float64, torch.complex128])
-def test_unbatched_multidimensional(spatial_dims: int, dtype: torch.dtype) -> None:
+def test_unbatched(spatial_dims: int, dtype: torch.dtype) -> None:
     """ptwt's implicit batch axis must not appear in packed coefficients or reconstructed images."""
     image = torch.arange(8**spatial_dims, dtype=torch.float64).reshape((8,) * spatial_dims).to(dtype)
-    dim = (-2, -1) if spatial_dims == 2 else (-3, -2, -1)
+    dim = tuple(range(-spatial_dims, 0))
     operator = WaveletOp(image.shape, dim, wavelet_name='haar', level=1)
     (coefficients,) = operator(image)
     assert coefficients.shape == (image.numel(),)
