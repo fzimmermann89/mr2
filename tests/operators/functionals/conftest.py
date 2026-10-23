@@ -36,7 +36,11 @@ class FunctionalTestCase:
 
 
 FUNCTIONALS: list[type[ElementaryFunctional]] = [
-    x[1] for x in inspect.getmembers(functionals, lambda x: inspect.isclass(x) and issubclass(x, ElementaryFunctional))
+    x[1]
+    for x in inspect.getmembers(functionals, lambda x: inspect.isclass(x) and issubclass(x, ElementaryFunctional))
+    # L21Norm requires explicit group axes and group-scalar weights. Its reductions
+    # differ from these componentwise cases; see test_l21_norm.py.
+    if x[1] is not functionals.L21Norm
 ]
 PROXIMABLE_FUNCTIONALS: list[type[ElementaryProximableFunctional]] = [
     x for x in FUNCTIONALS if issubclass(x, ElementaryProximableFunctional)
