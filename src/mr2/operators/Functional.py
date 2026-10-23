@@ -5,10 +5,10 @@ from __future__ import annotations
 import math
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, TypeAlias, cast
 
 import torch
-from typing_extensions import TypeVarTuple, Unpack
+from typing_extensions import TypeVarTuple, Unpack, overload
 
 import mr2.operators
 from mr2.operators.Operator import Operator
@@ -177,9 +177,24 @@ class ProximableFunctional(Operator[torch.Tensor, tuple[torch.Tensor]], ABC):
             return NotImplemented
         return ScaledProximableFunctional(self, scalar)
 
+    @overload  # type: ignore[override]
     def __or__(
         self, other: ProximableFunctional
-    ) -> mr2.operators.ProximableFunctionalSeparableSum[torch.Tensor, torch.Tensor]:
+    ) -> mr2.operators.ProximableFunctionalSeparableSum[torch.Tensor, torch.Tensor]: ...
+
+    @overload
+    def __or__(
+        self, other: mr2.operators.ProximableFunctionalSeparableSum
+    ) -> mr2.operators.ProximableFunctionalSeparableSum: ...
+
+    @overload
+    def __or__(
+        self, other: Operator[torch.Tensor, tuple[torch.Tensor]]
+    ) -> mr2.operators.FunctionalSeparableSum[torch.Tensor, torch.Tensor]: ...
+
+    def __or__(  # type: ignore[misc]
+        self, other: Operator[torch.Tensor, tuple[torch.Tensor]]
+    ) -> mr2.operators.FunctionalSeparableSum[torch.Tensor, torch.Tensor]:
         """Create a ProximableFunctionalSeparableSum from two proximable functionals.
 
         ``f | g`` is a separable sum with ``(f|g)(x,y) == f(x) + g(y)``.
@@ -194,7 +209,17 @@ class ProximableFunctional(Operator[torch.Tensor, tuple[torch.Tensor]], ABC):
             ProximableFunctionalSeparableSum object
         """
         if isinstance(other, ProximableFunctional):
-            return mr2.operators.ProximableFunctionalSeparableSum(self, other)
+            return cast(
+                mr2.operators.FunctionalSeparableSum[torch.Tensor, torch.Tensor],
+                mr2.operators.ProximableFunctionalSeparableSum(self, other),
+            )
+        if isinstance(other, mr2.operators.ProximableFunctionalSeparableSum):
+            return cast(
+                mr2.operators.FunctionalSeparableSum[torch.Tensor, torch.Tensor],
+                mr2.operators.ProximableFunctionalSeparableSum(self, *other.functionals),
+            )
+        if isinstance(other, Operator):
+            return mr2.operators.FunctionalSeparableSum(self, other)
         return NotImplemented
 
 
