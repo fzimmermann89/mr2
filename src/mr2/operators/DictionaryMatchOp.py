@@ -106,7 +106,9 @@ class DictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]):
             magnitude = y.abs().amax(dim=0)
             scaled_y = torch.complex(y.real / magnitude, y.imag / magnitude) if y.is_complex() else y / magnitude
             stable_norm = magnitude * torch.linalg.norm(scaled_y, dim=0)
+            del scaled_y
             norm_y = torch.where(torch.isfinite(norm_y) & (norm_y > 0), norm_y, stable_norm)
+            del magnitude, stable_norm
         if not (torch.isfinite(norm_y) & (norm_y > 0)).all():
             raise ValueError('Dictionary signals must have finite, nonzero norms.')
         inverse_norm_y = norm_y.reciprocal()
@@ -118,6 +120,7 @@ class DictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]):
             y = torch.complex(y.real / norm_y, y.imag / norm_y)
         else:
             y = y / norm_y
+        del norm_y
 
         if not self.x:
             self.x = TensorList(x_list)
