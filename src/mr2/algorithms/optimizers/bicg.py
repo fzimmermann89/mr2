@@ -89,12 +89,17 @@ def bicg(
     tolerance
         Tolerance for the L2 norm of the residual :math:`\|r_k\|_2`.
     callback
-        Function called at the end of each iteration. See `BiCGSTABStatus`.
+        Function called at the end of each iteration, including convergence after the alpha step. See `BiCGStatus`.
         If the callback returns `False`, the iteration stops.
 
     Returns
     -------
         An approximate solution :math:`x` of the linear system :math:`Hx=b` as a tuple of tensors.
+
+    Raises
+    ------
+    RuntimeError
+        If the iteration breaks down due to a zero denominator or a zero or non-finite step coefficient.
 
     References
     ----------
@@ -103,10 +108,10 @@ def bicg(
     .. [WikipediaBiCGSTAB] Wikipedia: Bi-conjugate gradient stabilized method https://en.wikipedia.org/wiki/Bi-conjugate_gradient_stabilized_method
     """
     right_hand_side_ = tuple(right_hand_side)
-    if tolerance < torch.finfo(right_hand_side[0].dtype).eps:
-        warn(f'Tolerance is very small ({tolerance}), this can cause nan values.', stacklevel=2)
     if not right_hand_side_:
         raise ValueError('right_hand_side cannot be empty')
+    if tolerance < torch.finfo(right_hand_side_[0].dtype).eps:
+        warn(f'Tolerance is very small ({tolerance}), this can cause nan values.', stacklevel=2)
 
     if initial_value is None:
         solution = tuple(torch.zeros_like(r) for r in right_hand_side_)
@@ -128,32 +133,50 @@ def bicg(
     search_direction = residual
 
     for iteration in range(max_iterations):
-        if vdot(residual, residual, force_real).real < tolerance**2:
+        if vdot(residual, residual, force_real).real <= tolerance**2:
             break
 
         arbitrary_dot_residual = vdot(arbitrary, residual, force_real)
+        if arbitrary_dot_residual == 0 or not torch.isfinite(arbitrary_dot_residual):
+            raise RuntimeError('BiCGStab breakdown: shadow residual is orthogonal to residual or non-finite')
         if (
             previous_product is not None and alpha is not None and omega is not None and operator_search is not None
         ):  # not first iteration
             beta = (arbitrary_dot_residual / previous_product) * (alpha / omega)
+            if not torch.isfinite(beta):
+                raise RuntimeError('BiCGStab breakdown: non-finite beta')
             search_direction = tuple(
                 r + beta * (p - omega * v) for r, p, v in zip(residual, search_direction, operator_search, strict=True)
             )
         preconditioned_search = preconditioner(*search_direction)
         operator_search = operator(*preconditioned_search)
-        alpha = arbitrary_dot_residual / vdot(arbitrary, operator_search, force_real)
+        denominator = vdot(arbitrary, operator_search, force_real)
+        if denominator == 0:
+            raise RuntimeError('BiCGStab breakdown: zero alpha denominator')
+        alpha = arbitrary_dot_residual / denominator
+        if alpha == 0 or not torch.isfinite(alpha):
+            raise RuntimeError('BiCGStab breakdown: zero or non-finite alpha')
 
         interim = tuple(r - alpha * v for r, v in zip(residual, operator_search, strict=True))
-        preconditioned_interim = preconditioner(*interim)
-        operator_interim = operator(*preconditioned_interim)
-        omega = vdot(operator_interim, interim, force_real) / vdot(operator_interim, operator_interim, force_real).real
+        if vdot(interim, interim, force_real).real <= tolerance**2:
+            solution = tuple(x + alpha * p for x, p in zip(solution, preconditioned_search, strict=True))
+            residual = interim
+        else:
+            preconditioned_interim = preconditioner(*interim)
+            operator_interim = operator(*preconditioned_interim)
+            denominator = vdot(operator_interim, operator_interim, force_real).real
+            if denominator == 0:
+                raise RuntimeError('BiCGStab breakdown: zero omega denominator')
+            omega = vdot(operator_interim, interim, force_real) / denominator
+            if omega == 0 or not torch.isfinite(omega):
+                raise RuntimeError('BiCGStab breakdown: zero or non-finite omega')
 
-        solution = tuple(
-            x + alpha * p + omega * s
-            for x, p, s in zip(solution, preconditioned_search, preconditioned_interim, strict=True)
-        )
+            solution = tuple(
+                x + alpha * p + omega * s
+                for x, p, s in zip(solution, preconditioned_search, preconditioned_interim, strict=True)
+            )
 
-        residual = tuple(i - omega * t for i, t in zip(interim, operator_interim, strict=True))
+            residual = tuple(i - omega * t for i, t in zip(interim, operator_interim, strict=True))
         previous_product = arbitrary_dot_residual
 
         if callback is not None:
