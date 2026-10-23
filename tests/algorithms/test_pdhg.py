@@ -3,7 +3,16 @@
 import pytest
 import torch
 from mr2.algorithms.optimizers import pdhg
-from mr2.operators import FastFourierOp, IdentityOp, LinearOperatorMatrix, ProximableFunctionalSeparableSum, WaveletOp
+from mr2.algorithms.optimizers.pdhg import PDHGStatus
+from mr2.operators import (
+    FastFourierOp,
+    IdentityOp,
+    LinearOperator,
+    LinearOperatorMatrix,
+    ProximableFunctionalSeparableSum,
+    WaveletOp,
+    ZeroOp,
+)
 from mr2.operators.functionals import L1Norm, L1NormViewAsReal, L2NormSquared, ZeroFunctional
 from mr2.utils import RandomGenerator
 
@@ -274,6 +283,82 @@ def test_stepsizes() -> None:
     torch.testing.assert_close(pdhg_solution_no_step_sizes, expected, rtol=5e-4, atol=5e-4)
     torch.testing.assert_close(pdhg_solution_only_primal_stepsize, expected, rtol=5e-4, atol=5e-4)
     torch.testing.assert_close(pdhg_solution_only_dual_stepsize, expected, rtol=5e-4, atol=5e-4)
+
+
+@pytest.mark.parametrize(('primal_stepsize', 'dual_stepsize'), [(None, None), (0.25, None), (None, 0.5), (0.25, 0.5)])
+@pytest.mark.parametrize(('has_f', 'has_g'), [(False, True), (True, False), (True, True)])
+@pytest.mark.parametrize('operator', [ZeroOp(keep_shape=True), 0 * IdentityOp(), IdentityOp() - IdentityOp()])
+def test_zero_operator_stepsizes(
+    primal_stepsize: float | None, dual_stepsize: float | None, has_f: bool, has_g: bool, operator: LinearOperator
+) -> None:
+    """Zero operators decouple both proximal updates and keep callback state finite."""
+    initial = torch.tensor([2.0])
+    initial_dual = torch.tensor([3.0])
+    f = L2NormSquared(target=-1.0) if has_f else None
+    g = L2NormSquared(target=1.0) if has_g else None
+    tau = 1.0 if primal_stepsize is None else primal_stepsize
+    sigma = 1.0 if dual_stepsize is None else dual_stepsize
+    expected_primal = (g or ZeroFunctional()).prox(initial, sigma=tau)[0]
+    expected_dual = (f or ZeroFunctional()).prox_convex_conj(initial_dual, sigma=sigma)[0]
+    statuses: list[PDHGStatus] = []
+
+    def callback(status: PDHGStatus) -> bool:
+        statuses.append(status)
+        return False
+
+    (solution,) = pdhg(
+        f,
+        g,
+        operator,
+        (initial,),
+        max_iterations=3,
+        primal_stepsize=primal_stepsize,
+        dual_stepsize=dual_stepsize,
+        initial_duals=(initial_dual,),
+        initial_relaxed=(torch.tensor([5.0]),),
+        callback=callback,
+    )
+    torch.testing.assert_close(solution, expected_primal)
+    assert len(statuses) == 1
+    status = statuses[0]
+    assert status['iteration_number'] == 0
+    torch.testing.assert_close(torch.as_tensor(status['primal_stepsize']), torch.tensor(tau))
+    torch.testing.assert_close(torch.as_tensor(status['dual_stepsize']), torch.tensor(sigma))
+    torch.testing.assert_close(status['solution'][0], expected_primal)
+    torch.testing.assert_close(status['duals'][0], expected_dual)
+    torch.testing.assert_close(status['relaxed'][0], 2 * expected_primal - initial)
+    expected_objective = (f or ZeroFunctional())(torch.zeros_like(initial))[0] + (g or ZeroFunctional())(solution)[0]
+    torch.testing.assert_close(status['objective'](solution), expected_objective)
+
+
+@pytest.mark.parametrize('norm', [float('nan'), float('inf')])
+@pytest.mark.parametrize(('primal_stepsize', 'dual_stepsize'), [(None, None), (1.0, None), (None, 1.0), (1.0, 1.0)])
+def test_nonfinite_norm(
+    norm: float, primal_stepsize: float | None, dual_stepsize: float | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A finite norm is required only when selecting automatic step sizes."""
+    monkeypatch.setattr(LinearOperatorMatrix, 'operator_norm', lambda *_args: torch.tensor(norm))
+    if primal_stepsize is None or dual_stepsize is None:
+        with pytest.raises(ValueError, match='finite operator norm'):
+            pdhg(
+                None,
+                L2NormSquared(),
+                IdentityOp(),
+                (torch.tensor([2.0]),),
+                primal_stepsize=primal_stepsize,
+                dual_stepsize=dual_stepsize,
+            )
+    else:
+        (solution,) = pdhg(
+            None,
+            L2NormSquared(),
+            IdentityOp(),
+            (torch.tensor([2.0]),),
+            max_iterations=1,
+            primal_stepsize=primal_stepsize,
+            dual_stepsize=dual_stepsize,
+        )
+        torch.testing.assert_close(solution, torch.tensor([2 / 3]))
 
 
 def test_value_errors() -> None:
