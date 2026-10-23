@@ -537,6 +537,18 @@ def download_zenodo_files(
                     if not resolved.is_relative_to(output_root) or resolved.is_relative_to(manifest_root):
                         raise ValueError(f'Unsafe archive destination: {name}')
                     members[name] = {'size': member.stat().st_size, 'sha256': _file_checksum(member)}
+                # Replacing shared members invalidates other archives' size-only caches.
+                destinations = {(output / name).resolve() for name in names}
+                for other_manifest_path in manifest_directory.glob('*.json'):
+                    try:
+                        other_manifest = json.loads(other_manifest_path.read_text())
+                    except (OSError, ValueError):
+                        continue
+                    other_members = other_manifest.get('members') if isinstance(other_manifest, dict) else None
+                    if isinstance(other_members, dict) and any(
+                        (output / name).resolve() in destinations for name in other_members
+                    ):
+                        other_manifest_path.unlink(missing_ok=True)
                 for name in names:
                     destination = output / name
                     destination.parent.mkdir(parents=True, exist_ok=True)

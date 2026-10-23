@@ -295,6 +295,51 @@ def test_damaged_cached_member(tmp_path, zenodo_mock, damage) -> None:
     assert zenodo_mock[0].call_count == 4
 
 
+@pytest.mark.parametrize(('record', 'filename'), [(2, 'data.zip'), (1, 'other.zip')])
+@pytest.mark.parametrize('member_name', ['dataset/scan.h5', 'dataset/./scan.h5'])
+def test_overlapping_archive_cache(tmp_path, zenodo_mock, record, filename, member_name) -> None:
+    """Installing overlapping archives cannot leave a stale size-only cache hit."""
+    get, metadata, original_content = zenodo_mock
+    download_zenodo_files(1, 'data.zip', tmp_path)
+    # Unrelated malformed manifests must not prevent installing valid downloads.
+    (tmp_path / '.mr2-downloads/invalid.json').write_text('null')
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, 'w') as archive:
+        archive.writestr(member_name, b'new data')
+    replacement_content = buffer.getvalue()
+    replacement_metadata = {
+        'files': [
+            {
+                'key': filename,
+                'size': len(replacement_content),
+                'checksum': f'md5:{hashlib.md5(replacement_content, usedforsecurity=False).hexdigest()}',
+                'links': {'self': 'https://example.test/replacement.zip'},
+            }
+        ]
+    }
+    replacement_response = Mock()
+    replacement_response.iter_content.return_value = [replacement_content]
+    replacement_record_response = Mock()
+    replacement_record_response.json.return_value = replacement_metadata
+    original_response = Mock()
+    original_response.iter_content.return_value = [original_content]
+    original_record_response = Mock()
+    original_record_response.json.return_value = metadata
+    get.side_effect = [
+        replacement_record_response,
+        replacement_response,
+        original_record_response,
+        original_response,
+        original_record_response,
+    ]
+    download_zenodo_files(record, filename, tmp_path)
+    assert (tmp_path / 'dataset/scan.h5').read_bytes() == b'new data'
+    download_zenodo_files(1, 'data.zip', tmp_path)
+    assert (tmp_path / 'dataset/scan.h5').read_bytes() == b'raw data'
+    download_zenodo_files(1, 'data.zip', tmp_path)
+    assert get.call_count == 7  # The final call reuses the restored cache.
+
+
 def test_checksum_failure_and_retry(tmp_path, zenodo_mock) -> None:
     """A failed checksum publishes neither extracted members nor a manifest."""
     get, metadata, _ = zenodo_mock
