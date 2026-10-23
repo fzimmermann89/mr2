@@ -4,7 +4,7 @@ from typing import Literal
 
 import pytest
 import torch
-from mr2.algorithms import analysis_denoising, synthesis_denoising
+from mr2.algorithms.denoising import analysis_denoising, synthesis_denoising
 from mr2.data import IData
 from mr2.operators import ConvAnalysisDictionaryOp, ConvSynthesisDictionaryOp, FiniteDifferenceOp, IdentityOp
 
@@ -247,7 +247,7 @@ def test_solver_controls(denoise, monkeypatch: pytest.MonkeyPatch) -> None:
     """The recipes forward exact initial values and iteration budgets to existing solvers."""
     from importlib import import_module
 
-    module = import_module(f'mr2.algorithms.{denoise.__name__}')
+    module = import_module(f'mr2.algorithms.denoising.{denoise.__name__}')
     image = torch.tensor([[3.0, -2.0]], dtype=torch.float64)
     initial = torch.ones_like(image)
     calls = []
