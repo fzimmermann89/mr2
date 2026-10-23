@@ -1,5 +1,6 @@
 """Tests for KTrajectory class."""
 
+from contextlib import closing
 from pathlib import Path
 
 import ismrmrd
@@ -15,42 +16,44 @@ from tests.conftest import COMMON_MR_TRAJECTORIES, create_traj
 from tests.data import IsmrmrdRawTestData
 
 
-@pytest.mark.parametrize('n_dimensions', [0, 1, 2, 3, 4, 5])
+@pytest.mark.parametrize('n_dimensions', [(0,), (1,), (2,), (3,), (4,), (5,), (2, 0), (0, 2), (2, 4), (4, 2)])
 @pytest.mark.parametrize('normalize', [False, True])
 @pytest.mark.parametrize('use_calculator', [False, True])
 def test_ismrmrd_trajectory_dimensions(
-    tmp_path: Path, n_dimensions: int, normalize: bool, use_calculator: bool
+    tmp_path: Path, n_dimensions: tuple[int, ...], normalize: bool, use_calculator: bool
 ) -> None:
     """ISMRMRD imports preserve supported coordinates and reject missing or extra ones."""
     raw = IsmrmrdRawTestData(tmp_path / 'source.h5', matrix_size=4, n_coils=1, oversampling=1)
-    source = ismrmrd.Dataset(raw.filename)
-    header = source.read_xml_header()
-    acquisition = source.read_acquisition(raw.n_noise_samples)
-    source.close()
-    acquisition.resize(4, 1, trajectory_dimensions=n_dimensions)
-    coordinates = torch.arange(4 * n_dimensions, dtype=torch.float32).reshape(4, n_dimensions)
-    acquisition.traj[:] = coordinates.numpy()
+    acquisitions = []
+    with closing(ismrmrd.Dataset(raw.filename)) as source:
+        header = source.read_xml_header()
+        for count in n_dimensions:
+            acquisition = source.read_acquisition(raw.n_noise_samples)
+            acquisition.resize(4, 1, trajectory_dimensions=count)
+            coordinates = torch.arange(4 * count, dtype=torch.float32).reshape(4, count)
+            acquisition.traj[:] = coordinates.numpy()
+            acquisitions.append(acquisition)
     filename = tmp_path / 'trajectory.h5'
-    dataset = ismrmrd.Dataset(filename)
-    dataset.write_xml_header(header)
-    dataset.append_acquisition(acquisition)
-    dataset.close()
+    with closing(ismrmrd.Dataset(filename)) as dataset:
+        dataset.write_xml_header(header)
+        for acquisition in acquisitions:
+            dataset.append_acquisition(acquisition)
 
     def read() -> KTrajectory:
         if use_calculator:
-            return KTrajectoryIsmrmrd(normalize)([acquisition], SpatialDimension(z=1, y=4, x=4))
+            return KTrajectoryIsmrmrd(normalize)(acquisitions, SpatialDimension(z=1, y=4, x=4))
         return KTrajectory.from_ismrmrd(filename, normalize=normalize)
 
-    if n_dimensions == 0:
+    if 0 in n_dimensions:
         with pytest.raises(ValueError, match='No trajectory information available'):
             read()
-    elif n_dimensions > 3:
+    elif max(n_dimensions) > 3:
         with pytest.raises(ValueError, match='Trajectory must have 1, 2 or 3 coordinate dimensions'):
             read()
     else:
         trajectory = read()
         for axis, actual in enumerate((trajectory.kx, trajectory.ky, trajectory.kz)):
-            expected = coordinates[:, axis] if axis < n_dimensions else torch.zeros(4)
+            expected = coordinates[:, axis] if axis < n_dimensions[0] else torch.zeros(4)
             if normalize:
                 expected = expected * (2 / expected.abs().max()) if axis < 2 and expected.any() else torch.zeros(4)
             torch.testing.assert_close(actual.broadcast_to(1, 1, 1, 1, 4).flatten(), expected)

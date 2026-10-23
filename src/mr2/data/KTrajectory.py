@@ -178,11 +178,13 @@ class KTrajectory(Dataclass):
             ]
             if not acquisitions:
                 raise ValueError('No matching acquisitions found in the ISMRMRD file.')
-            traj = torch.stack([torch.as_tensor(acq.traj, dtype=torch.float32) for acq in acquisitions], dim=0)
-            if not traj.numel():
-                raise ValueError('No trajectory information available in the ISMRMRD file.')
-            if traj.shape[-1] > 3:
-                raise ValueError('Trajectory must have 1, 2 or 3 coordinate dimensions.')
+            trajectories = [torch.as_tensor(acq.traj, dtype=torch.float32) for acq in acquisitions]
+            for traj in trajectories:
+                if not traj.numel():
+                    raise ValueError('No trajectory information available in the ISMRMRD file.')
+                if traj.shape[-1] > 3:
+                    raise ValueError('Trajectory must have 1, 2 or 3 coordinate dimensions.')
+            traj = torch.stack(trajectories, dim=0)
             if not normalize:
                 scaling_matrix = None
             elif (

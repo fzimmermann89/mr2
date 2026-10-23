@@ -58,12 +58,13 @@ class KTrajectoryIsmrmrd:
         ValueError
             If trajectory information is missing or has more than three coordinate dimensions.
         """
-        traj = torch.stack([torch.as_tensor(acq.traj, dtype=torch.float32) for acq in acquisitions])
-
-        if not traj.numel():
-            raise ValueError('No trajectory information available in the ISMRMRD file.')
-        if traj.shape[-1] > 3:
-            raise ValueError('Trajectory must have 1, 2 or 3 coordinate dimensions.')
+        trajectories = [torch.as_tensor(acq.traj, dtype=torch.float32) for acq in acquisitions]
+        for traj in trajectories:
+            if not traj.numel():
+                raise ValueError('No trajectory information available in the ISMRMRD file.')
+            if traj.shape[-1] > 3:
+                raise ValueError('Trajectory must have 1, 2 or 3 coordinate dimensions.')
+        traj = torch.stack(trajectories)
 
         if traj.shape[-1] < 3:  # pad missing y and z coordinates
             zero = torch.zeros_like(traj[..., :1])
