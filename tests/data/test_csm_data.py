@@ -4,9 +4,11 @@ from collections.abc import Callable
 
 import pytest
 import torch
-from mr2.data import CsmData, KData, KHeader, SpatialDimension
+from mr2.algorithms.csm import espirit
+from mr2.data import CsmData, KData, KHeader, KTrajectory, SpatialDimension
 from mr2.data.traj_calculators.KTrajectoryCartesian import KTrajectoryCartesian
-from mr2.operators import FourierOp
+from mr2.data.traj_calculators.KTrajectoryIsmrmrd import KTrajectoryIsmrmrd
+from mr2.operators import FourierOp, ZeroPadOp
 
 from tests import relative_image_difference
 from tests.algorithms.csm.test_walsh import multi_coil_image
@@ -101,3 +103,99 @@ def test_CsmData_walsh_align_phase_matches_explicit_call(
 
     torch.testing.assert_close(csm_default.data, csm_with_phase.data)
     assert not torch.allclose(csm_default.data, csm_no_phase.data)
+
+
+def test_CsmData_kdata_espirit_requires_covered_center(ismrmrd_cart_random_us) -> None:
+    """ESPIRiT rejects Cartesian data without a complete centered region."""
+    kdata = KData.from_file(ismrmrd_cart_random_us.filename, KTrajectoryCartesian())
+
+    with pytest.raises(ValueError, match='covered centered ACS'):
+        CsmData.from_kdata_espirit(kdata)
+
+
+def test_CsmData_kdata_espirit_regrids_noncartesian(ismrmrd_rad) -> None:
+    """ESPIRiT prepares non-Cartesian ACS and returns finite maps."""
+    kdata = KData.from_file(ismrmrd_rad.filename, KTrajectoryIsmrmrd())
+
+    width = kdata.acs().shape[-1]
+    if width < 6:
+        with pytest.raises(ValueError, match='at least kernel_width'):
+            CsmData.from_kdata_espirit(kdata)
+    csm = CsmData.from_kdata_espirit(kdata, kernel_width=min(6, width))
+
+    # Dataclass stores repeated map dimensions as singletons.
+    expected_shape = (*kdata.shape[:-3], *kdata.header.recon_matrix.zyx)
+    assert torch.broadcast_shapes(csm.data.shape, expected_shape) == expected_shape
+    assert torch.isfinite(csm.data).all()
+
+
+def test_CsmData_kdata_espirit_cartesian(ismrmrd_cart_single_rep) -> None:
+    """Cartesian ESPIRiT preserves batch and coil axes and uses the reconstruction size."""
+    _, kdata = create_matching_idata_kdata(ismrmrd_cart_single_rep)
+    csm = CsmData.from_kdata_espirit(kdata)
+
+    assert csm.data.shape == (*kdata.data.shape[:-3], *kdata.header.recon_matrix.zyx)
+    assert torch.isfinite(csm.data).all()
+    assert csm.data.abs().max() > 0
+
+
+def test_CsmData_kdata_espirit_indexed_acs(ismrmrd_cart_single_rep) -> None:
+    """An indexed central ACS block keeps the original encoding and reconstruction metadata."""
+    _, kdata = create_matching_idata_kdata(ismrmrd_cart_single_rep)
+    ny, nx = kdata.data.shape[-2:]
+    acs = kdata[..., ny // 2 - 8 : ny // 2 + 8, nx // 2 - 8 : nx // 2 + 8]
+    assert acs.header.encoding_matrix.zyx == kdata.header.encoding_matrix.zyx
+    assert acs.data.shape[-3:] != acs.header.encoding_matrix.zyx
+
+    csm = CsmData.from_kdata_espirit(acs, n_iterations=3)
+    expected = espirit(acs.acs()[0], acs.header.encoding_matrix, crop_threshold=0.3, n_iterations=3)
+    expected = ZeroPadOp((-3, -2, -1), acs.header.encoding_matrix.zyx, acs.header.recon_matrix.zyx)(expected)[0]
+
+    torch.testing.assert_close(csm.data[0], expected)
+    assert csm.data.shape == (*acs.data.shape[:-3], *acs.header.recon_matrix.zyx)
+
+
+def test_CsmData_kdata_espirit_reversed_readouts(ismrmrd_cart_single_rep) -> None:
+    """Trajectory-based reordering handles reversed readouts and permuted phase encodes."""
+    _, kdata = create_matching_idata_kdata(ismrmrd_cart_single_rep)
+    reversed_lines = (torch.arange(kdata.data.shape[-2]) % 2 == 0).reshape(1, 1, 1, -1, 1)
+    kx = kdata.traj.kx.expand(kdata.traj.shape)
+    acquired_data = torch.where(reversed_lines, kdata.data.flip(-1), kdata.data).flip(-2)
+    acquired_traj = KTrajectory(
+        kz=kdata.traj.kz,
+        ky=kdata.traj.ky.flip(-2),
+        kx=torch.where(reversed_lines, kx.flip(-1), kx).flip(-2),
+    )
+    acquired = KData(kdata.header, acquired_data, acquired_traj)
+
+    expected = CsmData.from_kdata_espirit(kdata)
+    actual = CsmData.from_kdata_espirit(acquired)
+
+    torch.testing.assert_close(actual.data, expected.data)
+
+
+def test_CsmData_kdata_espirit_duplicate_coordinates(ismrmrd_cart_single_rep) -> None:
+    """Shape-matching Cartesian data with a duplicate and missing line is rejected."""
+    kdata = KData.from_file(ismrmrd_cart_single_rep.filename, KTrajectoryCartesian())
+    ky = kdata.traj.ky.clone()
+    center = ky.shape[-2] // 2
+    ky[..., center, :] = ky[..., center + 1, :]
+    invalid = KData(kdata.header, kdata.data, KTrajectory(kdata.traj.kz, ky, kdata.traj.kx))
+
+    with pytest.raises(ValueError, match='covered centered ACS'):
+        CsmData.from_kdata_espirit(invalid)
+
+
+def test_CsmData_espirit_rejects_inconsistent_fov(ismrmrd_cart_single_rep) -> None:
+    """Do not silently apply encoding-grid sensitivities at a different voxel spacing."""
+    kdata = KData.from_file(ismrmrd_cart_single_rep.filename, KTrajectoryCartesian())
+    kdata.header.recon_fov = kdata.header.recon_fov * 2
+    with pytest.raises(ValueError, match='reconstruction geometry'):
+        CsmData.from_kdata_espirit(kdata)
+
+
+def test_CsmData_espirit_rejects_acs_smaller_than_kernel(ismrmrd_cart_single_rep) -> None:
+    """Do not silently reduce the calibration kernel on active encoding axes."""
+    kdata = KData.from_file(ismrmrd_cart_single_rep.filename, KTrajectoryCartesian())
+    with pytest.raises(ValueError, match='at least kernel_width'):
+        CsmData.from_kdata_espirit(kdata, calibration_size=3, kernel_width=6)

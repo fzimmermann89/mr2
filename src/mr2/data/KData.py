@@ -35,6 +35,7 @@ from mr2.data.KHeader import KHeader
 from mr2.data.KNoise import KNoise
 from mr2.data.KTrajectory import KTrajectory
 from mr2.data.Rotation import Rotation
+from mr2.data.SpatialDimension import SpatialDimension
 from mr2.data.traj_calculators.KTrajectoryCalculator import KTrajectoryCalculator
 from mr2.data.traj_calculators.KTrajectoryIsmrmrd import KTrajectoryIsmrmrd
 from mr2.utils.reshape import normalize_index, normalize_indices
@@ -89,6 +90,41 @@ class KData(Dataclass):
 
     traj: KTrajectory
     """K-space trajectory along kz, ky and kx. Shape `(*other 1 k2 k1 k0)`"""
+
+    def acs(self, size: int | SpatialDimension[int] | None = None) -> torch.Tensor:
+        """Return centered Cartesian calibration k-space.
+
+        Parameters
+        ----------
+        size
+            Explicit calibration widths. An integer gives a square in 2D or cube
+            in 3D; inactive encoding axes stay singleton. If omitted, infer the
+            largest adequately covered centered square or cube shared by all
+            batches. See `~mr2.algorithms.prepare_acs` for the coverage criterion.
+
+        Returns
+        -------
+        torch.Tensor
+            Calibration tensor shaped ``(..., coils, kz, ky, kx)`` in the original
+            coil basis and encoding FOV. Cartesian samples are extracted exactly;
+            non-Cartesian samples are approximately gridded using one Voronoi
+            density calculation for both sizing and adjoint reconstruction.
+
+        Notes
+        -----
+        ``kdata.acs()`` infers the size, ``kdata.acs(24)`` requests a square or
+        cube, and ``kdata.acs(SpatialDimension(1, 24, 32))`` requests a rectangle.
+        Non-Cartesian size selection uses a geometric coverage heuristic, not a
+        guarantee of calibration accuracy. Explicit sizes must also be covered.
+
+        Raises
+        ------
+        ValueError
+            If the requested calibration block has insufficient coverage.
+        """
+        from mr2.algorithms.prepare_acs import prepare_acs
+
+        return prepare_acs(self, size)
 
     @classmethod
     def from_file(
