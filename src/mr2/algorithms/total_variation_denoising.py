@@ -73,12 +73,13 @@ def total_variation_denoising(
     -------
         the denoised image.
     """
+    img_tensor = idata if isinstance(idata, torch.Tensor) else idata.data
     regularization_weight_ = torch.as_tensor(
         regularization_weight
         if isinstance(regularization_weight, Sequence)
-        else [regularization_weight] * len(regularization_dim)
+        else [regularization_weight] * len(regularization_dim),
+        device=img_tensor.device,
     )
-    img_tensor = idata if isinstance(idata, torch.Tensor) else idata.data
 
     if len(regularization_dim) != len(regularization_weight_):
         raise ValueError('Regularization dimensions and weights must have the same length')

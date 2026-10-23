@@ -1,5 +1,6 @@
 """PyTest fixtures for the mr2 package."""
 
+import sys
 import tempfile
 from collections.abc import Sequence
 from typing import Any
@@ -21,6 +22,11 @@ from tests.phantoms import EllipsePhantomTestData
 minimal_torch_26 = pytest.mark.xfail(
     parse_version(torch.__version__) < parse_version('2.6'),
     reason='Requires PyTorch >= 2.6',
+)
+
+maximum_python_313 = pytest.mark.skipif(
+    sys.version_info >= (3, 14),
+    reason='PyTorch FlexAttention is not compatible with Python >= 3.14',
 )
 
 

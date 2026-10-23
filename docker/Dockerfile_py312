@@ -9,15 +9,13 @@ ARG PYTHON="python3.12"
 COPY docker/install_system.sh .
 RUN bash install_system.sh && rm install_system.sh
 
-# install mr2 dependencies
-# forces rebuild if either the version or the pyproject.toml changes
-COPY docker/install_dependencies.sh pyproject.toml src/mr2/VERSION ./
-RUN bash install_dependencies.sh && rm install_dependencies.sh pyproject.toml VERSION
+# Install the pinned recommended CPU PyTorch stack.
+COPY ci/requirements/recommended.txt /tmp/recommended.txt
+RUN python -m pip install --no-cache-dir -r /tmp/recommended.txt && rm /tmp/recommended.txt
 
-# install mr2
-# forces rebuild on any change in the mr2 directory
+# Install the notebook-capable user-facing package image while retaining the pins.
 COPY . /mr2/
-RUN python -m pip install  "/mr2[notebooks]" --no-cache-dir --upgrade --upgrade-strategy "eager" && rm -rf /mr2
+RUN python -m pip install "/mr2[notebooks]" --no-cache-dir && rm -rf /mr2
 
 # set user
 USER runner

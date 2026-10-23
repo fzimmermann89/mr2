@@ -4,7 +4,23 @@ from typing import cast
 
 import pytest
 import torch
-from mr2.nn.nets import Uformer
+from mr2.nn.LayerNorm import LayerNorm
+from mr2.nn.nets.Uformer import LeWinTransformerBlock, Uformer
+
+
+def test_lewin_transformer_block_structure() -> None:
+    """LeWin blocks use channel normalization and two residual connections."""
+    block = LeWinTransformerBlock(n_dim=2, n_channels_per_head=2, n_heads=1, window_size=2)
+    assert isinstance(block.norm1, LayerNorm)
+    assert isinstance(block.norm2, LayerNorm)
+    assert not block.norm1.features_last
+    assert not block.norm2.features_last
+
+    with torch.no_grad():
+        x = torch.rand(1, 2, 2, 2)
+        attended = x + block.drop_path(block.attn(block.norm1(x) + block.modulator))
+        expected = attended + block.drop_path(block.ff(block.norm2(attended)))
+        torch.testing.assert_close(block(x), expected)
 
 
 @pytest.mark.parametrize('torch_compile', [True, False], ids=['compiled', 'uncompiled'])

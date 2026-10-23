@@ -7,6 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 from importlib.metadata import version
 from types import EllipsisType
 from typing import TYPE_CHECKING, Literal, cast
+from xml.etree import ElementTree as ET
 
 import h5py
 import ismrmrd
@@ -118,7 +119,18 @@ class KData(Dataclass):
         # Can raise FileNotFoundError
         with ismrmrd.File(filename, 'r') as file:
             dataset = file[list(file.keys())[dataset_idx]]
-            ismrmrd_header = dataset.header
+            try:
+                ismrmrd_header = dataset.header
+            except TypeError:
+                root = ET.fromstring(dataset._contents['xml'][0])  # noqa: S314
+                prefix = root.tag.removesuffix('ismrmrdHeader')
+                measurement = root.find(f'{prefix}measurementInformation')
+                if measurement is not None and measurement.find(f'{prefix}patientPosition') is None:
+                    ET.SubElement(measurement, f'{prefix}patientPosition').text = 'HFS'
+                for encoding in root.findall(f'{prefix}encoding'):
+                    if encoding.find(f'{prefix}trajectory') is None:
+                        ET.SubElement(encoding, f'{prefix}trajectory').text = 'other'
+                ismrmrd_header = ismrmrd.xsd.CreateFromDocument(ET.tostring(root))
             acquisitions = dataset.acquisitions[:]
             try:
                 mtime: int = h5py.h5g.get_objinfo(dataset['data']._contents.id).mtime
@@ -347,6 +359,30 @@ class KData(Dataclass):
         kz, ky, kx = (sort(t) for t in (self.traj.kz, self.traj.ky, self.traj.kx))
         traj = KTrajectory(kz, ky, kx, self.traj.grid_detection_tolerance, self.traj.repeat_detection_tolerance)
         return type(self)(header=header._reduce_repeats_(), data=data, traj=traj._reduce_repeats_())
+
+    def squeeze(self, dim: int | Sequence[int] | None = None) -> Self:
+        """Squeeze KData along the specified dimensions."""
+        shape = self.shape
+        n_dim = len(shape)
+        if dim is None:
+            dims_set = {i for i, size in enumerate(shape) if size == 1}
+        else:
+            dims_set = set(normalize_indices(n_dim, dim))
+        if dims_set and n_dim - len(dims_set) < 5:
+            warnings.warn(
+                'Squeezing leaves fewer dimensions than the usual (*other, coil, k2, k1, k0).',
+                stacklevel=2,
+            )
+
+        for d in dims_set:
+            if d >= n_dim - 4:
+                warnings.warn(
+                    f'Squeezing removes the assumed {("coil", "k2", "k1", "k0")[d - (n_dim - 4)]} dimension. '
+                    'This can cause misalignment of other dimensions with the assumed '
+                    '(*other, coil, k2, k1, k0) alignment.',
+                    stacklevel=2,
+                )
+        return super().squeeze(dim)
 
     def to_file(self, filename: FileOrPath) -> None:
         """Save KData as ISMRMRD dataset to file.

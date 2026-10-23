@@ -1,6 +1,7 @@
 """Tests for ShiftedWindowAttention module."""
 
 import pytest
+import torch
 from mr2.nn.attention import ShiftedWindowAttention
 from mr2.utils import RandomGenerator
 
@@ -59,3 +60,14 @@ def test_shifted_window_attention_size_mismatch(shifted: bool):
     )
     out = swin(x)
     assert out.shape == x.shape, f'Output shape {out.shape} != input shape {x.shape}'
+
+
+def test_shifted_window_attention_single_window_dimension() -> None:
+    """Shifting is disabled if a spatial dimension contains only one window."""
+    rng = RandomGenerator(13)
+    x = rng.float32_tensor((2, 4, 7, 14))
+    shifted = ShiftedWindowAttention(2, 4, 4, 2, window_size=7, shifted=True)
+    non_shifted = ShiftedWindowAttention(2, 4, 4, 2, window_size=7, shifted=False)
+    non_shifted.load_state_dict(shifted.state_dict())
+
+    torch.testing.assert_close(shifted(x), non_shifted(x))

@@ -825,22 +825,22 @@ def test_grid_sampling_op_from_bspline_cuda(dim: int) -> None:
     batch, coil = (2, 3), 3
     if dim == 3:
         zyx = (2, 4, 8)
-        control_points_z_cuda = torch.zeros(*batch, 5, 6, 7, device='cuda')
-        control_points_y_cuda = torch.zeros(*batch, 5, 6, 7, device='cuda')
-        control_points_x_cuda = torch.zeros(*batch, 5, 6, 7, device='cuda')
-        control_points_z_cpu = torch.zeros(*batch, 5, 6, 7, device='cpu')
-        control_points_y_cpu = torch.zeros(*batch, 5, 6, 7, device='cpu')
-        control_points_x_cpu = torch.zeros(*batch, 5, 6, 7, device='cpu')
+        control_points_z_cuda = torch.zeros(*batch, 4, 5, 7, device='cuda')
+        control_points_y_cuda = torch.zeros(*batch, 4, 5, 7, device='cuda')
+        control_points_x_cuda = torch.zeros(*batch, 4, 5, 7, device='cuda')
+        control_points_z_cpu = torch.zeros(*batch, 4, 5, 7, device='cpu')
+        control_points_y_cpu = torch.zeros(*batch, 4, 5, 7, device='cpu')
+        control_points_x_cpu = torch.zeros(*batch, 4, 5, 7, device='cpu')
         input_shape = SpatialDimension(*zyx)
         spacing = SpatialDimension(2.0, 2.0, 2.0)
     elif dim == 2:
         zyx = (1, 4, 8)
         control_points_z_cuda = None
-        control_points_y_cuda = torch.zeros(*batch, 6, 7, device='cuda')
-        control_points_x_cuda = torch.zeros(*batch, 6, 7, device='cuda')
+        control_points_y_cuda = torch.zeros(*batch, 5, 7, device='cuda')
+        control_points_x_cuda = torch.zeros(*batch, 5, 7, device='cuda')
         control_points_z_cpu = None
-        control_points_y_cpu = torch.zeros(*batch, 6, 7, device='cpu')
-        control_points_x_cpu = torch.zeros(*batch, 6, 7, device='cpu')
+        control_points_y_cpu = torch.zeros(*batch, 5, 7, device='cpu')
+        control_points_x_cpu = torch.zeros(*batch, 5, 7, device='cpu')
         input_shape = SpatialDimension(*zyx)
         spacing = SpatialDimension(1.0, 2.0, 2.0)
 

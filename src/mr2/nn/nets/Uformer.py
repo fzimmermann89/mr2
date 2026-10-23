@@ -11,7 +11,8 @@ from mr2.nn.CondMixin import CondMixin
 from mr2.nn.DropPath import DropPath
 from mr2.nn.FiLM import FiLM
 from mr2.nn.join import Concat
-from mr2.nn.ndmodules import convND, convTransposeND, instanceNormND
+from mr2.nn.LayerNorm import LayerNorm
+from mr2.nn.ndmodules import convND, convTransposeND
 from mr2.nn.nets.UNet import UNetBase, UNetDecoder, UNetEncoder
 from mr2.nn.Sequential import Sequential
 
@@ -57,7 +58,7 @@ class LeWinTransformerBlock(CondMixin, Module):
         super().__init__()
         channels = n_channels_per_head * n_heads
         hidden_dim = int(channels * mlp_ratio)
-        self.norm1 = instanceNormND(n_dim)(channels)
+        self.norm1 = LayerNorm(channels, features_last=False)
         self.attn = ShiftedWindowAttention(
             n_dim=n_dim,
             n_channels_in=channels,
@@ -66,7 +67,7 @@ class LeWinTransformerBlock(CondMixin, Module):
             window_size=window_size,
             shifted=shifted,
         )
-        self.norm2 = instanceNormND(n_dim)(channels)
+        self.norm2 = LayerNorm(channels, features_last=False)
         self.ff = Sequential(
             convND(n_dim)(channels, hidden_dim, 1),
             GELU(),
@@ -99,10 +100,8 @@ class LeWinTransformerBlock(CondMixin, Module):
     def forward(self, x: torch.Tensor, *, cond: torch.Tensor | None = None) -> torch.Tensor:
         """Apply the transformer block."""
         modulator = self.modulator.tile([t // s for t, s in zip(x.shape[1:], self.modulator.shape, strict=False)])
-        x_mod = self.norm1(x) + modulator
-        x_attn = self.attn(x_mod)
-        x_ff = self.ff(self.norm2(x_attn), cond=cond)
-        return x + self.drop_path(x_ff)
+        x = x + self.drop_path(self.attn(self.norm1(x) + modulator))
+        return x + self.drop_path(self.ff(self.norm2(x), cond=cond))
 
 
 class Uformer(UNetBase):

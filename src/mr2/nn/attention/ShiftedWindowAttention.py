@@ -1,7 +1,7 @@
 """Shifted Window Attention."""
 
-import re
 import warnings
+from types import EllipsisType
 
 import torch
 from einops import rearrange
@@ -10,7 +10,15 @@ from torch.nn import Linear, Module
 from mr2.utils.reshape import ravel_multi_index
 from mr2.utils.sliding_window import sliding_window
 
-_SOFTMAX_WARNING = re.compile('.*softmax.*', re.I)
+_INDUCTOR_SOFTMAX_WARNING = (
+    r'\s*Online softmax is disabled on the fly since Inductor decides to\s+'
+    r'split the reduction\. Cut an issue to PyTorch if this is an\s+'
+    r'important use case and you want to speed it up with online\s+softmax\.\s*'
+)
+# Keep warning-state changes outside forward so they are not traced by torch.compile.
+warnings.filterwarnings(
+    'ignore', message=_INDUCTOR_SOFTMAX_WARNING, category=UserWarning, module=r'torch\._inductor\.lowering$'
+)
 
 
 class ShiftedWindowAttention(Module):
@@ -56,6 +64,10 @@ class ShiftedWindowAttention(Module):
             Whether the features are last in the input tensor or in the second dimension.
         """
         super().__init__()
+        if n_heads <= 0:
+            raise ValueError('n_heads must be positive')
+        if n_channels_in % n_heads:
+            raise ValueError('n_channels_in must be divisible by n_heads')
         self.n_heads = n_heads
         self.window_size = window_size
         self.shifted = shifted
@@ -92,14 +104,16 @@ class ShiftedWindowAttention(Module):
         """Apply the ShiftedWindowAttention."""
         if not self.features_last:
             x = x.moveaxis(1, -1)  # now it is features last
-        if self.shifted:
-            x = torch.roll(x, (-(self.window_size // 2),) * self.n_dim, dims=tuple(range(-self.n_dim - 1, -1)))
 
         padding = []
         for s in x.shape[-self.n_dim - 1 : -1]:
             target = ((s + self.window_size - 1) // self.window_size) * self.window_size
             padding.extend([target - s, 0])
         x_padded = torch.nn.functional.pad(x, (0, 0, *padding[::-1]), mode='circular') if any(padding) else x
+        spatial_dims = tuple(range(-self.n_dim - 1, -1))
+        apply_shift = self.shifted and all(size > self.window_size for size in x_padded.shape[-self.n_dim - 1 : -1])
+        if apply_shift:
+            x_padded = torch.roll(x_padded, (-(self.window_size // 2),) * self.n_dim, dims=spatial_dims)
 
         qkv = self.to_qkv(x_padded)
         windowed = sliding_window(
@@ -112,22 +126,36 @@ class ShiftedWindowAttention(Module):
             qkv=3,
         )
         bias = rearrange(self.relative_position_bias_table[self.rel_position_index], 'wd1 wd2 heads -> 1 heads wd1 wd2')
-        # Inductor in torch 2.6 warns for small batch*n_patches*n_heads about suboptimal softmax compilation.
-        with warnings.catch_warnings():
-            warnings.filters = [('ignore', _SOFTMAX_WARNING, UserWarning, None, 0), *warnings.filters]
-            attention = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=bias)
+        if apply_shift:
+            shift = self.window_size // 2
+            region_mask = torch.zeros(x_padded.shape[-self.n_dim - 1 : -1], device=x.device, dtype=torch.int64)
+            for dim, size in enumerate(region_mask.shape):
+                coordinate = torch.arange(size, device=x.device)
+                region = (coordinate >= size - self.window_size).to(torch.int64)
+                region += (coordinate >= size - shift).to(torch.int64)
+                shape = [1] * self.n_dim
+                shape[dim] = size
+                region_mask += region.reshape(shape) * 3**dim
+            windowed_mask = sliding_window(
+                region_mask, window_shape=self.window_size, stride=self.window_size, dim=range(self.n_dim)
+            ).flatten(-self.n_dim)
+            windowed_mask = windowed_mask[..., :, None] != windowed_mask[..., None, :]
+            bias = bias + windowed_mask[..., None, None, :, :] * torch.finfo(q.dtype).min
+        attention = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=bias)
         attention = rearrange(attention, '... head sequence channels->... sequence (head channels)')
         attention = attention.unflatten(-2, windowed.shape[-self.n_dim - 1 : -1])
-        # permute (in 3d) batch channels z y x wz wy wx -> batch channels wz z wy y wx x
-        attention = attention.moveaxis(list(range(self.n_dim)), list(range(2, 2 + 2 * self.n_dim, 2)))
+        # The window-grid axes precede batch; interleave only grid and within-window axes.
+        attention = attention.moveaxis(list(range(self.n_dim)), list(range(1, 2 * self.n_dim, 2)))
         attention = attention.reshape(x_padded.shape)
+        if apply_shift:
+            attention = torch.roll(attention, (self.window_size // 2,) * self.n_dim, dims=spatial_dims)
         if any(padding):
-            crop_idx = (Ellipsis, *[slice(0, s) for s in x.shape[-self.n_dim - 1 : -1]], slice(None))
-            attention = attention[crop_idx]
-        if self.shifted:
-            attention = torch.roll(
-                attention, (self.window_size // 2,) * self.n_dim, dims=tuple(range(-self.n_dim - 1, -1))
+            crop_idx: tuple[EllipsisType | slice, ...] = (
+                Ellipsis,
+                *[slice(0, s) for s in x.shape[-self.n_dim - 1 : -1]],
+                slice(None),
             )
+            attention = attention[crop_idx]
         out = self.to_out(attention)
         if not self.features_last:
             out = out.moveaxis(-1, 1)

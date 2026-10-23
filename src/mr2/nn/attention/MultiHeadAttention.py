@@ -45,11 +45,13 @@ class MultiHeadAttention(Module):
             Fraction of channels to embed with RoPE.
         """
         super().__init__()
+        if n_heads <= 0:
+            raise ValueError('n_heads must be positive')
+        if n_channels_in % n_heads:
+            raise ValueError('n_channels_in must be divisible by n_heads')
         n_channels_kv = n_channels_cross if n_channels_cross is not None else n_channels_in
-        channels_per_head_q = n_channels_in // n_heads
-        channels_per_head_kv = n_channels_kv // n_heads
-        self.to_q = Linear(n_channels_in, channels_per_head_q * n_heads)
-        self.to_kv = Linear(n_channels_kv, channels_per_head_kv * n_heads * 2)
+        self.to_q = Linear(n_channels_in, n_channels_in)
+        self.to_kv = Linear(n_channels_kv, 2 * n_channels_in)
         self.p_dropout = p_dropout
         self.features_last = features_last
         self.to_out = Linear(n_channels_in, n_channels_out)
@@ -72,11 +74,6 @@ class MultiHeadAttention(Module):
         """
         return super().__call__(x, cross_attention)
 
-    def _reshape(self, x: torch.Tensor) -> torch.Tensor:
-        if not self.features_last:
-            x = x.moveaxis(1, -1)
-        return x.flatten(1, -2)
-
     def forward(self, x: torch.Tensor, cross_attention: torch.Tensor | None = None) -> torch.Tensor:
         """Apply multi-head attention."""
         if cross_attention is None:
@@ -95,10 +92,10 @@ class MultiHeadAttention(Module):
         query, key = self.rope(query, key)  # NO-OP if rope_embed_fraction is 0.0
         query, key, value = query.flatten(2, -2), key.flatten(2, -2), value.flatten(2, -2)
         y = torch.nn.functional.scaled_dot_product_attention(
-            query, key, value, dropout_p=self.p_dropout, is_causal=False
+            query, key, value, dropout_p=self.p_dropout if self.training else 0.0, is_causal=False
         )
         y = rearrange(y, '... heads L channels -> ... L (heads channels)')
-        out = self.to_out(y).reshape(x.shape)
+        out = self.to_out(y).unflatten(-2, x.shape[1:-1])
 
         if not self.features_last:
             out = out.moveaxis(-1, 1)
