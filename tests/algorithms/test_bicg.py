@@ -15,10 +15,12 @@ def test_alpha_convergence(scale, preconditioned):
     calls = []
 
     def operator(*values: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        """Count applications to detect unnecessary stabilization after convergence."""
         calls.append(values)
         return tuple(scale * x for x in values)
 
     def preconditioner(*values: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        """Exactly invert the scaled identity."""
         return tuple(x / scale for x in values)
 
     statuses: list[BiCGStatus] = []
@@ -42,9 +44,11 @@ def test_initial_convergence(exact_initial, tolerance):
     expected = torch.tensor([1.0, 2.0]) if exact_initial else torch.zeros(2)
 
     def callback(status):
+        """Reject iterations when the initial residual is already zero."""
         pytest.fail('An already converged initial solution must not call the callback')
 
     def solve():
+        """Exercise identical inputs with or without the expected tolerance warning."""
         return bicg(
             MultiIdentityOp(),
             (expected,),
@@ -61,7 +65,8 @@ def test_initial_convergence(exact_initial, tolerance):
     torch.testing.assert_close(result, (expected,))
 
 
-def test_empty_rhs():
+def test_empty_rhs() -> None:
+    """Reject an empty tuple before indexing the right-hand-side dtype."""
     with pytest.raises(ValueError, match='right_hand_side cannot be empty'):
         bicg(MultiIdentityOp(), ())
 
@@ -73,7 +78,8 @@ def test_mixed_tuple_alpha_convergence():
     torch.testing.assert_close(result, right_hand_side)
 
 
-def test_zero_tolerance_alpha_convergence():
+def test_zero_tolerance_alpha_convergence() -> None:
+    """An exact alpha step terminates even with a zero stopping tolerance."""
     with pytest.warns(UserWarning, match='Tolerance is very small'):
         result = bicg(MultiIdentityOp(), (torch.tensor([1.0, 2.0]),), tolerance=0)
     torch.testing.assert_close(result, (torch.tensor([1.0, 2.0]),))
@@ -123,7 +129,8 @@ def test_breakdown(matrix, message):
         bicg(EinsumOp(matrix), (right_hand_side,))
 
 
-def test_alpha_convergence_autograd():
+def test_alpha_convergence_autograd() -> None:
+    """The alpha-only solution retains the derivative of the inverse operator."""
     right_hand_side = torch.tensor([1.0, 2.0], dtype=torch.float64, requires_grad=True)
     (result,) = bicg(EinsumOp(4 * torch.eye(2, dtype=right_hand_side.dtype)), (right_hand_side,))
     (gradient,) = torch.autograd.grad(result.sum(), right_hand_side)
@@ -179,10 +186,12 @@ def test_breakdown_checks_true_residual(monkeypatch, converged):
     breakdown_calls: list[None] = []
 
     def exhausted_product(*args):
+        """Inject non-finite recurrence coefficients without changing the operator."""
         breakdown_calls.append(None)
         return torch.tensor(float('nan'))
 
     def callback(status):
+        """Trigger breakdown before or after true convergence, according to the case."""
         statuses.append(status)
         # Force the next recurrence to break down, either early or after convergence.
         if not converged or (rhs - matrix @ status['solution'][0]).norm() < 1e-6:

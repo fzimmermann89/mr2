@@ -138,6 +138,7 @@ def bicg(
     arbitrary = residual
 
     def norm(values: Sequence[torch.Tensor]) -> torch.Tensor:
+        """Combine tuple norms in double precision without squaring tiny float32 values."""
         return torch.linalg.vector_norm(
             torch.stack(
                 [torch.linalg.vector_norm(v.to(torch.complex128 if v.is_complex() else torch.float64)) for v in values]
