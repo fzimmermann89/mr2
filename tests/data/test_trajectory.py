@@ -254,3 +254,9 @@ def test_traj_from_ismrmrd_filter(ismrmrd_cart_bodycoil_and_surface_coil) -> Non
         acquisition_filter_criterion=lambda x: has_n_coils(2, x),
     )
     assert traj.shape == (1, 1, 1, 1, 1)  # trajectory is all zeros
+
+
+def test_traj_from_ismrmrd_rejects_more_than_three_coordinates(ismrmrd_cart_four_trajectory_coordinates) -> None:
+    """Trajectory imports should reject unsupported coordinate dimensions instead of dropping data."""
+    with pytest.raises(ValueError, match=r'trajectory.*3|three.*trajectory'):
+        _ = KTrajectory.from_ismrmrd(ismrmrd_cart_four_trajectory_coordinates.filename)

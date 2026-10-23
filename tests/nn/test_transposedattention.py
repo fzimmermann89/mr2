@@ -46,6 +46,12 @@ def test_transposed_attention(
     assert attn.temperature.grad is not None, 'No gradient computed for temperature'
 
 
+def test_transposed_attention_rejects_channels_not_divisible_by_heads() -> None:
+    """Invalid channel/head combinations should raise a class-specific configuration error."""
+    with pytest.raises(ValueError, match=r'n_channels_in.*n_heads'):
+        _ = TransposedAttention(n_dim=2, n_channels_in=5, n_channels_out=5, n_heads=2)
+
+
 def test_transposed_attention_matches_explicit_channel_attention() -> None:
     """Verify that attention is calculated across channels, not spatial points."""
     rng = RandomGenerator(seed=42)

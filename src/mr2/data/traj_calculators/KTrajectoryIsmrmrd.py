@@ -56,6 +56,8 @@ class KTrajectoryIsmrmrd:
         if not traj.numel():
             raise ValueError('No trajectory information available in the ISMRMD file.')
 
+        # TODO(issue): Reject trajectories with more than three coordinates instead of forwarding
+        # them to KTrajectory.from_tensor(), which silently keeps only the first three components.
         if traj.shape[-1] != 3:  # ISMRMRD can contain 2D trajectories. We enforce 3D
             zero = torch.zeros_like(traj[..., :1])
             traj = torch.cat([traj, *([zero] * (3 - traj.shape[-1]))], dim=-1)

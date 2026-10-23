@@ -94,6 +94,8 @@ class DictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]):
             x_list = [x.flatten() for x in torch.broadcast_tensors(*x)]
 
         y = y.flatten(start_dim=1)
+        # TODO(issue): Reject zero-norm dictionary atoms before normalization, or mask them during
+        # matching; reciprocal normalization currently creates NaNs that can win argmax.
         inverse_norm_y = torch.linalg.norm(y, dim=0).reciprocal()
         y = y * inverse_norm_y
 

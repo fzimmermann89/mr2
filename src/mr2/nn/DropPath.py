@@ -50,6 +50,8 @@ class DropPath(Module):
             return x
         shape = (x.shape[0],) + (1,) * (x.ndim - 1)
         mask = ((1 - self.droprate) + torch.rand(shape, dtype=x.dtype, device=x.device)).floor_()
+        # TODO(issue): Define or reject droprate == 1 with scale_by_keep=True before division;
+        # full dropping currently divides a zero mask by zero and returns NaNs.
         if self.scale_by_keep:
             mask = mask.div_(1 - self.droprate)
         return x * mask

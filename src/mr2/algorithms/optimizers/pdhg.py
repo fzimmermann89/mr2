@@ -176,6 +176,8 @@ def pdhg(
         # to ensure convergence
         safety_factor = 0.95
 
+        # TODO(issue): Handle a zero or non-finite operator norm before deriving automatic step
+        # sizes; K=0 is valid, but division here produces NaN iterates without explicit steps.
         operator_norm = operator_matrix.operator_norm(*[torch.randn_like(v) for v in initial_values]).amax()
         norm_sq = operator_norm.square()
 

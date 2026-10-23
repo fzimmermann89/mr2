@@ -62,6 +62,12 @@ def test_shifted_window_attention_size_mismatch(shifted: bool):
     assert out.shape == x.shape, f'Output shape {out.shape} != input shape {x.shape}'
 
 
+def test_shifted_window_attention_rejects_channels_not_divisible_by_heads() -> None:
+    """Invalid channel/head combinations should fail at construction with an actionable error."""
+    with pytest.raises(ValueError, match=r'n_channels_in.*n_heads'):
+        _ = ShiftedWindowAttention(n_dim=2, n_channels_in=5, n_channels_out=5, n_heads=2)
+
+
 def test_shifted_window_attention_single_window_dimension() -> None:
     """Shifting is disabled if a spatial dimension contains only one window."""
     rng = RandomGenerator(13)

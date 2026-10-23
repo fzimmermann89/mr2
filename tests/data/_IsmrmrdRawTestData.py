@@ -46,6 +46,8 @@ class IsmrmrdRawTestData:
         discard_pre: int = 0,
         discard_post: int = 0,
         vendor: Literal['Siemens', 'OSI2'] = 'Siemens',
+        variable_readout_length: bool = False,
+        trajectory_dimensions: int = 2,
     ):
         """Initialize IsmrmrdRawTestData.
 
@@ -81,6 +83,10 @@ class IsmrmrdRawTestData:
             data points to discard at the end of the first five readouts
         vendor
             Vendor of the MR scanner
+        variable_readout_length
+            Shorten one readout after discard handling to create inconsistent effective readout lengths.
+        trajectory_dimensions
+            Number of coordinates stored for each trajectory point.
         """
         if not phantom:
             phantom = EllipsePhantom()
@@ -98,6 +104,8 @@ class IsmrmrdRawTestData:
         self.phantom = phantom
         self.n_separate_calibration_lines = n_separate_calibration_lines
         self.n_noise_samples = 4
+        self.variable_readout_length = variable_readout_length
+        self.trajectory_dimensions = trajectory_dimensions
 
         rng = RandomGenerator(0)
 
@@ -214,7 +222,7 @@ class IsmrmrdRawTestData:
 
         # Create an acquisition and reuse it
         acq = ismrmrd.Acquisition()
-        acq.resize(n_freq_encoding, self.n_coils, trajectory_dimensions=2)
+        acq.resize(n_freq_encoding, self.n_coils, trajectory_dimensions=trajectory_dimensions)
         acq.version = 1
         acq.available_channels = self.n_coils
         acq.center_sample = round(n_freq_encoding / 2)
@@ -240,7 +248,7 @@ class IsmrmrdRawTestData:
 
         # Add acquisitions obtained with a 2-element body coil (e.g. used for adjustment scans)
         if add_bodycoil_acquisitions:
-            acq.resize(n_freq_encoding, 2, trajectory_dimensions=2)
+            acq.resize(n_freq_encoding, 2, trajectory_dimensions=trajectory_dimensions)
             for _ in range(8):
                 data = rng.randn_tensor((2, n_freq_encoding), dtype=torch.complex64)
                 acq.scan_counter = scan_counter
@@ -250,7 +258,7 @@ class IsmrmrdRawTestData:
                 dataset.append_acquisition(acq)
                 scan_counter += 1
                 time_stamp += 2
-            acq.resize(n_freq_encoding, self.n_coils, trajectory_dimensions=2)
+            acq.resize(n_freq_encoding, self.n_coils, trajectory_dimensions=trajectory_dimensions)
 
         # Calibration lines
         if n_separate_calibration_lines > 0:
@@ -319,11 +327,24 @@ class IsmrmrdRawTestData:
                         acq.setFlag(ismrmrd.ACQ_LAST_IN_REPETITION)
 
                     # Set trajectory and data
-                    traj = torch.stack((traj_kx[rep][:, pe_idx], traj_ky[rep][:, pe_idx]), dim=1)
+                    traj = self._add_trajectory_components(
+                        torch.stack((traj_kx[rep][:, pe_idx], traj_ky[rep][:, pe_idx]), dim=1),
+                        trajectory_dimensions,
+                    )
                     if pe_idx < 5:  # add readouts with elements to be discarded
-                        acq.resize(n_freq_encoding + discard_pre + discard_post, self.n_coils, trajectory_dimensions=2)
+                        acq.resize(
+                            n_freq_encoding + discard_pre + discard_post,
+                            self.n_coils,
+                            trajectory_dimensions=trajectory_dimensions,
+                        )
                         acq.traj[:] = (
-                            torch.cat((torch.zeros((discard_pre, 2)), traj, torch.zeros((discard_post, 2))))
+                            torch.cat(
+                                (
+                                    torch.zeros((discard_pre, trajectory_dimensions)),
+                                    traj,
+                                    torch.zeros((discard_post, trajectory_dimensions)),
+                                )
+                            )
                             .numpy()
                             .astype(float)
                         )
@@ -338,9 +359,14 @@ class IsmrmrdRawTestData:
                         acq.discard_pre = discard_pre
                         acq.discard_post = discard_post
                     else:
-                        acq.resize(n_freq_encoding, self.n_coils, trajectory_dimensions=2)
-                        acq.traj[:] = traj.numpy().astype(float)
-                        acq.data[:] = kspace_with_noise[:, :, pe_idx].numpy()
+                        n_samples = (
+                            n_freq_encoding - 1
+                            if variable_readout_length and rep == 0 and pe_idx == len(kpe[rep]) - 1
+                            else n_freq_encoding
+                        )
+                        acq.resize(n_samples, self.n_coils, trajectory_dimensions=trajectory_dimensions)
+                        acq.traj[:] = traj[:n_samples].numpy().astype(float)
+                        acq.data[:] = kspace_with_noise[:, :n_samples, pe_idx].numpy()
                         acq.discard_pre = 0
                         acq.discard_post = 0
                     dataset.append_acquisition(acq)
@@ -349,6 +375,14 @@ class IsmrmrdRawTestData:
 
         # Clean up
         dataset.close()
+
+    @staticmethod
+    def _add_trajectory_components(traj: torch.Tensor, n_components: int) -> torch.Tensor:
+        """Add zero-valued trajectory coordinates for test datasets that request them."""
+        if n_components < traj.shape[-1]:
+            raise ValueError('trajectory_dimensions must be at least 2.')
+        zeros = torch.zeros((*traj.shape[:-1], n_components - traj.shape[-1]))
+        return torch.cat((traj, zeros), dim=-1)
 
     @staticmethod
     def _cartesian_trajectory(
