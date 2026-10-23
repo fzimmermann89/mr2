@@ -95,7 +95,7 @@ or a new optimizer using pytorch functions can be created.
 See for examples  :doc:`_notebooks/cartesian_reconstruction`, :doc:`_notebooks/direct_reconstruction`, and :doc:`_notebooks/iterative_sense_reconstruction_radial2D`
 
 Low-field raw datasets
----------------------
+----------------------
 ``mr2.phantoms.IsmrmrdDataset`` loads local HDF5 ISMRMRD collections using
 ``KData.from_file``. Files are naturally ordered, and the default trajectory
 assumes Cartesian sampling. Pass a trajectory explicitly for other sampling schemes.
@@ -112,9 +112,12 @@ Construction never downloads data. For example::
     kdata = dataset[0]
 
 Each item is one file, except IBT individual averages, where matching files become
-one scan with an added leading average axis. Original noncontiguous average numbers
-are retained in ``header.acq_info.idx.average``. Mapping contrasts remain separate
-items. Shared geometry, sampling and timing must agree within an average group.
+one scan with an added leading average axis. Filename repetition labels, including
+noncontiguous labels, populate ``header.acq_info.idx.average`` even when the
+in-file indices are zero. With ``individual_averages=True``, only ``averageN``
+files are selected: T1 mapping scans and other files without that suffix are
+excluded. T2 mapping contrasts with individual averages remain separate items.
+Shared geometry, sampling and timing must agree within an average group.
 The known truncated FreeMax Subject9 right PD scan is excluded with a warning;
 other loading failures propagate to the caller.
 

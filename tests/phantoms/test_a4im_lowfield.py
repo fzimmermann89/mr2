@@ -219,6 +219,7 @@ def test_ibt_missing_averages_and_metadata(ismrmrd_cart, tmp_path) -> None:
         shutil.copy2(ismrmrd_cart.filename, tmp_path / f'Brain-T2_average{average}.h5')
     dataset = IBTDataset(tmp_path, individual_averages=True)
     first = dataset.load(dataset.files[0])
+    assert first.header.acq_info.idx.average.unique().tolist() == [0]
     result = dataset[0]
     torch.testing.assert_close(result.data.broadcast_to(result.shape)[0], first.data)
     torch.testing.assert_close(result.data.broadcast_to(result.shape)[1], first.data)
@@ -395,3 +396,59 @@ def test_non_archive_download(tmp_path, zenodo_mock) -> None:
     download_zenodo_files(1, 'documentation.pdf', tmp_path, verify=True)
     assert (tmp_path / 'documentation.pdf').read_bytes() == content
     assert get.call_count == 3
+
+
+@pytest.mark.parametrize('explicit', [False, True])
+@pytest.mark.parametrize(
+    ('root_name', 'kwargs'),
+    [('1', {'subjects': 1}), ('LLR', {'subsets': 'llr'}), ('noise_corr_on', {'noise_correction': True})],
+)
+def test_osi2_filters_ignore_ancestors(tmp_path, explicit, root_name, kwargs) -> None:
+    """Ancestor names cannot select a different subject, subset or correction."""
+    root = tmp_path / root_name
+    scan = root / 'R1_R2/noise_corr_off/9147/T2w_scan.h5'
+    scan.parent.mkdir(parents=True)
+    scan.touch()
+    assert len(OSI2Dataset([scan] if explicit else root, **kwargs)) == 0
+
+
+@pytest.mark.parametrize('explicit', [False, True])
+@pytest.mark.parametrize('layout', ['LLR/noise_corr_on/9147', 'wrapper/LLR/noise_corr_on/9147/Lab2'])
+def test_osi2_nested_layout(tmp_path, explicit, layout) -> None:
+    """Filters work below wrappers and with directories below the subject ID."""
+    scan = tmp_path / layout / 'T2w_scan.h5'
+    scan.parent.mkdir(parents=True)
+    scan.touch()
+    dataset = OSI2Dataset([scan] if explicit else tmp_path, subjects=9147, subsets='llr', noise_correction=True)
+    assert dataset.files == (scan,)
+
+
+@pytest.mark.parametrize('layout', ['noise_corr_on/9147', '9147'])
+def test_osi2_explicit_files_without_subset(tmp_path, layout) -> None:
+    """Explicit selections can omit the subset level without using outer IDs."""
+    scan = tmp_path / '1' / layout / 'T2w_scan.h5'
+    scan.parent.mkdir(parents=True)
+    scan.touch()
+    assert OSI2Dataset(scan, subjects=9147).files == (scan,)
+    assert len(OSI2Dataset([scan], subjects=1)) == 0
+
+
+def test_ibt_individual_averages_exclude_unsuffixed_mapping(tmp_path) -> None:
+    """Individual mode excludes T1 maps but keeps each T2 mapping contrast."""
+    for name in ('Brain-T1map_set1.h5', 'Brain-T2map_contrast1_average0.h5', 'Brain-T2map_contrast2_average0.h5'):
+        (tmp_path / name).touch()
+    assert len(IBTDataset(tmp_path, acquisition='t1map', individual_averages=True)) == 0
+    assert len(IBTDataset(tmp_path, acquisition='t1map')) == 1
+    assert len(IBTDataset(tmp_path, acquisition='t2map', individual_averages=True)) == 2
+
+
+def test_ibt_rejects_multiple_in_file_averages(ismrmrd_cart, tmp_path, monkeypatch) -> None:
+    """Filename labels cannot hide a file containing multiple acquisition averages."""
+    scan = tmp_path / 'Brain-T2_average2.h5'
+    scan.touch()
+    item = KData.from_file(ismrmrd_cart.filename, KTrajectoryCartesian())
+    item.header.acq_info.idx.average = torch.tensor([0, 1])
+    dataset = IBTDataset([scan], individual_averages=True)
+    monkeypatch.setattr(dataset, 'load', Mock(return_value=item))
+    with pytest.raises(ValueError, match='single acquisition average'):
+        dataset[0]

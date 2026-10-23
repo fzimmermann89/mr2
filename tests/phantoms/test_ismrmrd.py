@@ -56,3 +56,16 @@ def test_dataloader(ismrmrd_cart) -> None:
     """No handles are retained and unbatched DataLoader iteration returns KData."""
     dataset = IsmrmrdDataset(ismrmrd_cart.filename)
     assert isinstance(next(iter(DataLoader(dataset, batch_size=None, num_workers=1))), KData)
+
+
+@pytest.mark.parametrize('suffix', ['.h5', '.HDF5', '.mrd'])
+def test_discovery_excludes_download_staging(tmp_path, suffix) -> None:
+    """Running or abandoned extraction staging cannot become duplicate scans."""
+    installed = tmp_path / f'scan{suffix}'
+    installed.touch()
+    staged = tmp_path / '.mr2-downloads/lock/tmp/extracted' / installed.name
+    staged.parent.mkdir(parents=True)
+    staged.touch()
+    assert IsmrmrdDataset(tmp_path).files == (installed,)
+    # An explicit file selection remains intentional.
+    assert IsmrmrdDataset([staged]).files == (staged,)

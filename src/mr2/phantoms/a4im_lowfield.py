@@ -79,20 +79,40 @@ class OSI2Dataset(IsmrmrdDataset):
 
         Parameters
         ----------
-        trajectory
-            Trajectory calculator or trajectory; Cartesian by default.
         path
             Extracted dataset directory, raw file, or sequence of raw files.
+            Directory filters use paths below this root. Explicit files use their
+            nearest subset directory, noise-correction directory, or parent.
         acquisition
             ``pdw``, ``t2w``, ``ir_t1w``, or ``3t_t1w``; all if ``None``.
+            Following the supplied A4IM selectors, ``pdw`` matches ``T1w_*``
+            (except ``T1w_IR_*``) and ``T1_3_4_0_*`` filenames.
         noise_correction
             Select corrected or uncorrected data; both if ``None``.
         subsets
             One or more experiment subsets; all if ``None``.
         subjects
             One or more anonymized numeric directory IDs; all if ``None``.
+        trajectory
+            Trajectory calculator or trajectory; Cartesian by default.
         """
         super().__init__(path, trajectory=trajectory)
+        root = Path(path) if isinstance(path, str | PathLike) and Path(path).is_dir() else None
+        subset_names = {name.removesuffix('.zip').casefold() for name in _OSI2_FILES.values()}
+
+        def directory_parts(file: Path) -> set[str]:
+            if root is not None:
+                return {part.casefold() for part in file.relative_to(root).parts[:-1]}
+            # Explicit files have no root. Bound their layout at the nearest
+            # subset (or noise directory), excluding unrelated ancestors.
+            parents = file.parent.parts
+            for names in (subset_names, {'noise_corr_on', 'noise_corr_off'}):
+                for index in range(len(parents) - 1, -1, -1):
+                    if parents[index].casefold() in names:
+                        return {part.casefold() for part in parents[index:]}
+            return {file.parent.name.casefold()}
+
+        parts = {file: directory_parts(file) for file in self.files}
         if acquisition is not None:
             patterns = {
                 'pdw': r'^(?:t1w_(?!ir_)|t1_3_4_0_)',
@@ -103,17 +123,15 @@ class OSI2Dataset(IsmrmrdDataset):
             self.files = tuple(file for file in self.files if re.search(patterns[acquisition], file.stem, re.I))
         if noise_correction is not None:
             directory = f'noise_corr_{"on" if noise_correction else "off"}'
-            self.files = tuple(file for file in self.files if directory in {part.casefold() for part in file.parts})
+            self.files = tuple(file for file in self.files if directory in parts[file])
         if subsets is not None:
             subsets = (subsets,) if isinstance(subsets, str) else tuple(subsets)
             roots = {_OSI2_FILES[subset].removesuffix('.zip').casefold() for subset in subsets}
-            self.files = tuple(
-                file for file in self.files if roots.intersection(part.casefold() for part in file.parts)
-            )
+            self.files = tuple(file for file in self.files if roots.intersection(parts[file]))
         if subjects is not None:
             subjects = (subjects,) if isinstance(subjects, int) else tuple(subjects)
             subject_ids = {str(subject) for subject in subjects}
-            self.files = tuple(file for file in self.files if subject_ids.intersection(file.parts))
+            self.files = tuple(file for file in self.files if subject_ids.intersection(parts[file]))
 
 
 class IBTDataset(IsmrmrdDataset):
@@ -130,8 +148,11 @@ class IBTDataset(IsmrmrdDataset):
 
     Files named ``*_averageN.h5`` are grouped by scan. Each item contains a
     leading average dimension, and ``header.acq_info.idx.average`` records the
-    corresponding average numbers. Otherwise, the already-combined files are
-    loaded. Philips metadata report either 14 or 15 active channels by scan.
+    filename labels, which can differ from the in-file acquisition indices.
+    With ``individual_averages=True``, only ``averageN`` files are selected;
+    all other files, including every T1 mapping scan, are excluded. Otherwise,
+    the already-combined files are loaded. Philips metadata report either 14 or
+    15 active channels by scan.
     """
 
     def __init__(
@@ -146,14 +167,14 @@ class IBTDataset(IsmrmrdDataset):
 
         Parameters
         ----------
-        trajectory
-            Trajectory calculator or trajectory; Cartesian by default.
         path
             Extracted dataset directory, raw file, or sequence of raw files.
         acquisition
             Weighted image or mapping acquisition; all if ``None``.
         individual_averages
             Stack the ``averageN`` files instead of loading combined files.
+        trajectory
+            Trajectory calculator or trajectory; Cartesian by default.
         """
         super().__init__(path, trajectory=trajectory)
         if acquisition is not None:
@@ -227,6 +248,7 @@ class IBTDataset(IsmrmrdDataset):
         for key in timing:
             setattr(kdata.header, key, getattr(first.header, key))
         average_shape = (len(items), *([1] * (kdata.data.ndim - 1)))
+        # Filename labels identify repetitions even when each file stores average=0.
         kdata.header.acq_info.idx.average = torch.tensor(self.average_indices[idx]).reshape(average_shape)
         return kdata
 
@@ -261,14 +283,14 @@ class I3MDataset(IsmrmrdDataset):
 
         Parameters
         ----------
-        trajectory
-            Trajectory calculator or trajectory; Cartesian by default.
         path
             Extracted dataset directory, raw file, or sequence of raw files.
         acquisition
             Weighted image or mapping acquisition; all if ``None``.
         side
             In-vivo knee side. A side selection excludes ACR phantom files.
+        trajectory
+            Trajectory calculator or trajectory; Cartesian by default.
         """
         super().__init__(path, trajectory=trajectory)
         if acquisition is not None:
@@ -320,14 +342,14 @@ class FreeMaxDataset(IsmrmrdDataset):
 
         Parameters
         ----------
-        trajectory
-            Trajectory calculator or trajectory; Cartesian by default.
         path
             Extracted dataset directory, raw file, or sequence of raw files.
         acquisition
             Weighted image or mapping acquisition; all if ``None``.
         side
             Knee or phantom side; both if ``None``.
+        trajectory
+            Trajectory calculator or trajectory; Cartesian by default.
         """
         super().__init__(path, trajectory=trajectory)
         self.files = tuple(file for file in self.files if '_deepresolve' not in file.stem.casefold())
@@ -357,14 +379,15 @@ def extract_zip(archive: str | PathLike, output_directory: str | PathLike) -> li
     archive, output_directory = Path(archive), Path(output_directory)
     root = output_directory.resolve()
     with zipfile.ZipFile(archive) as zip_file:
-        for member in zip_file.infolist():
+        members = zip_file.infolist()
+        for member in members:
             destination = (output_directory / member.filename).resolve()
             if not destination.is_relative_to(root):
                 raise ValueError(f'Archive member points outside output directory: {member.filename}')
             if (member.external_attr >> 16) & 0o170000 == 0o120000:
                 raise ValueError(f'Archive contains a symbolic link: {member.filename}')
         zip_file.extractall(output_directory)
-        return [member.filename for member in zip_file.infolist() if not member.is_dir()]
+        return [member.filename for member in members if not member.is_dir()]
 
 
 def _cache_valid(manifest_path: Path, output: Path, record: str, checksum: str, verify: bool) -> bool:
@@ -444,7 +467,9 @@ def download_zenodo_files(
 
     output = Path(output_directory)
     output.mkdir(parents=True, exist_ok=True)
+    output_root = output.resolve()
     manifest_directory = output / '.mr2-downloads'
+    manifest_root = manifest_directory.resolve()
     manifest_directory.mkdir(exist_ok=True)
     lock = manifest_directory / 'lock'
     try:
@@ -508,9 +533,8 @@ def download_zenodo_files(
                 for name in names:
                     member = extracted / name
                     destination = output / name
-                    if not destination.resolve().is_relative_to(
-                        output.resolve()
-                    ) or destination.resolve().is_relative_to(manifest_directory.resolve()):
+                    resolved = destination.resolve()
+                    if not resolved.is_relative_to(output_root) or resolved.is_relative_to(manifest_root):
                         raise ValueError(f'Unsafe archive destination: {name}')
                     members[name] = {'size': member.stat().st_size, 'sha256': _file_checksum(member)}
                 for name in names:
@@ -535,8 +559,19 @@ def download_osi2(
 ) -> Path:
     """Download selected OSI² ONE 47 mT datasets from Zenodo record 19661402.
 
-    Available subsets are ``llr``, ``partial_fourier``, ``loraks``,
-    ``coil_comparison``, and ``repeatability``.
+    Parameters
+    ----------
+    output_directory
+        Directory in which to extract or store the files.
+    subsets
+        One or more of ``llr``, ``partial_fourier``, ``loraks``,
+        ``coil_comparison``, and ``repeatability``.
+    documentation
+        Also download the dataset descriptor PDF.
+    progress
+        Show byte-level download progress.
+    verify
+        Verify hashes as well as sizes of cached extracted files.
     """
     subsets = (subsets,) if isinstance(subsets, str) else tuple(subsets)
     unknown = sorted(set(subsets) - _OSI2_FILES.keys())
@@ -564,7 +599,19 @@ def download_ibt(
     progress: bool = False,
     verify: bool = False,
 ) -> Path:
-    """Download selected Philips 0.6 T IBT brain subjects from record 18847561."""
+    """Download selected Philips 0.6 T IBT brain subjects from record 18847561.
+
+    Parameters
+    ----------
+    output_directory
+        Directory in which to extract or store the files.
+    subjects
+        Subject number or numbers from 1 to 10.
+    progress
+        Show byte-level download progress.
+    verify
+        Verify hashes as well as sizes of cached extracted files.
+    """
     filenames = _subject_files(subjects, 10, 'Subject {subject:02d}.zip')
     return download_zenodo_files(18847561, filenames, output_directory, progress=progress, verify=verify)
 
@@ -578,7 +625,23 @@ def download_i3m(
     progress: bool = False,
     verify: bool = False,
 ) -> Path:
-    """Download selected i3M Physio 1 72 mT knee subjects from record 20700288."""
+    """Download selected i3M Physio 1 72 mT knee subjects from record 20700288.
+
+    Parameters
+    ----------
+    output_directory
+        Directory in which to extract or store the files.
+    subjects
+        Subject number or numbers from 1 to 7; use an empty sequence for phantom only.
+    phantom
+        Also download the ACR phantom archive.
+    documentation
+        Also download both dataset documentation PDFs.
+    progress
+        Show byte-level download progress.
+    verify
+        Verify hashes as well as sizes of cached extracted files.
+    """
     filenames = _subject_files(subjects, 7, 'Subject {subject}.zip')
     if phantom:
         filenames.append('ACRphantomData.zip')
@@ -600,7 +663,21 @@ def download_free_max(
     progress: bool = False,
     verify: bool = False,
 ) -> Path:
-    """Download selected Free.Max 0.55 T subjects from Zenodo record 20516472."""
+    """Download selected Free.Max 0.55 T subjects from Zenodo record 20516472.
+
+    Parameters
+    ----------
+    output_directory
+        Directory in which to extract or store the files.
+    subjects
+        Subject number or numbers from 1 to 20; use an empty sequence for phantoms only.
+    phantoms
+        Also download the phantom archive.
+    progress
+        Show byte-level download progress.
+    verify
+        Verify hashes as well as sizes of cached extracted files.
+    """
     filenames = _subject_files(subjects, 20, 'Subject{subject}.zip')
     if phantoms:
         filenames.append('PHANTOMS.zip')

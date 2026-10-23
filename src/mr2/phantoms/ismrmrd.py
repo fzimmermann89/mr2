@@ -25,7 +25,8 @@ class IsmrmrdDataset(torch.utils.data.Dataset[KData]):
     """Dataset of standard ISMRMRD files.
 
     Directories are searched recursively for ``.h5``, ``.hdf5``, and ``.mrd``
-    HDF5 files (including HDF5 files with an ``.mrd`` suffix). Serialized streams
+    HDF5 files (including HDF5 files with an ``.mrd`` suffix). Downloader staging
+    directories named ``.mr2-downloads`` are excluded from discovery. Serialized streams
     are not supported. Files are naturally sorted, and each item is loaded as
     :class:`~mr2.data.KData`. Construction only selects local paths and never
     downloads data or reads headers. Non-Cartesian data require an explicit
@@ -59,7 +60,13 @@ class IsmrmrdDataset(torch.utils.data.Dataset[KData]):
         if isinstance(path, str | PathLike):
             path = Path(path)
             files = (
-                [file for file in path.rglob('*') if file.is_file() and file.suffix.lower() in {'.h5', '.hdf5', '.mrd'}]
+                [
+                    file
+                    for file in path.rglob('*')
+                    if file.is_file()
+                    and file.suffix.lower() in {'.h5', '.hdf5', '.mrd'}
+                    and '.mr2-downloads' not in file.relative_to(path).parts
+                ]
                 if path.is_dir()
                 else [path]
             )
