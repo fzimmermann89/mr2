@@ -3,7 +3,6 @@
 from mr2.algorithms import csm, dcf, optimizers, reconstruction, image_registration, denoising
 from mr2.algorithms.prewhiten_kspace import prewhiten_kspace
 from mr2.algorithms.rovir import rovir
-from mr2.algorithms.denoising import total_variation_denoising
 from mr2.algorithms.varimax import varimax
 
 __all__ = [
@@ -15,6 +14,5 @@ __all__ = [
     'prewhiten_kspace',
     'reconstruction',
     'rovir',
-    'total_variation_denoising',
     'varimax',
 ]
