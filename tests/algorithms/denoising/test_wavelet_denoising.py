@@ -4,7 +4,7 @@ import math
 
 import pytest
 import torch
-from mr2.algorithms import wavelet_denoising
+from mr2.algorithms.denoising import wavelet_denoising
 from mr2.data import IData, KHeader
 from mr2.operators import WaveletOp
 from mr2.operators.WaveletOp import WaveletType
