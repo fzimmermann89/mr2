@@ -155,8 +155,13 @@ def test_KData_raise_wrong_coil_number(ismrmrd_cart) -> None:
 
 def test_KData_from_file_diff_nky_for_rep(ismrmrd_cart_invalid_reps) -> None:
     """Multiple repetitions with different number of phase encoding lines."""
-    with pytest.warns(UserWarning, match=r'different number'):
+    with pytest.warns(UserWarning, match=r'different number') as record:
         kdata = KData.from_file(ismrmrd_cart_invalid_reps.filename, DummyTrajectory())
+    message = next(str(warning.message) for warning in record if re.search(r'different number', str(warning.message)))
+    assert 'different numbers of acquisitions for combinations of labels ' in message
+    assert 'average/slice/contrast/phase/repetition/set/user0/user1/user2/user3/user4/user7' in message
+    assert '{' not in message
+    assert '}' not in message
     assert kdata.data.shape[-2] == 1, 'k1 should be 1'
     assert kdata.data.shape[-3] == 1, 'k2 should be 1'
 
