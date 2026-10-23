@@ -12,15 +12,15 @@ from mr2.nn.nets.UNet import AttentionGatedUNet, UNet
 from mr2.nn.nets.VAE import VAE
 
 __all__ = [
-    "AttentionGatedUNet",
-    "BasicCNN",
-    "DiT",
-    "HourglassTransformer",
-    "MLP",
-    "Restormer",
-    "SNRAware",
-    "SwinIR",
-    "UNet",
-    "Uformer",
-    "VAE",
+    'MLP',
+    'VAE',
+    'AttentionGatedUNet',
+    'BasicCNN',
+    'DiT',
+    'HourglassTransformer',
+    'Restormer',
+    'SNRAware',
+    'SwinIR',
+    'UNet',
+    'Uformer',
 ]
