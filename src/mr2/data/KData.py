@@ -4,7 +4,8 @@ import copy
 import datetime
 import warnings
 from collections import deque
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
+from contextlib import closing
 from importlib.metadata import version
 from os import PathLike
 from pathlib import Path
@@ -14,7 +15,6 @@ from xml.etree import ElementTree as ET
 
 import h5py
 import ismrmrd
-import ismrmrd.serialization
 import numpy as np
 import torch
 from einops import rearrange
@@ -23,6 +23,7 @@ from typing_extensions import Self, TypeVar, overload
 if TYPE_CHECKING:
     from mr2.operators.LinearOperator import LinearOperator
 
+from mr2.data._ismrmrd import read_stream
 from mr2.data.acq_filters import has_n_coils, is_image_acquisition
 from mr2.data.AcqInfo import (
     AcqInfo,
@@ -82,25 +83,6 @@ OTHER_LABELS = (
 T = TypeVar('T', Rotation, torch.Tensor, Rotation | torch.Tensor)
 
 
-def _read_ismrmrd_stream(
-    reader: ismrmrd.serialization.ProtocolDeserializer,
-) -> Iterator[tuple[ismrmrd.xsd.ismrmrdHeader, list[ismrmrd.Acquisition]]]:
-    """Group serialized objects by header, requiring a terminating CLOSE message."""
-    header = None
-    acquisitions: list[ismrmrd.Acquisition] = []
-    for obj in reader.deserialize():
-        if isinstance(obj, ismrmrd.xsd.ismrmrdHeader):
-            if header is not None:
-                yield header, acquisitions
-            header, acquisitions = obj, []
-        elif isinstance(obj, ismrmrd.Acquisition):
-            if header is None:
-                raise ValueError('ISMRMRD stream contains acquisitions before the first header.')
-            acquisitions.append(obj)
-    if header is not None:
-        yield header, acquisitions
-
-
 class KData(Dataclass):
     """MR raw data / k-space data class."""
 
@@ -127,7 +109,7 @@ class KData(Dataclass):
         Paths are detected by HDF5 content; .h5 and .mrd paths always use the HDF5 reader
         so damaged HDF5 files retain their original errors. File-like objects retain the
         HDF5 behavior. Use `from_ismrmrd_stream` explicitly for binary streams, including
-        nonseekable inputs. This reads complete measurements, not live reconstructions.
+        nonseekable inputs such as sys.stdin.buffer.
 
         Parameters
         ----------
@@ -136,13 +118,13 @@ class KData(Dataclass):
         trajectory
             KTrajectoryCalculator to calculate the k-space trajectory or an already calculated KTrajectory
             If a KTrajectory is given, the shape should be `(acquisisions 1 1 k0)` in the same order as the acquisitions
-            in the ISMRMRD file.
+            retained after filtering, coil selection and readout-length selection.
         header_overwrites
             dictionary of key-value pairs to overwrite the header
         dataset_idx
-            index of the ISMRMRD dataset to load (converter creates dataset, dataset_1, ...)
+            index of the dataset or serialized measurement to load; defaults to the last
         acquisition_filter_criterion
-            function which returns True if an acquisition should be included in KData
+            function which returns True if an acquisition should be included in KData, or None to disable filtering
         """
         if (
             isinstance(filename, (str, PathLike))
@@ -172,13 +154,13 @@ class KData(Dataclass):
         trajectory
             KTrajectoryCalculator to calculate the k-space trajectory or an already calculated KTrajectory
             If a KTrajectory is given, the shape should be `(acquisisions 1 1 k0)` in the same order as the acquisitions
-            in the ISMRMRD file.
+            retained after filtering, coil selection and readout-length selection.
         header_overwrites
             dictionary of key-value pairs to overwrite the header
         dataset_idx
             index of the ISMRMRD dataset to load (converter creates dataset, dataset_1, ...)
         acquisition_filter_criterion
-            function which returns True if an acquisition should be included in KData
+            function which returns True if an acquisition should be included in KData, or None to disable filtering
         """
         # Can raise FileNotFoundError
         # Open with h5py's file-object driver when needed; ismrmrd.File forces stdio.
@@ -188,15 +170,7 @@ class KData(Dataclass):
             try:
                 ismrmrd_header = dataset.header
             except TypeError:
-                root = ET.fromstring(dataset._contents['xml'][0])  # noqa: S314
-                prefix = root.tag.removesuffix('ismrmrdHeader')
-                measurement = root.find(f'{prefix}measurementInformation')
-                if measurement is not None and measurement.find(f'{prefix}patientPosition') is None:
-                    ET.SubElement(measurement, f'{prefix}patientPosition').text = 'HFS'
-                for encoding in root.findall(f'{prefix}encoding'):
-                    if encoding.find(f'{prefix}trajectory') is None:
-                        ET.SubElement(encoding, f'{prefix}trajectory').text = 'other'
-                ismrmrd_header = ismrmrd.xsd.CreateFromDocument(ET.tostring(root))
+                ismrmrd_header = dataset._contents['xml'][0]
             acquisitions = dataset.acquisitions[:]
             try:
                 mtime: int = h5py.h5g.get_objinfo(dataset['data']._contents.id).mtime
@@ -205,7 +179,12 @@ class KData(Dataclass):
             modification_time = datetime.datetime.fromtimestamp(mtime)
 
         return cls.from_ismrmrd(
-            ismrmrd_header, acquisitions, trajectory, header_overwrites, acquisition_filter_criterion, modification_time
+            ismrmrd_header,
+            acquisitions,
+            trajectory,
+            header_overwrites,
+            acquisition_filter_criterion,
+            header_defaults={'datetime': modification_time},
         )
 
     @classmethod
@@ -219,17 +198,16 @@ class KData(Dataclass):
     ) -> Self:
         """Read a complete measurement from a serialized ISMRMRD stream.
 
-        This is serialized-file support, not live reconstruction. A measurement ends at
-        the next header or CLOSE. Nonnegative selection stops at that boundary; negative
+        A measurement ends at the next header or CLOSE. Nonnegative selection stops at that boundary; negative
         selection reads to CLOSE, retaining at most ``abs(dataset_idx)`` measurements.
-        Missing CLOSE and corrupt messages raise the deserializer's errors.
+        Missing CLOSE and corrupt messages raise the deserializer's errors in the consumed input.
         Images, waveforms and other non-acquisition objects are ignored.
 
         Parameters
         ----------
         filename
             Path or binary stream, including nonseekable streams. Caller streams remain
-            open on success and failure. Reads must return the requested bytes unless at EOF.
+            open on success and failure. Blocking inputs may return short reads.
         trajectory
             Trajectory calculator, stored ISMRMRD trajectory reader, or a trajectory matching
             the selected acquisitions, as in `from_ismrmrd`.
@@ -243,12 +221,11 @@ class KData(Dataclass):
         modification_time = None
         if isinstance(filename, (str, PathLike)):
             modification_time = datetime.datetime.fromtimestamp(Path(filename).stat().st_mtime)
-            filename = str(filename)
         trailing: deque[tuple[ismrmrd.xsd.ismrmrdHeader, list[ismrmrd.Acquisition]]] = deque(
             maxlen=-dataset_idx if dataset_idx < 0 else 1
         )
-        with ismrmrd.serialization.ProtocolDeserializer(filename) as reader:
-            for index, measurement in enumerate(_read_ismrmrd_stream(reader)):
+        with closing(read_stream(filename)) as measurements:
+            for index, measurement in enumerate(measurements):
                 trailing.append(measurement)
                 if index == dataset_idx:
                     break
@@ -259,27 +236,81 @@ class KData(Dataclass):
                     raise IndexError('ISMRMRD measurement index out of range.')
         header, acquisitions = trailing[0]
         return cls.from_ismrmrd(
-            header, acquisitions, trajectory, header_overwrites, acquisition_filter_criterion, modification_time
+            header,
+            acquisitions,
+            trajectory,
+            header_overwrites,
+            acquisition_filter_criterion,
+            header_defaults={'datetime': modification_time},
         )
+
+    @classmethod
+    def iter_ismrmrd_stream(
+        cls,
+        filename: str | PathLike | BinaryIO,
+        trajectory: KTrajectoryCalculator | KTrajectory | KTrajectoryIsmrmrd,
+        header_overwrites: Mapping[str, object] | None = None,
+        acquisition_filter_criterion: Callable[[ismrmrd.Acquisition], bool] | None = is_image_acquisition,
+    ) -> Generator[Self, None, None]:
+        """Yield KData for each complete measurement in a serialized ISMRMRD stream.
+
+        Measurements end at the next header or CLOSE. Measurements are accumulated
+        separately; reconstruction can start before the stream ends. Missing CLOSE
+        and corrupt messages raise the deserializer's errors. Images, waveforms and
+        other non-acquisition messages are ignored.
+
+        Parameters
+        ----------
+        filename
+            Path or blocking binary stream, including sys.stdin.buffer. Caller streams
+            remain open. Close the iterator when stopping early to release an owned file.
+        trajectory
+            Trajectory source, as in `from_ismrmrd`, applied to each measurement.
+        header_overwrites
+            Header fields to overwrite.
+        acquisition_filter_criterion
+            Acquisition predicate, or None to disable filtering.
+
+        Yields
+        ------
+        KData
+            Sorted k-space data for each measurement, in stream order.
+        """
+        header_defaults: dict[str, object] = {}
+        if isinstance(filename, (str, PathLike)):
+            header_defaults['datetime'] = datetime.datetime.fromtimestamp(Path(filename).stat().st_mtime)
+        with closing(read_stream(filename)) as measurements:
+            for header, acquisitions in measurements:
+                yield cls.from_ismrmrd(
+                    header,
+                    acquisitions,
+                    trajectory,
+                    header_overwrites,
+                    acquisition_filter_criterion,
+                    header_defaults=header_defaults,
+                )
+                del acquisitions
 
     @classmethod
     def from_ismrmrd(
         cls,
-        ismrmrd_header: ismrmrd.xsd.ismrmrdHeader,
-        acquisitions: Sequence[ismrmrd.Acquisition],
+        ismrmrd_header: ismrmrd.xsd.ismrmrdHeader | str | bytes,
+        acquisitions: Iterable[ismrmrd.Acquisition],
         trajectory: KTrajectoryCalculator | KTrajectory | KTrajectoryIsmrmrd,
         header_overwrites: Mapping[str, object] | None = None,
         acquisition_filter_criterion: Callable[[ismrmrd.Acquisition], bool] | None = is_image_acquisition,
-        modification_time: datetime.datetime | None = None,
+        *,
+        header_defaults: Mapping[str, object] | None = None,
     ) -> Self:
         """Normalize an ISMRMRD header and acquisitions into sorted k-space data.
 
         Parameters
         ----------
         ismrmrd_header
-            Parsed ISMRMRD XML header.
+            Parsed ISMRMRD header or XML string/bytes, as received by a reconstruction server.
         acquisitions
-            Acquisitions in acquisition order. Filtering, coil selection and selection of
+            Acquisition objects in acquisition order, including a one-pass iterator.
+            The input objects are not modified. Filtering, coil selection and selection of
             the longest post-discard readouts precede metadata and trajectory construction.
         trajectory
             Trajectory calculator, stored ISMRMRD trajectory reader, or a KTrajectory
@@ -288,10 +319,25 @@ class KData(Dataclass):
             Header fields to overwrite.
         acquisition_filter_criterion
             Acquisition predicate, or None to disable filtering.
-        modification_time
-            Fallback header datetime. Unknown for objects and binary streams unless supplied;
-            stream files use path mtime, and HDF5 uses its dataset timestamp.
+        header_defaults
+            Fallback header fields, used only when absent from the ISMRMRD header.
+            Header overwrites take precedence, including explicit None values.
+            Without a measurement timestamp or a default, datetime remains unknown.
         """
+        if isinstance(ismrmrd_header, (str, bytes)):
+            try:
+                ismrmrd_header = ismrmrd.xsd.CreateFromDocument(ismrmrd_header)
+            except TypeError:
+                root = ET.fromstring(ismrmrd_header)  # noqa: S314
+                prefix = root.tag.removesuffix('ismrmrdHeader')
+                measurement = root.find(f'{prefix}measurementInformation')
+                if measurement is not None and measurement.find(f'{prefix}patientPosition') is None:
+                    ET.SubElement(measurement, f'{prefix}patientPosition').text = 'HFS'
+                for encoding in root.findall(f'{prefix}encoding'):
+                    if encoding.find(f'{prefix}trajectory') is None:
+                        ET.SubElement(encoding, f'{prefix}trajectory').text = 'other'
+                ismrmrd_header = ismrmrd.xsd.CreateFromDocument(ET.tostring(root))
+
         acquisitions = [
             acq for acq in acquisitions if acquisition_filter_criterion is None or acquisition_filter_criterion(acq)
         ]
@@ -389,8 +435,8 @@ class KData(Dataclass):
             ismrmrd_header,
             acq_info,
             defaults={
-                'datetime': modification_time,  # use the modification time of the dataset as fallback
                 'trajectory': trajectory,
+                **(header_defaults or {}),
             },
             overwrite=header_overwrites,
         )
