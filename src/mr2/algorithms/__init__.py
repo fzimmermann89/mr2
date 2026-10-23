@@ -7,16 +7,15 @@ from mr2.algorithms.rovir import rovir
 from mr2.algorithms.total_variation_denoising import total_variation_denoising
 from mr2.algorithms.varimax import varimax
 
-
 __all__ = [
-    "csm",
-    "dcf",
-    "image_registration",
-    "optimizers",
-    "prepare_acs",
-    "prewhiten_kspace",
-    "reconstruction",
-    "rovir",
-    "total_variation_denoising",
-    "varimax"
+    'csm',
+    'dcf',
+    'image_registration',
+    'optimizers',
+    'prepare_acs',
+    'prewhiten_kspace',
+    'reconstruction',
+    'rovir',
+    'total_variation_denoising',
+    'varimax',
 ]
