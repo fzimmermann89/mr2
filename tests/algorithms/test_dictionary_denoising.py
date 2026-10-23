@@ -18,33 +18,55 @@ def test_identity(denoise, dtype: torch.dtype) -> None:
         image = image * (0.6 + 0.8j)
     weight = torch.tensor([[0.0], [0.7]], dtype=image.real.dtype)
     expected = torch.sgn(image) * (image.abs() - weight).clamp_min(0)
-    result = denoise(image, IdentityOp(), weight, max_iterations=150)
+    result = denoise(image, IdentityOp(), weight, max_iterations=150, tolerance=1e-7)
     torch.testing.assert_close(result, expected, atol=2e-6, rtol=2e-6)
     assert result.dtype == dtype
 
 
 @pytest.mark.parametrize('denoise', [analysis_denoising, synthesis_denoising])
 @pytest.mark.parametrize('spatial_dim', [1, 2, 3])
-@pytest.mark.parametrize(
-    ('image_dtype', 'kernel_dtype'),
-    [
-        (torch.float64, torch.float32),
-        (torch.float32, torch.float64),
-        (torch.complex128, torch.float64),
-        (torch.float64, torch.complex64),
-    ],
-)
-def test_convolution_promotion(denoise, spatial_dim: int, image_dtype: torch.dtype, kernel_dtype: torch.dtype) -> None:
-    """Codes and images use image/kernel promotion with arbitrary leading batch axes."""
-    image = torch.full((2, 1, *([3] * spatial_dim)), 2.0, dtype=image_dtype)
-    kernel = torch.ones((1, *([1] * spatial_dim)), dtype=kernel_dtype)
+@pytest.mark.parametrize('dtype', [torch.float64, torch.complex128])
+def test_convolution_supplied_operator(denoise, spatial_dim: int, dtype: torch.dtype) -> None:
+    """Supplied dictionaries retain tensor identity, dtype and device."""
+    image = torch.full((2, 1, *([3] * spatial_dim)), 2.0, dtype=dtype)
+    kernel = torch.ones((1, *([1] * spatial_dim)), dtype=dtype)
     operator = (ConvAnalysisDictionaryOp if denoise is analysis_denoising else ConvSynthesisDictionaryOp)(kernel)
     result = denoise(image, operator, 0.5, max_iterations=80)
-    assert result.shape == image.shape
-    assert result.dtype == torch.promote_types(image_dtype, kernel_dtype)
-    torch.testing.assert_close(result, torch.full_like(result, 1.5), atol=1e-6, rtol=1e-6)
+    torch.testing.assert_close(result, torch.full_like(image, 1.5), atol=1e-6, rtol=1e-6)
     assert operator.kernel is kernel
-    assert operator.kernel.dtype == kernel_dtype
+
+
+@pytest.mark.parametrize('denoise', [analysis_denoising, synthesis_denoising])
+@pytest.mark.parametrize('kernel_dtype', [torch.float32, torch.float64])
+def test_incompatible_convolution_dtype(denoise, kernel_dtype: torch.dtype) -> None:
+    """Unsupported convolution dtypes fail instead of copying trainable parameters."""
+    image_dtype = torch.float64 if kernel_dtype == torch.float32 else torch.float32
+    kernel = torch.nn.Parameter(torch.ones(1, 1, dtype=kernel_dtype))
+    operator = (ConvAnalysisDictionaryOp if denoise is analysis_denoising else ConvSynthesisDictionaryOp)(kernel)
+    with pytest.raises(RuntimeError, match=r'(type|dtype)'):
+        denoise(torch.ones(1, 3, dtype=image_dtype), operator, 0.1)
+    assert operator.kernel is kernel
+    assert kernel.grad is None
+
+
+@pytest.mark.parametrize('denoise', [analysis_denoising, synthesis_denoising])
+@pytest.mark.parametrize('dtype', [torch.float64, torch.complex128])
+def test_trainable_kernel_gradient(denoise, dtype: torch.dtype) -> None:
+    """Delta-kernel solutions and parameter gradients match independent analytic shrinkage."""
+    image = torch.tensor([[2.0, -4.0]], dtype=dtype)
+    if image.is_complex():
+        image = image * (0.6 + 0.8j)
+    # Real kernels also work on complex data without an implicit module conversion.
+    kernel = torch.nn.Parameter(torch.full((1, 1), 1.3, dtype=torch.float64))
+    operator = (ConvAnalysisDictionaryOp if denoise is analysis_denoising else ConvSynthesisDictionaryOp)(kernel)
+    result = denoise(image, operator, 0.2, max_iterations=100 if denoise is analysis_denoising else 20)
+    threshold = 0.2 * kernel.abs() if denoise is analysis_denoising else 0.2 / kernel.abs()
+    expected = torch.sgn(image) * (image.abs() - threshold).clamp_min(0)
+    actual_gradient = torch.autograd.grad(result.abs().square().sum(), kernel)[0]
+    expected_gradient = torch.autograd.grad(expected.abs().square().sum(), kernel)[0]
+    torch.testing.assert_close(result, expected, atol=1e-7, rtol=1e-7)
+    torch.testing.assert_close(actual_gradient, expected_gradient, atol=2e-5, rtol=2e-5)
+    assert operator.kernel is kernel
 
 
 def test_analysis_difference_reference() -> None:
@@ -115,16 +137,6 @@ def test_weight_conversion_overflow(denoise) -> None:
         denoise(torch.ones(1, 3, 4), IdentityOp(), torch.tensor(1e40, dtype=torch.float64))
 
 
-@pytest.mark.parametrize('denoise', [analysis_denoising, synthesis_denoising])
-def test_even_kernel(denoise) -> None:
-    """Reject the operators' unsupported even spatial kernels before running a solver."""
-    operator = (ConvAnalysisDictionaryOp if denoise is analysis_denoising else ConvSynthesisDictionaryOp)(
-        torch.ones(2, 2, 3)
-    )
-    with pytest.raises(ValueError, match='odd spatial kernel'):
-        denoise(torch.ones(1, 3, 4), operator, 0.2)
-
-
 @pytest.mark.parametrize(
     ('denoise', 'initial_name'),
     [
@@ -157,11 +169,14 @@ def test_idata(denoise, random_iheader) -> None:
     torch.testing.assert_close(result.data, torch.full_like(image.data, 1.5))
 
 
-def test_synthesis_backtracking() -> None:
-    """A large dictionary gain needs backtracking; the solution still matches soft thresholding."""
-    image = torch.tensor([[2.0, -4.0]], dtype=torch.float64)
-    result = synthesis_denoising(image, 10 * IdentityOp(), 2.0, max_iterations=200)
-    torch.testing.assert_close(result, torch.tensor([[1.8, -3.8]], dtype=image.dtype), atol=1e-7, rtol=1e-7)
+@pytest.mark.parametrize('gain', [0.1, 10.0])
+@pytest.mark.parametrize('dtype', [torch.float64, torch.complex128])
+def test_synthesis_scaled_dictionary(gain: float, dtype: torch.dtype) -> None:
+    """Norm-based steps converge for both low and high dictionary gains."""
+    image = torch.tensor([[2.0, -4.0]], dtype=dtype)
+    result = synthesis_denoising(image, gain * IdentityOp(), 0.01, max_iterations=10)
+    expected = torch.sgn(image) * (image.abs() - 0.01 / gain).clamp_min(0)
+    torch.testing.assert_close(result, expected, atol=1e-7, rtol=1e-7)
 
 
 @pytest.mark.parametrize('denoise', [analysis_denoising, synthesis_denoising])
@@ -174,15 +189,15 @@ def test_tolerance(denoise) -> None:
 @pytest.mark.cuda
 @pytest.mark.parametrize('denoise', [analysis_denoising, synthesis_denoising])
 def test_cuda(denoise) -> None:
-    """The image device controls execution, without modifying a CPU dictionary."""
+    """Caller-supplied dictionaries on the image device support CUDA."""
     image = torch.full((2, 3, 4), 2.0, dtype=torch.complex128, device='cuda')
     operator = (ConvAnalysisDictionaryOp if denoise is analysis_denoising else ConvSynthesisDictionaryOp)(
-        torch.ones(1, 1, 1)
+        torch.ones(1, 1, 1, dtype=image.dtype, device=image.device)
     )
     result = denoise(image, operator, torch.tensor(0.5))
     assert result.device == image.device
     assert result.dtype == image.dtype
-    assert operator.kernel.device.type == 'cpu'
+    assert operator.kernel.device == image.device
     torch.testing.assert_close(result, torch.full_like(result, 1.5))
 
 
@@ -266,3 +281,40 @@ def test_synthesis_rearranged_codes() -> None:
     image = torch.full((2, 3), 2.0, dtype=torch.float64)
     result = synthesis_denoising(image, operator, 0.5)
     torch.testing.assert_close(result, torch.full_like(image, 1.5))
+
+
+def test_synthesis_backtracking(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Backtracking corrects an underestimated dictionary norm."""
+    operator = 3 * IdentityOp()
+    monkeypatch.setattr(operator, 'operator_norm', lambda *_args, **_kwargs: torch.tensor(1.0))
+    image = torch.tensor([[2.0, -4.0]], dtype=torch.float64)
+    result = synthesis_denoising(image, operator, 0.3, max_iterations=50)
+    torch.testing.assert_close(result, torch.tensor([[1.9, -3.9]], dtype=image.dtype), atol=1e-7, rtol=1e-7)
+
+
+@pytest.mark.parametrize('dtype', [torch.float64, torch.complex128])
+def test_synthesis_unrolled_gradient(dtype: torch.dtype) -> None:
+    """A short scalar PGD reference checks complex trainable kernels before convergence."""
+    kernel = torch.nn.Parameter(torch.full((1, 1), 1.3, dtype=dtype))
+    if kernel.is_complex():
+        kernel = torch.nn.Parameter(kernel.detach() + 0.2j)
+    image = torch.tensor([[2.0, -4.0]], dtype=dtype)
+    result = synthesis_denoising(
+        image, ConvSynthesisDictionaryOp(kernel), torch.tensor(0.2, dtype=kernel.real.dtype), max_iterations=5
+    )
+    step = 0.9 / float(kernel.detach().abs().square())
+    codes = torch.zeros_like(image)
+    extrapolated = codes
+    t_old = 1.0
+    for iteration in range(5):
+        value = extrapolated - step * kernel.conj() * (kernel * extrapolated - image)
+        updated = torch.sgn(value) * (value.abs() - step * 0.2).clamp_min(0)
+        t = (iteration + 4) / 3
+        extrapolated = updated + (t_old - 1) / t * (updated - codes)
+        codes = updated
+        t_old = t
+    expected = kernel * codes
+    torch.testing.assert_close(result, expected, atol=1e-12, rtol=1e-12)
+    actual_gradient = torch.autograd.grad(result.abs().square().sum(), kernel)[0]
+    expected_gradient = torch.autograd.grad(expected.abs().square().sum(), kernel)[0]
+    torch.testing.assert_close(actual_gradient, expected_gradient, atol=1e-12, rtol=1e-12)

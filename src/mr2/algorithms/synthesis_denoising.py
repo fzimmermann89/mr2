@@ -4,7 +4,7 @@ from typing import TypeVar
 
 import torch
 
-from mr2.algorithms._dictionary_denoising import _initial, _prepare, _validate_controls, _weight
+from mr2.algorithms._dictionary_denoising import _image, _initial, _validate_controls, _weight
 from mr2.algorithms.optimizers.cg import cg
 from mr2.algorithms.optimizers.pgd import PGDStatus, pgd
 from mr2.data import IData
@@ -32,7 +32,7 @@ def synthesis_denoising(
     :math:`c^* = \arg\min_c \frac12\|Dc-y\|_2^2 + \sum_i w_i |c_i|`
     and returns :math:`Dc^*`. Complex coefficients use magnitude sparsity.
     For convolutional denoising, pass a `~mr2.operators.ConvSynthesisDictionaryOp`;
-    its padding mode determines boundary behavior. Only odd spatial kernels are supported.
+    its padding mode determines boundary behavior.
 
     With a low-pass operator :math:`B`, first computes the baseline
     :math:`b = \arg\min_b \frac12\|b-y\|_2^2 + \frac12\|Bb\|_2^2`
@@ -41,10 +41,10 @@ def synthesis_denoising(
     For example, use ``low_pass_operator=beta**0.5 * FiniteDifferenceOp(dim=(-2, -1))``.
     This is an explicit two-stage model, generally different from analysis denoising.
 
-    The image determines the execution device. Its dtype is promoted with registered
-    floating point/complex tensors of both operators. Compatible operators are reused;
-    otherwise converted copies are used without modifying the supplied operators.
-    Backtracking avoids dividing by an estimated dictionary norm and supports zero dictionaries.
+    Operators are used as supplied and must support the image's device and dtype.
+    No operators or images are copied or converted; dtype promotion follows the underlying operations.
+    PGD starts at 0.9 divided by the estimated squared dictionary norm, with backtracking
+    as a safeguard. A zero norm uses a unit step.
 
     Parameters
     ----------
@@ -56,7 +56,8 @@ def synthesis_denoising(
     regularization_weight
         Nonnegative finite scalar or map broadcasting to, without expanding, the coefficient shape.
     initial_codes
-        Initial coefficients of exactly the expected shape. Defaults to zeros in the promoted dtype/device.
+        Initial coefficients of exactly the expected shape.
+        Defaults to zeros with the adjoint output's dtype and device.
     max_iterations
         Maximum number of accelerated PGD iterations (positive).
     tolerance
@@ -66,7 +67,7 @@ def synthesis_denoising(
     max_iterations_low_pass
         Maximum CG iterations for the optional baseline (positive).
     tolerance_low_pass
-        Positive absolute residual-norm tolerance for CG.
+        Positive absolute residual-norm tolerance for CG; choose it according to the image scale.
 
     Returns
     -------
@@ -81,14 +82,9 @@ def synthesis_denoising(
     _validate_controls(max_iterations_low_pass, tolerance_low_pass)
     if tolerance_low_pass == 0:
         raise ValueError('tolerance_low_pass must be positive')
-    operators = (synthesis_operator,) if low_pass_operator is None else (synthesis_operator, low_pass_operator)
-    image, prepared = _prepare(idata if isinstance(idata, torch.Tensor) else idata.data, *operators)
-    synthesis_operator = prepared[0]
+    image = _image(idata if isinstance(idata, torch.Tensor) else idata.data)
     baseline = torch.zeros_like(image)
     if low_pass_operator is not None:
-        low_pass_operator = prepared[1]
-        if low_pass_operator.H(low_pass_operator(image)[0])[0].shape != image.shape:
-            raise ValueError('low-pass Gram operator must return exactly the image shape')
         (baseline,) = cg(
             IdentityOp() + low_pass_operator.gram,
             image,
@@ -97,10 +93,11 @@ def synthesis_denoising(
             tolerance=tolerance_low_pass,
         )
     reference = synthesis_operator.H(image)[0]
-    if synthesis_operator(reference)[0].shape != image.shape:
-        raise ValueError('synthesis operator must return exactly the image shape')
     weight = _weight(regularization_weight, reference)
     codes = _initial(initial_codes, torch.zeros_like(reference))
+    # A random probe avoids a zero starting vector, including for zero images.
+    norm = float(synthesis_operator.operator_norm(torch.randn_like(reference), dim=None).detach())
+    stepsize = 0.9 / norm**2 if norm > 0 else 1.0
     previous = codes
 
     def stop(status: PGDStatus) -> bool:
@@ -116,7 +113,7 @@ def synthesis_denoising(
         g=L1Norm(weight=weight),
         initial_value=codes,
         max_iterations=max_iterations,
-        stepsize=0.9,
+        stepsize=stepsize,
         backtrack_factor=0.5,
         convergent_iterates_variant=True,
         callback=stop if tolerance else None,

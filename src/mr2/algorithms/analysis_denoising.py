@@ -4,7 +4,7 @@ from typing import TypeVar
 
 import torch
 
-from mr2.algorithms._dictionary_denoising import _initial, _prepare, _validate_controls, _weight
+from mr2.algorithms._dictionary_denoising import _image, _initial, _validate_controls, _weight
 from mr2.algorithms.optimizers.pdhg import pdhg
 from mr2.data import IData
 from mr2.operators import IdentityOp, LinearOperator, LinearOperatorMatrix, ProximableFunctionalSeparableSum
@@ -27,12 +27,11 @@ def analysis_denoising(
     Solves :math:`\min_x \frac12\|x-y\|_2^2 + \sum_i w_i |(Ax)_i|`.
     Complex coefficients are penalized by magnitude, preserving phase under shrinkage.
     For convolutional denoising, pass a `~mr2.operators.ConvAnalysisDictionaryOp`;
-    its padding mode determines the boundary behavior. Only odd spatial kernels are supported.
+    its padding mode determines the boundary behavior.
     This analysis model is generally different from synthesis sparse coding.
 
-    The image determines the execution device. Its dtype is promoted with the operator's
-    registered floating point/complex tensors. Operators are reused directly when compatible,
-    otherwise a converted copy is used; the supplied operator is not modified.
+    Operators are used as supplied and must support the image's device and dtype.
+    No operators or images are copied or converted; dtype promotion follows the underlying operations.
 
     Parameters
     ----------
@@ -59,10 +58,8 @@ def analysis_denoising(
     (https://github.com/PTB-MR/mrpro/pull/1018), using mr2's existing operators and solvers.
     """
     _validate_controls(max_iterations, tolerance)
-    image, (analysis_operator,) = _prepare(idata if isinstance(idata, torch.Tensor) else idata.data, analysis_operator)
+    image = _image(idata if isinstance(idata, torch.Tensor) else idata.data)
     coefficients = analysis_operator(image)[0]
-    if analysis_operator.H(coefficients)[0].shape != image.shape:
-        raise ValueError('analysis adjoint must return exactly the image shape')
     weight = _weight(regularization_weight, coefficients)
     (result,) = pdhg(
         f=ProximableFunctionalSeparableSum(0.5 * L2NormSquared(target=image), L1Norm(weight=weight)),

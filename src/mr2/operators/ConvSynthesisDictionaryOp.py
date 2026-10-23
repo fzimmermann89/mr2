@@ -41,8 +41,7 @@ class ConvSynthesisDictionaryOp(LinearOperator):
             Convolutional filter of shape (n_filters, *spatial_dims). The filter filter dimension is specified
             by the number of dimension in the *spatial_dims.
             Example: for 2D filters, the shape is (n_filters, ky, kx), for 3D filters, (n_filters, kz, ky, kx).
-            Note that, typically, odd spatial dimensions are used for the kernels to avoid spatial pixel-shift artifacts
-            in the result of the composition of the adjoint and the forward operator.
+            Spatial kernel dimensions must be odd to preserve the input spatial shape.
         pad_mode
             the mode to use for padding.
         """
@@ -51,6 +50,8 @@ class ConvSynthesisDictionaryOp(LinearOperator):
             raise ValueError(
                 f"Pad mode must be either 'constant', 'reflect', 'replicate', or 'circular', but got {pad_mode}."
             )
+        if any(size % 2 == 0 for size in kernel.shape[1:]):
+            raise ValueError('Convolutional dictionaries require odd spatial kernel sizes')
         self.kernel = kernel
         self.pad_mode = pad_mode
 

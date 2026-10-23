@@ -1,11 +1,8 @@
 """Validation shared by analysis and synthesis denoising."""
 
 import math
-from copy import deepcopy
 
 import torch
-
-from mr2.operators import ConvAnalysisDictionaryOp, ConvSynthesisDictionaryOp, LinearOperator
 
 
 def _validate_controls(max_iterations: int, tolerance: float) -> None:
@@ -15,36 +12,11 @@ def _validate_controls(max_iterations: int, tolerance: float) -> None:
         raise ValueError('tolerance must be finite and nonnegative')
 
 
-def _prepare(image: torch.Tensor, *operators: LinearOperator) -> tuple[torch.Tensor, tuple[LinearOperator, ...]]:
-    """Promote floating tensors, copying operators only when conversion is needed."""
+def _image(image: torch.Tensor) -> torch.Tensor:
+    """Validate the image without converting caller-owned tensors or operators."""
     if not (image.is_floating_point() or image.is_complex()) or image.numel() == 0:
         raise ValueError('image must be a nonempty floating point or complex tensor')
-    dtype = image.dtype
-    for operator in operators:
-        for module in operator.modules():
-            if isinstance(module, ConvAnalysisDictionaryOp | ConvSynthesisDictionaryOp) and any(
-                size % 2 == 0 for size in module.kernel.shape[1:]
-            ):
-                raise ValueError('Convolutional denoising requires odd spatial kernel sizes')
-        for tensor in (*operator.buffers(), *operator.parameters()):
-            if tensor.is_floating_point() or tensor.is_complex():
-                dtype = torch.promote_types(dtype, tensor.dtype)
-    prepared = []
-    for operator in operators:
-        if any(
-            tensor.device != image.device
-            or ((tensor.is_floating_point() or tensor.is_complex()) and tensor.dtype != dtype)
-            for tensor in (*operator.buffers(), *operator.parameters())
-        ):
-            operator = deepcopy(operator)
-            operator._apply(
-                lambda tensor: tensor.to(
-                    device=image.device,
-                    dtype=dtype if tensor.is_floating_point() or tensor.is_complex() else tensor.dtype,
-                )
-            )
-        prepared.append(operator)
-    return image.to(dtype=dtype), tuple(prepared)
+    return image
 
 
 def _weight(weight: float | torch.Tensor, coefficients: torch.Tensor) -> torch.Tensor:
