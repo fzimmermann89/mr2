@@ -1,4 +1,4 @@
-"""Numerical Phantoms and Datasets"""
+"""Numerical phantoms and datasets."""
 
 from mr2.phantoms.EllipsePhantom import EllipsePhantom
 from mr2.phantoms.phantom_elements import EllipseParameters
