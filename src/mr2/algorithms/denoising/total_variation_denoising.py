@@ -63,7 +63,7 @@ def total_variation_denoising(
         Strengths of the regularization (:math:`l_i`). If a single value is given, it is applied to all dimensions.
         If a sequence is given, it must have the same length as `regularization_dim`.
     initial_image
-        Initial image. If `None` then the target image :math:`y` will be used.
+        Initial image, moved to the input image device. If `None` then the target image :math:`y` will be used.
     max_iterations
         Maximum number of PDHG iterations.
     tolerance
@@ -94,7 +94,7 @@ def total_variation_denoising(
     l1_norm = L1NormViewAsReal(weight=unsqueeze_right(regularization_weight_, img_tensor.ndim))
     operator = LinearOperatorMatrix(((IdentityOp(),), (nabla_operator,)))
 
-    initial_image = initial_image if initial_image is not None else img_tensor
+    initial_image = initial_image.to(img_tensor.device) if initial_image is not None else img_tensor
 
     (img_tensor,) = pdhg(
         f=ProximableFunctionalSeparableSum(l2_norm_squared, l1_norm),
