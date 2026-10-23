@@ -3,7 +3,7 @@
 import pytest
 import torch
 from mr2.algorithms.denoising import total_variation_denoising
-from mr2.data import IData, SpatialDimension
+from mr2.data import IData, IHeader, SpatialDimension
 from mr2.utils import RandomGenerator
 from tests.helper import relative_image_difference
 
@@ -48,3 +48,40 @@ def test_denoising_repeated_dims() -> None:
     """Error for repeated dims."""
     with pytest.raises(ValueError, match='Repeated values are not allowed in regularization_dim'):
         _ = total_variation_denoising(torch.zeros(1, 1), regularization_dim=(-2, 0), regularization_weight=[1.0, 1.0])
+
+
+@pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
+@pytest.mark.parametrize('tensor_input', [True, False], ids=['tensor', 'idata'])
+@pytest.mark.parametrize('image_device', ['cpu', 'cuda'])
+def test_denoising_device(random_iheader: IHeader, tensor_input: bool, image_device: str) -> None:
+    """Initialization follows the image device for Tensor and IData inputs."""
+    image = torch.zeros(1, 1, 1, 8, 8, dtype=torch.complex64, device=image_device)
+    image[..., 3:5, 3:5] = torch.tensor(1 + 0.5j, device=image.device)
+    initial_image = torch.zeros_like(image)
+    # PDHG estimates the operator norm from a random starting vector.
+    torch.manual_seed(0)
+    expected = total_variation_denoising(image, (-2, -1), 0.2, initial_image=initial_image, max_iterations=20)
+    torch.manual_seed(0)
+    result = total_variation_denoising(
+        image if tensor_input else IData(image, random_iheader),
+        (-2, -1),
+        0.2,
+        initial_image=initial_image.to('cuda' if image_device == 'cpu' else 'cpu'),
+        max_iterations=20,
+    )
+    if isinstance(result, IData):
+        assert result.header is random_iheader
+        result = result.data
+    assert result.device == image.device
+    torch.testing.assert_close(result, expected)
+
+
+def test_denoising_two_pixel_solution() -> None:
+    """Preserve the existing squared-fidelity scaling and zero-padded forward differences."""
+    image = torch.tensor([[0.0, 2.0]])
+    weight = 0.4
+    result = total_variation_denoising(image, (-1,), weight, max_iterations=100)
+    # min a² + (b-2)² + weight * (|b-a| + |b|), with 0 < a < b.
+    expected = torch.tensor([[weight / 2, 2 - weight]], dtype=image.dtype)
+    torch.testing.assert_close(result, expected)
