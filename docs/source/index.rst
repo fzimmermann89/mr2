@@ -45,4 +45,5 @@ Content
    contributor_guide
    api
    faq
+   noise
 
