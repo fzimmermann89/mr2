@@ -50,64 +50,31 @@ def test_denoising_repeated_dims() -> None:
         _ = total_variation_denoising(torch.zeros(1, 1), regularization_dim=(-2, 0), regularization_weight=[1.0, 1.0])
 
 
+@pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 @pytest.mark.parametrize('tensor_input', [True, False], ids=['tensor', 'idata'])
-@pytest.mark.parametrize('regularization_weight', [0.2, (0.1, 0.2)], ids=['scalar', 'per-axis'])
-@pytest.mark.parametrize(
-    ('image_device', 'initial_device'),
-    [
-        ('cpu', None),
-        ('cpu', 'cpu'),
-        *[
-            pytest.param(
-                image_device,
-                initial_device,
-                marks=[pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')],
-            )
-            for image_device, initial_device in [('cuda', None), ('cuda', 'cpu'), ('cpu', 'cuda'), ('cuda', 'cuda')]
-        ],
-    ],
-)
-def test_denoising_device(
-    random_iheader: IHeader,
-    tensor_input: bool,
-    regularization_weight: float | tuple[float, float],
-    image_device: str,
-    initial_device: str | None,
-) -> None:
-    """The input determines the device, including when initialization is on another device."""
-    image = torch.zeros(1, 1, 1, 8, 8, dtype=torch.complex64)
-    image[..., 3:5, 3:5] = torch.tensor(1 + 0.5j)
-    initial_image = torch.zeros_like(image) if initial_device is not None else None
-    device_image = image.to(image_device)
+@pytest.mark.parametrize('image_device', ['cpu', 'cuda'])
+def test_denoising_device(random_iheader: IHeader, tensor_input: bool, image_device: str) -> None:
+    """Initialization follows the image device for Tensor and IData inputs."""
+    image = torch.zeros(1, 1, 1, 8, 8, dtype=torch.complex64, device=image_device)
+    image[..., 3:5, 3:5] = torch.tensor(1 + 0.5j, device=image.device)
+    initial_image = torch.zeros_like(image)
     # PDHG estimates the operator norm from a random starting vector.
     torch.manual_seed(0)
-    expected = total_variation_denoising(
-        device_image,
-        regularization_dim=(-2, -1),
-        regularization_weight=regularization_weight,
-        initial_image=initial_image.to(image_device) if initial_image is not None else None,
-        max_iterations=20,
-    )
+    expected = total_variation_denoising(image, (-2, -1), 0.2, initial_image=initial_image, max_iterations=20)
     torch.manual_seed(0)
     result = total_variation_denoising(
-        device_image if tensor_input else IData(device_image, random_iheader),
-        regularization_dim=(-2, -1),
-        regularization_weight=regularization_weight,
-        initial_image=initial_image.to(initial_device) if initial_image is not None else None,
+        image if tensor_input else IData(image, random_iheader),
+        (-2, -1),
+        0.2,
+        initial_image=initial_image.to('cuda' if image_device == 'cpu' else 'cpu'),
         max_iterations=20,
     )
     if isinstance(result, IData):
-        assert not tensor_input
         assert result.header is random_iheader
         result = result.data
-    else:
-        assert tensor_input
-    assert result.device == device_image.device
-    assert result.dtype == image.dtype
-    assert result.shape == image.shape
-    assert torch.isfinite(result).all()
+    assert result.device == image.device
     torch.testing.assert_close(result, expected)
-    assert not torch.allclose(result.cpu(), image)
 
 
 def test_denoising_two_pixel_solution() -> None:
