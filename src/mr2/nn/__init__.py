@@ -30,6 +30,7 @@ from mr2.nn.ndmodules import (
 )
 
 __all__ = [
+    'GEGLU',
     'AbsolutePositionEncoding',
     'AxialRoPE',
     'ComplexAsChannel',
@@ -37,7 +38,6 @@ __all__ = [
     'DropPath',
     'FiLM',
     'FourierFeatures',
-    'GEGLU',
     'GroupNorm',
     'LayerNorm',
     'PermutedBlock',

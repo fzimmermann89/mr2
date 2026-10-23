@@ -1,3 +1,5 @@
+"""Neural network architectures."""
+
 from mr2.nn.nets.BasicCNN import BasicCNN
 from mr2.nn.nets.DiT import DiT
 from mr2.nn.nets.HourglassTransformer import HourglassTransformer
@@ -9,14 +11,14 @@ from mr2.nn.nets.UNet import AttentionGatedUNet, UNet
 from mr2.nn.nets.VAE import VAE
 
 __all__ = [
-    "AttentionGatedUNet",
-    "BasicCNN",
-    "DiT",
-    "HourglassTransformer",
-    "MLP",
-    "Restormer",
-    "SwinIR",
-    "UNet",
-    "Uformer",
-    "VAE",
+    'MLP',
+    'VAE',
+    'AttentionGatedUNet',
+    'BasicCNN',
+    'DiT',
+    'HourglassTransformer',
+    'Restormer',
+    'SwinIR',
+    'UNet',
+    'Uformer',
 ]

@@ -7,16 +7,15 @@ from mr2.algorithms.total_variation_denoising import total_variation_denoising
 from mr2.algorithms.varimax import varimax
 from mr2.algorithms.wavelet_denoising import wavelet_denoising
 
-
 __all__ = [
-    "csm",
-    "dcf",
-    "image_registration",
-    "optimizers",
-    "prewhiten_kspace",
-    "reconstruction",
-    "rovir",
-    "total_variation_denoising",
-    "varimax",
-    "wavelet_denoising"
+    'csm',
+    'dcf',
+    'image_registration',
+    'optimizers',
+    'prewhiten_kspace',
+    'reconstruction',
+    'rovir',
+    'total_variation_denoising',
+    'varimax',
+    'wavelet_denoising',
 ]
