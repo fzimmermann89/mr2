@@ -372,7 +372,7 @@ def test_header_default_precedence(raw_data, dated, overwrite) -> None:
             seriesDate=XmlDate.from_date(measurement_time.date()),
             seriesTime=XmlTime.from_time(measurement_time.time()),
         )
-    defaults = {'datetime': fallback, 'protocol_name': 'fallback'}
+    defaults = {'datetime': fallback, 'protocol_name': 'fallback', 'lamor_frequency_proton': 1.0, 'acq_info': None}
     overwrites = {} if overwrite == 'absent' else {'datetime': overwrite}
     result = KData.from_ismrmrd(
         header, acquisitions, DummyTrajectory(), header_overwrites=overwrites, header_defaults=defaults
@@ -381,7 +381,14 @@ def test_header_default_precedence(raw_data, dated, overwrite) -> None:
     if overwrite != 'absent':
         expected = overwrite
     assert result.header.datetime == expected
-    assert defaults == {'datetime': fallback, 'protocol_name': 'fallback'}
+    assert result.header.lamor_frequency_proton == header.experimentalConditions.H1resonanceFrequency_Hz
+    assert result.header.acq_info is not None
+    assert defaults == {
+        'datetime': fallback,
+        'protocol_name': 'fallback',
+        'lamor_frequency_proton': 1.0,
+        'acq_info': None,
+    }
     assert overwrites == ({} if overwrite == 'absent' else {'datetime': overwrite})
 
 
