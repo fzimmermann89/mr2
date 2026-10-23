@@ -138,6 +138,7 @@ def test_dictionary_matching_op_invalid_atoms(
     """Reject an invalid append without changing any dictionary entries."""
 
     def model(scale: torch.Tensor, x: torch.Tensor) -> tuple[torch.Tensor]:
+        """Repeat each parameter value to generate valid or degenerate atoms."""
         return (scale * x.unsqueeze(0).expand(2, -1),)
 
     operator = DictionaryMatchOp(model, index_of_scaling_parameter=0 if predict_scale else None)
@@ -169,6 +170,7 @@ def test_dictionary_matching_op_signal_magnitude(dtype: torch.dtype, amplitude: 
     """Normalize finite nonzero signals without squaring their original magnitudes."""
 
     def model(scale: torch.Tensor, x: torch.Tensor) -> tuple[torch.Tensor]:
+        """Generate distinct signal directions at the requested amplitude and dtype."""
         signal = torch.stack((x, 1 - x)).to(dtype) * amplitude
         if signal.is_complex():
             signal = signal * 1j
@@ -193,6 +195,7 @@ def test_dictionary_matching_op_subnormal_signal(dtype: torch.dtype, predict_sca
     """Only require a representable inverse norm when estimating scale."""
 
     def model(scale: torch.Tensor, x: torch.Tensor) -> tuple[torch.Tensor]:
+        """Generate signals with the parameter value in the first component."""
         return (scale * torch.stack((x, torch.zeros_like(x))),)
 
     operator = DictionaryMatchOp(model, index_of_scaling_parameter=0 if predict_scale else None)
