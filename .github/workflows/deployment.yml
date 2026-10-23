@@ -98,11 +98,17 @@ jobs:
             if python -m pip install mrtwo==$VERSION$SUFFIX --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/; then
               echo "Package installed successfully."
               break
-            else
-              echo "Attempt $i failed. Retrying in 10 seconds..."
-              sleep 10
             fi
+            if [ "$i" -eq 3 ]; then
+              echo "Installation from TestPyPI failed after $i attempts."
+              exit 1
+            fi
+            echo "Attempt $i failed. Retrying in 10 seconds..."
+            sleep 10
           done
+
+      - name: Smoke test installed package
+        run: python -c "import mr2; print(mr2.__version__)"
 
   build-pypi-package:
     name: Build Package for PyPI
@@ -196,7 +202,5 @@ jobs:
           verbose: true
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-
-  # Cancel in-progress runs when a new workflow with the same group name is triggered
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}

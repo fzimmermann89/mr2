@@ -34,10 +34,12 @@ class TransposedAttention(Module):
             Number of attention heads.
         """
         super().__init__()
+        if n_heads <= 0:
+            raise ValueError('n_heads must be positive')
+        if n_channels_in % n_heads:
+            raise ValueError('n_channels_in must be divisible by n_heads')
         self.n_heads = n_heads
         self.temperature = Parameter(torch.ones(n_heads, 1, 1))
-        # TODO(issue): Validate n_channels_in % n_heads == 0 before grouped-convolution setup;
-        # otherwise construction fails with an opaque groups/channel incompatibility error.
         channels_per_head = n_channels_in // n_heads
         self.to_qkv = convND(n_dim)(n_channels_in, channels_per_head * n_heads * 3, kernel_size=1)
         self.qkv_dwconv = convND(n_dim)(
@@ -67,11 +69,11 @@ class TransposedAttention(Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Apply transposed attention."""
         qkv = self.qkv_dwconv(self.to_qkv(x))
-        q, k, v = rearrange(qkv, 'b (qkv heads channels) ... -> qkv b heads (...) channels', heads=self.n_heads, qkv=3)
+        q, k, v = rearrange(qkv, 'b (qkv heads channels) ... -> qkv b heads channels (...)', heads=self.n_heads, qkv=3)
         q = torch.nn.functional.normalize(q, dim=-1) * self.temperature
         k = torch.nn.functional.normalize(k, dim=-1)
-        attention = torch.nn.functional.scaled_dot_product_attention(q, k, v, scale=1.0)
-        out = rearrange(attention, '... heads points channels -> ... (heads channels) points').unflatten(
+        attention = torch.softmax(q @ k.transpose(-2, -1), dim=-1)
+        out = rearrange(attention @ v, 'b heads channels points -> b (heads channels) points').unflatten(
             -1, x.shape[2:]
         )
         out = self.to_out(out)

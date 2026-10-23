@@ -4,7 +4,18 @@ from typing import cast
 
 import pytest
 import torch
-from mr2.nn.nets import SwinIR
+from mr2.nn.LayerNorm import LayerNorm
+from mr2.nn.nets.SwinIR import SwinIR, SwinTransformerLayer
+
+
+def test_swin_transformer_layer_normalization() -> None:
+    """Swin Transformer layers normalize channels at each spatial position."""
+    layer = SwinTransformerLayer(n_dim=2, n_channels=4, n_heads=1, window_size=2)
+    norm2 = layer.norm2[0]
+    assert isinstance(layer.norm1, LayerNorm)
+    assert isinstance(norm2, LayerNorm)
+    assert not layer.norm1.features_last
+    assert not norm2.features_last
 
 
 @pytest.mark.parametrize('torch_compile', [True, False], ids=['compiled', 'uncompiled'])

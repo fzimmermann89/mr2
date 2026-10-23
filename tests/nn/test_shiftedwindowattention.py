@@ -1,6 +1,7 @@
 """Tests for ShiftedWindowAttention module."""
 
 import pytest
+import torch
 from mr2.nn.attention import ShiftedWindowAttention
 from mr2.utils import RandomGenerator
 
@@ -65,3 +66,14 @@ def test_shifted_window_attention_rejects_channels_not_divisible_by_heads() -> N
     """Invalid channel/head combinations should fail at construction with an actionable error."""
     with pytest.raises(ValueError, match=r'n_channels_in.*n_heads'):
         _ = ShiftedWindowAttention(n_dim=2, n_channels_in=5, n_channels_out=5, n_heads=2)
+
+
+def test_shifted_window_attention_single_window_dimension() -> None:
+    """Shifting is disabled if a spatial dimension contains only one window."""
+    rng = RandomGenerator(13)
+    x = rng.float32_tensor((2, 4, 7, 14))
+    shifted = ShiftedWindowAttention(2, 4, 4, 2, window_size=7, shifted=True)
+    non_shifted = ShiftedWindowAttention(2, 4, 4, 2, window_size=7, shifted=False)
+    non_shifted.load_state_dict(shifted.state_dict())
+
+    torch.testing.assert_close(shifted(x), non_shifted(x))

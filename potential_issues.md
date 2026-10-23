@@ -1,23 +1,56 @@
 # Potential Issues
 
-This document contains only issues retained after a second source audit and
-targeted runtime checks. It excludes design preferences, expected validation
-delegated to PyTorch/einops, and earlier claims that did not reproduce.
+This is the issue-review registry for [PR #56](https://github.com/fzimmermann89/mr2/pull/56).
+AI-generated claims are hypotheses until checked against source and runtime
+behavior. The original reports below are retained as historical evidence; their
+line numbers and descriptions of existing coverage refer to the earlier audit.
 
-## Summary
+## Review against main (2026-10-23)
 
-| Severity | Issue | Validation |
+Reviewed against `origin/main` at `571229d`. The merged branch has the same
+production behavior as that revision; its remaining source differences are issue
+comments. Separate implementation PRs belong to the parent audit.
+
+| Claim | Current status | Evidence / ownership |
 | --- | --- | --- |
-| High | `KData.from_file()` filters sample data without filtering associated acquisition state | Confirmed by control flow |
-| High | `DictionaryMatchOp` allows zero-norm atoms to silently win matches | Reproduced |
-| Medium | `MultiHeadAttention` cross-attention fails when cross features differ from input features | Reproduced |
-| Medium | Three attention layers accept non-divisible channel/head configurations that cannot execute | Reproduced |
-| Medium | Convolutional dictionary operators accept even kernels but fail in forward application | Reproduced |
-| Medium | `LeWinTransformerBlock` fails for non-window-aligned image sizes | Reproduced |
-| Medium | PDHG automatic steps produce `NaN` output for a valid zero operator | Reproduced |
-| Low | `DropPath(1.0, scale_by_keep=True)` produces `NaN` output | Reproduced |
-| Low | `KTrajectory.from_ismrmrd()` silently discards trajectory coordinates beyond three | Confirmed by control flow |
-| Low | `KData.reshape_by_idx()` warning is malformed | Confirmed by source |
+| 1. Mixed-readout metadata | Reproduced on main | Import fails while stacking unequal trajectory lengths; covered separately by [#82](https://github.com/fzimmermann89/mr2/pull/82), still open |
+| 2. Dictionary zero atoms | Reproduced on main | Zero-atom normalization creates NaNs and matching selects parameter 0 over an exact parameter-1 match; parent handles fix |
+| 3. Unequal-width cross-attention | Already fixed on main | Key/value projection uses query width; retained unequal-width test passes |
+| 4. Attention head divisibility | Already fixed on main | All three constructors reject incompatible channels; retained constructor tests pass |
+| 5. Even dictionary kernels | Reproduced on main | Both operators fail reshape; [#86](https://github.com/fzimmermann89/mr2/pull/86) rejects unsupported even kernels, still open |
+| 6. LeWin unaligned modulator | Reproduced on main | Size 15 is paired with a modulator of size 14; parent handles fix |
+| 7. PDHG zero norm | Reproduced on main | Automatic steps return NaN for the zero operator; parent handles fix |
+| 8. Full scaled DropPath | Reproduced on main | Full-drop scaling returns NaNs; parent handles fix |
+| 9. More than three trajectory coordinates | Missing rejection reproduced on main | Four-coordinate import succeeds; direct conversion retains xyz and discards the fourth component; parent handles fix |
+| 10. Malformed KData warning | Reproduced on main | Warning contains a literal join expression and missing space; parent handles fix |
+
+### Evidence and cleanup scope
+
+The issue tests were originally xfails. Commit `9654c1f` deliberately removed
+those markers so that unresolved claims fail in CI. They are still ordinary
+tests: the four attention cases now pass because main fixed the behavior, not
+because evidence was removed or the expectations were weakened. The focused
+review run produced nine failures (including both even-kernel operators) and
+21 passes, with failures at the reported code paths.
+
+The tests that demand zero-atom rejection or rejection of extra coordinates
+demonstrate missing validation, but do not by themselves establish every claimed
+downstream consequence. The normalization and coordinate-selection source paths
+must also be considered. Direct runtime checks confirmed the zero atom wins
+over an exact nonzero match and conversion drops a nonzero fourth component.
+Likewise, returning zeros for full scaled DropPath and
+preserving even-kernel shape are proposed contracts, not the only valid fixes.
+In particular, #86 chooses constructor rejection instead of even-kernel support;
+that test's expected contract will need separate cleanup once the fix lands.
+
+No retained claim was newly classified as invalid in this review. Earlier
+non-reproducing and design-preference claims remain listed at the end rather
+than being restored as bugs. The LeWin reproduction concerns the block itself;
+broader end-to-end Uformer shape support needs its own checks.
+
+Keep this registry and its existing tests for discussion. Removing duplicate
+coverage, changing expected contracts, or retiring resolved reports is a
+separate cleanup decision. PR #56 does not implement the remaining fixes.
 
 ## High Severity
 
@@ -138,6 +171,9 @@ epsilon would keep a meaningless atom in the search and is less safe.
 
 ### 3. `MultiHeadAttention` cross-attention fails when `n_channels_cross != n_channels_in`
 
+**Current status:** Fixed in main. The following report describes the earlier
+implementation; its retained regression tests now pass.
+
 **Location:** `src/mr2/nn/attention/MultiHeadAttention.py:42-55, 88-101`
 
 **Problem**
@@ -189,6 +225,9 @@ three streams to it.
 - Cross-attention combined with non-default `n_channels_out`.
 
 ### 4. Attention constructors do not reject channel/head settings that cannot execute
+
+**Current status:** Fixed in main. The following report describes the earlier
+implementation; its retained regression tests now pass.
 
 **Location:** `src/mr2/nn/attention/MultiHeadAttention.py:48-55, 88-101`;
 `src/mr2/nn/attention/ShiftedWindowAttention.py:59-65, 104-131`;

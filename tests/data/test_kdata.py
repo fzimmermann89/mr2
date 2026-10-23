@@ -1,16 +1,20 @@
 """Tests for the KData class."""
 
 import re
+import shutil
 from collections.abc import Sequence
 from types import EllipsisType
 from typing import Literal
+from xml.etree import ElementTree as ET
 
+import h5py
 import pytest
 import torch
 from einops import repeat
 from mr2.data import KData, KHeader, KNoise, KTrajectory, SpatialDimension
 from mr2.data.acq_filters import has_n_coils, is_coil_calibration_acquisition, is_image_acquisition
 from mr2.data.Dataclass import InconsistentDeviceError
+from mr2.data.enums import TrajectoryType
 from mr2.data.traj_calculators import KTrajectoryIsmrmrd
 from mr2.data.traj_calculators.KTrajectoryCalculator import DummyTrajectory
 from mr2.operators import FastFourierOp, LinearOperator
@@ -24,6 +28,77 @@ def test_KData_from_file(ismrmrd_cart) -> None:
     """Read in data from file."""
     kdata = KData.from_file(ismrmrd_cart.filename, DummyTrajectory())
     assert kdata is not None
+
+
+def test_KData_from_file_repairs_missing_required_xml_fields(ismrmrd_cart, tmp_path) -> None:
+    """Required fields omitted by older writers are repaired without changing the file."""
+    filename = tmp_path / 'missing_fields.h5'
+    shutil.copy2(ismrmrd_cart.filename, filename)
+    with h5py.File(filename, 'r+') as file:
+        xml = file['dataset/xml'][0]
+        root = ET.fromstring(xml)  # noqa: S314
+        namespace = root.tag.partition('}')[0].removeprefix('{')
+        qualified = lambda name: f'{{{namespace}}}{name}'  # noqa: E731
+        encoding = root.find(qualified('encoding'))
+        assert encoding is not None
+        trajectory = encoding.find(qualified('trajectory'))
+        assert trajectory is not None
+        encoding.remove(trajectory)
+        measurement = ET.Element(qualified('measurementInformation'))
+        ET.SubElement(measurement, qualified('protocolName')).text = 'legacy'
+        acquisition_system = root.find(qualified('acquisitionSystemInformation'))
+        assert acquisition_system is not None
+        root.insert(list(root).index(acquisition_system), measurement)
+        file['dataset/xml'][0] = ET.tostring(root, encoding='utf-8')
+        xml_before = file['dataset/xml'][0]
+
+    kdata = KData.from_file(filename, DummyTrajectory())
+
+    assert kdata.header.patient_position.value == 'HFS'
+    assert kdata.header.trajectory_type is TrajectoryType.OTHER
+    with h5py.File(filename, 'r') as file:
+        assert file['dataset/xml'][0] == xml_before
+
+
+def test_KData_from_file_repairs_invalid_patient_position(ismrmrd_cart, tmp_path) -> None:
+    """Legacy free-text patient positions fall back to the KHeader default."""
+    filename = tmp_path / 'invalid_patient_position.h5'
+    shutil.copy2(ismrmrd_cart.filename, filename)
+    with h5py.File(filename, 'r+') as file:
+        root = ET.fromstring(file['dataset/xml'][0])  # noqa: S314
+        namespace = root.tag.partition('}')[0].removeprefix('{')
+        qualified = lambda name: f'{{{namespace}}}{name}'  # noqa: E731
+        measurement = ET.Element(qualified('measurementInformation'))
+        ET.SubElement(measurement, qualified('patientPosition')).text = 'head first'
+        acquisition_system = root.find(qualified('acquisitionSystemInformation'))
+        assert acquisition_system is not None
+        root.insert(list(root).index(acquisition_system), measurement)
+        file['dataset/xml'][0] = ET.tostring(root, encoding='utf-8')
+
+    with pytest.warns(Warning, match='not a valid'):
+        kdata = KData.from_file(filename, DummyTrajectory())
+    assert kdata.header.patient_position.value == 'HFS'
+
+
+def test_KData_from_file_does_not_repair_unrelated_required_fields(ismrmrd_cart, tmp_path) -> None:
+    """Compatibility handling remains limited to fields with safe defaults."""
+    filename = tmp_path / 'missing_recon_space.h5'
+    shutil.copy2(ismrmrd_cart.filename, filename)
+    with h5py.File(filename, 'r+') as file:
+        root = ET.fromstring(file['dataset/xml'][0])  # noqa: S314
+        namespace = root.tag.partition('}')[0].removeprefix('{')
+        qualified = lambda name: f'{{{namespace}}}{name}'  # noqa: E731
+        encoding = root.find(qualified('encoding'))
+        assert encoding is not None
+        recon_space = encoding.find(qualified('reconSpace'))
+        assert recon_space is not None
+        encoding.remove(recon_space)
+        file['dataset/xml'][0] = ET.tostring(root, encoding='utf-8')
+
+    # The XML parser raises TypeError with ismrmrd >=1.15; older versions
+    # defer validation to KHeader, which raises ValueError instead.
+    with pytest.raises((TypeError, ValueError), match=r'reconSpace|Missing parameters'):
+        KData.from_file(filename, DummyTrajectory())
 
 
 def test_KData_random_cart_undersampling(ismrmrd_cart_random_us) -> None:
@@ -105,6 +180,27 @@ def test_KData_reshape_by_idx_idempotent(ismrmrd_cart) -> None:
     kdata = KData.from_file(ismrmrd_cart.filename, DummyTrajectory())
     kdata_reshaped = kdata.reshape_by_idx()
     assert kdata.shape == kdata_reshaped.shape
+
+
+@pytest.mark.parametrize(
+    ('index', 'dim', 'axis_name'),
+    [
+        ((..., slice(0, 1), slice(None), slice(None), slice(None)), -4, 'coil'),
+        ((..., slice(None), slice(0, 1), slice(None), slice(None)), -3, 'k2'),
+        ((..., slice(None), slice(None), slice(0, 1), slice(None)), -2, 'k1'),
+        ((..., slice(None), slice(None), slice(None), slice(0, 1)), -1, 'k0'),
+    ],
+)
+def test_KData_squeeze_warns_for_named_data_axes(
+    consistently_shaped_kdata: KData,
+    index,
+    dim: int,
+    axis_name: str,
+) -> None:
+    """Test KData squeeze warnings use KData axis names."""
+    kdata = consistently_shaped_kdata[index]
+    with pytest.warns(UserWarning, match=f'assumed {axis_name} dimension'):
+        kdata.squeeze(dim)
 
 
 def test_KData_calibration_lines(ismrmrd_cart_with_calibration_lines) -> None:
