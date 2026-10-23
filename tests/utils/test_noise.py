@@ -1,5 +1,6 @@
 """Statistical and algebraic checks for noise augmentation."""
 
+import pytest
 import torch
 from mr2.utils import RandomGenerator
 from mr2.utils.noise import filter_noise, gaussian_kspace_window, noise_pair, tapered_kspace_window
@@ -41,3 +42,11 @@ def test_noise_pair() -> None:
     scale = (1 + sigma.square()).sqrt()
     torch.testing.assert_close(target * scale, image)
     torch.testing.assert_close((noisy - target) * scale, sigma * gmap * noise)
+
+
+@pytest.mark.parametrize('amplitude', [1e-30, 1e30])
+def test_filter_noise_window_scale(amplitude: float) -> None:
+    """Tiny and large constant windows remain identity filters, including repeated axes."""
+    noise = RandomGenerator(9).randn_tensor((4, 32), dtype=torch.complex64)
+    window = torch.full((32,), amplitude, dtype=torch.float32)
+    torch.testing.assert_close(filter_noise(noise, (window, window), (-1, -1)), noise)
