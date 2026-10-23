@@ -87,7 +87,9 @@ class LeWinTransformerBlock(CondMixin, Module):
         Parameters
         ----------
         x
-            Input tensor
+            Input tensor of shape ``(batch, channels, *spatial)``. The learned window modulator repeats
+            periodically from the spatial origin. For 1D and 2D inputs, spatial sizes need not be multiples of
+            ``window_size``.
         cond
             Conditioning tensor
 
@@ -99,7 +101,10 @@ class LeWinTransformerBlock(CondMixin, Module):
 
     def forward(self, x: torch.Tensor, *, cond: torch.Tensor | None = None) -> torch.Tensor:
         """Apply the transformer block."""
-        modulator = self.modulator.tile([t // s for t, s in zip(x.shape[1:], self.modulator.shape, strict=False)])
+        modulator = self.modulator.tile(
+            [(t + s - 1) // s for t, s in zip(x.shape[1:], self.modulator.shape, strict=True)]
+        )
+        modulator = modulator[tuple(slice(0, size) for size in x.shape[1:])]
         x = x + self.drop_path(self.attn(self.norm1(x) + modulator))
         return x + self.drop_path(self.ff(self.norm2(x), cond=cond))
 
