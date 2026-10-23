@@ -84,8 +84,8 @@ class DictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]):
         Raises
         ------
         ValueError
-            If a generated signal has a zero or nonfinite norm, or its inverse norm
-            is nonfinite when estimating a scaling parameter. The dictionary is left unchanged.
+            If a generated signal has a nonfinite or nonpositive computed inverse norm,
+            including from norm underflow or overflow. The dictionary is left unchanged.
 
         """
         if self._index_of_scaling_parameter is not None:
@@ -100,27 +100,10 @@ class DictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]):
             x_list = [x.flatten() for x in torch.broadcast_tensors(*x)]
 
         y = y.flatten(start_dim=1)
-        norm_y = torch.linalg.norm(y, dim=0)
-        if not (torch.isfinite(norm_y) & (norm_y > 0)).all():
-            # Avoid underflow or overflow when squaring finite nonzero signal values.
-            magnitude = y.abs().amax(dim=0)
-            scaled_y = torch.complex(y.real / magnitude, y.imag / magnitude) if y.is_complex() else y / magnitude
-            stable_norm = magnitude * torch.linalg.norm(scaled_y, dim=0)
-            del scaled_y
-            norm_y = torch.where(torch.isfinite(norm_y) & (norm_y > 0), norm_y, stable_norm)
-            del magnitude, stable_norm
-        if not (torch.isfinite(norm_y) & (norm_y > 0)).all():
-            raise ValueError('Dictionary signals must have finite, nonzero norms.')
-        inverse_norm_y = norm_y.reciprocal()
-        if self.inverse_norm_y is not None and not torch.isfinite(inverse_norm_y).all():
-            raise ValueError('Dictionary signals must have finite inverse norms when estimating a scaling parameter.')
-        if torch.isfinite(inverse_norm_y).all():
-            y = y * inverse_norm_y
-        elif y.is_complex():
-            y = torch.complex(y.real / norm_y, y.imag / norm_y)
-        else:
-            y = y / norm_y
-        del norm_y
+        inverse_norm_y = torch.linalg.norm(y, dim=0).reciprocal()
+        if not (torch.isfinite(inverse_norm_y) & (inverse_norm_y > 0)).all():
+            raise ValueError('Dictionary signals must have finite, positive inverse norms.')
+        y = y * inverse_norm_y
 
         if not self.x:
             self.x = TensorList(x_list)
