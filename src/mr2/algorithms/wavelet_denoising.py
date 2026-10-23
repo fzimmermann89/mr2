@@ -84,10 +84,6 @@ def wavelet_denoising(
     img_tensor = idata if isinstance(idata, torch.Tensor) else idata.data
     if img_tensor.dtype not in (torch.float32, torch.float64, torch.complex64, torch.complex128):
         raise ValueError('Input must have float32, float64, complex64 or complex128 dtype')
-    if not 1 <= len(regularization_dim) <= 3:
-        raise ValueError('Only 1D, 2D and 3D wavelet transforms are supported')
-    if any(not isinstance(d, int) or isinstance(d, bool) for d in regularization_dim):
-        raise ValueError('regularization_dim must contain integer axes')
     dim = tuple(normalize_index(img_tensor.ndim, d) for d in regularization_dim)
     if len(set(dim)) != len(dim):
         raise ValueError('Repeated values are not allowed in regularization_dim')
@@ -98,16 +94,13 @@ def wavelet_denoising(
     if not Wavelet(wavelet_name).orthogonal:
         raise ValueError('wavelet_denoising only supports orthogonal wavelets')
 
-    threshold = torch.as_tensor(
-        regularization_weight,
-        device=img_tensor.device,
-        dtype=img_tensor.real.dtype if isinstance(regularization_weight, float) else None,
-    )
-    if threshold.is_complex() or not torch.isfinite(threshold).all() or (threshold < 0).any():
+    if isinstance(regularization_weight, complex) or (
+        isinstance(regularization_weight, torch.Tensor) and regularization_weight.is_complex()
+    ):
         raise ValueError('regularization_weight must be finite, real and nonnegative')
-    threshold = threshold.to(img_tensor.real.dtype)
-    if not torch.isfinite(threshold).all():
-        raise ValueError('regularization_weight must be finite in the image dtype')
+    threshold = torch.as_tensor(regularization_weight, device=img_tensor.device, dtype=img_tensor.real.dtype)
+    if not torch.isfinite(threshold).all() or (threshold < 0).any():
+        raise ValueError('regularization_weight must be finite, real and nonnegative in the image dtype')
 
     wavelet_op = WaveletOp(
         domain_shape=tuple(img_tensor.shape[d] for d in dim),

@@ -170,6 +170,9 @@ class WaveletOp(LinearOperator):
 
         # the ptwt functions work only for real data, thus we handle complex inputs as an additional channel
         x_real = torch.view_as_real(x).moveaxis(-1, 0) if x.is_complex() else x
+        unbatched = x_real.ndim == len(self._dim) and len(self._dim) > 1
+        if unbatched:
+            x_real = x_real.unsqueeze(0)
 
         if len(self._dim) == 1:
             coeffs_1d = wavedec(x_real, self._wavelet_name, level=self._level, mode='zero', axis=-1)
@@ -185,6 +188,8 @@ class WaveletOp(LinearOperator):
 
         # stack multi-resolution wavelets along single dimension
         coefficients_stack = self._coeff_to_stacked_tensor(coefficients_list)
+        if unbatched:
+            coefficients_stack = coefficients_stack.squeeze(0)
         if x.is_complex():
             coefficients_stack = torch.moveaxis(
                 coefficients_stack, -1, min(dim) + 1
@@ -239,6 +244,9 @@ class WaveletOp(LinearOperator):
             else coefficients_stack
         )
 
+        unbatched = coefficients_stack_real.ndim == 1 and len(self._dim) > 1
+        if unbatched:
+            coefficients_stack_real = coefficients_stack_real.unsqueeze(0)
         coefficients_list = self._stacked_tensor_to_coeff(coefficients_stack_real)
 
         if len(self._dim) == 1:
@@ -252,6 +260,9 @@ class WaveletOp(LinearOperator):
             data = waverec3(coeffs_3d, self._wavelet_name, axes=(-3, -2, -1))
         else:
             raise ValueError(f'Wavelets are only available for 1D, 2D and 3D and not {self._dim}D')
+
+        if unbatched:
+            data = data.squeeze(0)
 
         # undo moving of axes
         if coefficients_stack.is_complex():

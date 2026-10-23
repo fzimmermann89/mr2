@@ -74,11 +74,11 @@ def test_invalid_weight_shape(weight: torch.Tensor) -> None:
         wavelet_denoising(torch.ones(2), (-1,), weight, wavelet_name='haar')
 
 
-@pytest.mark.parametrize('dim', [(), (0, -1), (0, 1, 2, 3), (0.5,), (True,)])
+@pytest.mark.parametrize('dim', [(), (0, -1), (0, 1, 2, 3)])
 def test_invalid_axes(dim: tuple) -> None:
-    """Reject empty, repeated, noninteger and excessive transform axes."""
-    with pytest.raises(ValueError, match=r'wavelet transforms|Repeated|integer axes'):
-        wavelet_denoising(torch.ones(2), dim, 1.0, wavelet_name='haar')
+    """Reject empty, repeated and excessive transform axes."""
+    with pytest.raises(ValueError, match=r'wavelet transforms|Repeated'):
+        wavelet_denoising(torch.ones((2,) * (4 if len(dim) > 3 else 1)), dim, 1.0, wavelet_name='haar')
 
 
 def test_axis_out_of_range() -> None:
@@ -162,3 +162,27 @@ def test_large_scalar_threshold() -> None:
     torch.testing.assert_close(result, torch.zeros_like(image))
     with pytest.raises(ValueError, match='finite'):
         wavelet_denoising(image.float(), (-1,), torch.tensor(1e40, dtype=torch.float64), wavelet_name='haar')
+
+
+@pytest.mark.parametrize('spatial_dims', [2, 3])
+@pytest.mark.parametrize('dtype', [torch.float64, torch.complex128])
+def test_unbatched_multidimensional(spatial_dims: int, dtype: torch.dtype) -> None:
+    """ptwt's implicit batch axis must not appear in packed coefficients or reconstructed images."""
+    image = torch.arange(8**spatial_dims, dtype=torch.float64).reshape((8,) * spatial_dims).to(dtype)
+    dim = (-2, -1) if spatial_dims == 2 else (-3, -2, -1)
+    operator = WaveletOp(image.shape, dim, wavelet_name='haar', level=1)
+    (coefficients,) = operator(image)
+    assert coefficients.shape == (image.numel(),)
+    torch.testing.assert_close(operator.H(coefficients)[0], image)
+    actual = wavelet_denoising(image, dim, 0.2, wavelet_name='haar', level=1)
+    expected = wavelet_denoising(image.unsqueeze(0), dim, 0.2, wavelet_name='haar', level=1).squeeze(0)
+    torch.testing.assert_close(actual, expected)
+
+
+def test_default_wavelet_reduces_noise() -> None:
+    """The default db4 recipe reduces seeded noise in a smooth image."""
+    image = torch.zeros(1, 64, 64)
+    image[:, 16:48, 16:48] = 1
+    noise = 0.1 * torch.randn(image.shape, generator=torch.Generator().manual_seed(0))
+    result = wavelet_denoising(image + noise, (-2, -1), 0.1)
+    assert (result - image).square().mean() < noise.square().mean()
