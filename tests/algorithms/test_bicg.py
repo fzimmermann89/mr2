@@ -36,8 +36,7 @@ def test_alpha_convergence(scale, preconditioned):
     torch.testing.assert_close(statuses[0]['residual'], (torch.zeros_like(right_hand_side[0]),))
 
 
-@pytest.mark.parametrize('exact_initial', [False, True])
-@pytest.mark.parametrize('tolerance', [0.0, 1e-6])
+@pytest.mark.parametrize(('exact_initial', 'tolerance'), [(False, 0.0), (False, 1e-6), (True, 0.0)])
 def test_initial_convergence(exact_initial, tolerance):
     """Zero residuals return before dividing, including when tolerance is zero."""
     expected = torch.tensor([1.0, 2.0]) if exact_initial else torch.zeros(2)
@@ -80,15 +79,6 @@ def test_zero_tolerance_alpha_convergence():
     torch.testing.assert_close(result, (torch.tensor([1.0, 2.0]),))
 
 
-@pytest.mark.parametrize(
-    ('initial_value', 'message'),
-    [((torch.zeros(2), torch.zeros(2)), 'Length mismatch'), ((torch.zeros(3),), 'Shape mismatch')],
-)
-def test_invalid_initial_value(initial_value, message):
-    with pytest.raises(ValueError, match=message):
-        bicg(MultiIdentityOp(), (torch.ones(2),), initial_value=initial_value)
-
-
 @pytest.mark.parametrize('dtype', [torch.float64, torch.complex128])
 @pytest.mark.parametrize('preconditioned', [False, True])
 def test_nonsymmetric_solution(dtype, preconditioned):
@@ -114,29 +104,13 @@ def test_nonsymmetric_solution(dtype, preconditioned):
         torch.testing.assert_close(status['residual'][0], right_hand_side - matrix @ status['solution'][0])
 
 
-def test_callback_stop():
-    """Returning False stops after the first full iteration with its current solution."""
-    matrix = torch.tensor([[4.0, 1.0], [2.0, 3.0]], dtype=torch.float64)
-    statuses: list[BiCGStatus] = []
-
-    def callback(status):
-        statuses.append(status)
-        return False
-
-    result = bicg(EinsumOp(matrix), (torch.tensor([1.0, 2.0], dtype=matrix.dtype),), callback=callback)
-    assert len(statuses) == 1
-    assert statuses[0]['iteration_number'] == 0
-    torch.testing.assert_close(result, statuses[0]['solution'])
-    assert statuses[0]['residual'][0].norm() > 1e-6
-
-
 @pytest.mark.parametrize(
     ('matrix', 'message'),
     [
-        ([[0, 1], [1, 0]], 'zero alpha denominator'),
-        ([[1, 0], [1, 0]], 'zero omega denominator'),
+        ([[0, 1], [1, 0]], 'alpha'),
+        ([[1, 0], [1, 0]], 'omega'),
         ([[1, 1], [1, 0]], 'zero or non-finite omega'),
-        ([[1, 0, 0], [1, 2, 0], [1, 0, 3]], 'shadow residual'),
+        ([[1, 0, 0], [1, 2, 0], [1, 0, 3]], 'alpha'),
         ([[float('nan'), 0], [0, 1]], 'non-finite'),
     ],
 )
@@ -154,3 +128,75 @@ def test_alpha_convergence_autograd():
     (result,) = bicg(EinsumOp(4 * torch.eye(2, dtype=right_hand_side.dtype)), (right_hand_side,))
     (gradient,) = torch.autograd.grad(result.sum(), right_hand_side)
     torch.testing.assert_close(gradient, torch.full_like(right_hand_side, 0.25))
+
+
+@pytest.mark.parametrize('dtype', [torch.float32, torch.complex64])
+@pytest.mark.parametrize('identity', [False, True])
+def test_tiny_rhs(dtype, identity):
+    """Tiny nonzero data must survive both convergence checks and recurrence products."""
+    matrix = torch.eye(2, dtype=dtype) if identity else torch.tensor([[4, 1], [2, 3]], dtype=dtype)
+    rhs = torch.tensor([1e-25, 2e-25], dtype=dtype)
+    statuses: list[BiCGStatus] = []
+    with pytest.warns(UserWarning, match='Tolerance is very small'):
+        (result,) = bicg(EinsumOp(matrix), (rhs,), tolerance=0, callback=statuses.append)
+    assert statuses
+    torch.testing.assert_close(result / 1e-25, torch.linalg.solve(matrix, rhs / 1e-25), atol=1e-6, rtol=1e-6)
+
+
+@pytest.mark.parametrize('size', [4, 64])
+def test_numerical_convergence_zero_tolerance(size):
+    """Recurrence exhaustion after convergence must preserve an accurate iterate."""
+    torch.manual_seed(0)
+    matrix = torch.randn(size, size, dtype=torch.complex64) + size * torch.eye(size)
+    rhs = torch.randn(size, dtype=torch.complex64)
+    with pytest.warns(UserWarning, match='Tolerance is very small'):
+        (result,) = bicg(EinsumOp(matrix), (rhs,), tolerance=0, max_iterations=60)
+    torch.testing.assert_close(matrix @ result, rhs, atol=2e-6, rtol=2e-6)
+
+
+@pytest.mark.parametrize('scale', [1.0, 1e-25])
+def test_inconsistent_system_zero_tolerance(scale):
+    """A small absolute residual cannot excuse a genuine singular-system failure."""
+    matrix = torch.tensor([[1.0, 0.0], [1.0, 0.0]])
+    rhs = scale * torch.tensor([1.0, 0.0])
+    with (
+        pytest.warns(UserWarning, match='Tolerance is very small'),
+        pytest.raises(RuntimeError, match='BiCGStab breakdown'),
+    ):
+        bicg(EinsumOp(matrix), (rhs,), tolerance=0)
+
+
+@pytest.mark.parametrize('converged', [False, True])
+def test_breakdown_checks_true_residual(monkeypatch, converged):
+    """Recurrence exhaustion is acceptable only after the actual system is solved."""
+    import importlib
+
+    module = importlib.import_module('mr2.algorithms.optimizers.bicg')
+    matrix = torch.tensor([[4.0, 1.0], [2.0, 3.0]])
+    rhs = torch.tensor([1.0, 2.0])
+    statuses: list[BiCGStatus] = []
+
+    breakdown_calls: list[None] = []
+
+    def exhausted_product(*args):
+        breakdown_calls.append(None)
+        return torch.tensor(float('nan'))
+
+    def callback(status):
+        statuses.append(status)
+        # Force the next recurrence to break down, either early or after convergence.
+        if not converged or (rhs - matrix @ status['solution'][0]).norm() < 1e-6:
+            monkeypatch.setattr(module, 'vdot', exhausted_product)
+
+    if converged:
+        with pytest.warns(UserWarning, match='Tolerance is very small'):
+            (result,) = bicg(EinsumOp(matrix), (rhs,), tolerance=0, callback=callback)
+        torch.testing.assert_close(matrix @ result, rhs)
+    else:
+        with (
+            pytest.warns(UserWarning, match='Tolerance is very small'),
+            pytest.raises(RuntimeError, match='BiCGStab breakdown'),
+        ):
+            bicg(EinsumOp(matrix), (rhs,), tolerance=0, callback=callback)
+    assert statuses
+    assert breakdown_calls

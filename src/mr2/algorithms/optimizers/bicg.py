@@ -12,12 +12,19 @@ from mr2.operators.LinearOperatorMatrix import LinearOperatorMatrix
 
 
 def vdot(a: Sequence[torch.Tensor], b: Sequence[torch.Tensor], force_real: bool = False) -> torch.Tensor:
-    """Vector dot product."""
+    """Vector dot product with double accumulation to avoid single-precision underflow."""
     if force_real:
         a = tuple(torch.view_as_real(a_i) if a_i.is_complex() else a_i for a_i in a)
         b = tuple(torch.view_as_real(b_i) if b_i.is_complex() else b_i for b_i in b)
     return sum(
-        (torch.vdot(a_i.flatten(), b_i.flatten()) for a_i, b_i in zip(a, b, strict=True)), start=torch.tensor(0.0)
+        (
+            torch.vdot(
+                a_i.flatten().to(torch.complex128 if a_i.is_complex() else torch.float64),
+                b_i.flatten().to(torch.complex128 if b_i.is_complex() else torch.float64),
+            )
+            for a_i, b_i in zip(a, b, strict=True)
+        ),
+        start=torch.tensor(0.0),
     )
 
 
@@ -99,7 +106,9 @@ def bicg(
     Raises
     ------
     RuntimeError
-        If the iteration breaks down due to a zero denominator or a zero or non-finite step coefficient.
+        If a recurrence coefficient is zero or non-finite and the true residual exceeds
+        ``8 * eps * (norm(b) + norm(Hx))``. Here eps is the largest input machine epsilon;
+        this relative roundoff bound permits termination after numerical convergence.
 
     References
     ----------
@@ -111,7 +120,7 @@ def bicg(
     if not right_hand_side_:
         raise ValueError('right_hand_side cannot be empty')
     if tolerance < torch.finfo(right_hand_side_[0].dtype).eps:
-        warn(f'Tolerance is very small ({tolerance}), this can cause nan values.', stacklevel=2)
+        warn(f'Tolerance is very small ({tolerance}), roundoff may prevent convergence.', stacklevel=2)
 
     if initial_value is None:
         solution = tuple(torch.zeros_like(r) for r in right_hand_side_)
@@ -126,50 +135,61 @@ def bicg(
     else:
         force_real = False
     residual = tuple(r - op_sol for r, op_sol in zip(right_hand_side_, operator(*solution), strict=True))
-    arbitrary = tuple(r for r in residual)
+    arbitrary = residual
+
+    def norm(values: Sequence[torch.Tensor]) -> torch.Tensor:
+        return torch.linalg.vector_norm(
+            torch.stack(
+                [torch.linalg.vector_norm(v.to(torch.complex128 if v.is_complex() else torch.float64)) for v in values]
+            )
+        )
+
+    def valid_coefficient(value: torch.Tensor, name: str) -> bool:
+        """Accept roundoff-level true residuals on breakdown, otherwise fail loudly."""
+        if torch.isfinite(value) & (value != 0):
+            return True
+        applied = operator(*solution)
+        true_residual = tuple(b - ax for b, ax in zip(right_hand_side_, applied, strict=True))
+        eps = max(torch.finfo(b.dtype).eps for b in right_hand_side_)
+        bound = 8 * eps * (norm(right_hand_side_) + norm(applied))
+        if norm(true_residual) <= bound:
+            return False
+        raise RuntimeError(f'BiCGStab breakdown: zero or non-finite {name}')
 
     preconditioner = preconditioner_inverse if preconditioner_inverse is not None else MultiIdentityOp()
     alpha = omega = previous_product = operator_search = None
     search_direction = residual
 
     for iteration in range(max_iterations):
-        if vdot(residual, residual, force_real).real <= tolerance**2:
+        if norm(residual) <= tolerance:
             break
 
         arbitrary_dot_residual = vdot(arbitrary, residual, force_real)
-        if arbitrary_dot_residual == 0 or not torch.isfinite(arbitrary_dot_residual):
-            raise RuntimeError('BiCGStab breakdown: shadow residual is orthogonal to residual or non-finite')
         if (
             previous_product is not None and alpha is not None and omega is not None and operator_search is not None
         ):  # not first iteration
             beta = (arbitrary_dot_residual / previous_product) * (alpha / omega)
-            if not torch.isfinite(beta):
-                raise RuntimeError('BiCGStab breakdown: non-finite beta')
             search_direction = tuple(
                 r + beta * (p - omega * v) for r, p, v in zip(residual, search_direction, operator_search, strict=True)
             )
         preconditioned_search = preconditioner(*search_direction)
         operator_search = operator(*preconditioned_search)
         denominator = vdot(arbitrary, operator_search, force_real)
-        if denominator == 0:
-            raise RuntimeError('BiCGStab breakdown: zero alpha denominator')
         alpha = arbitrary_dot_residual / denominator
-        if alpha == 0 or not torch.isfinite(alpha):
-            raise RuntimeError('BiCGStab breakdown: zero or non-finite alpha')
+        if not valid_coefficient(alpha, 'alpha'):
+            break
 
         interim = tuple(r - alpha * v for r, v in zip(residual, operator_search, strict=True))
-        if vdot(interim, interim, force_real).real <= tolerance**2:
+        if norm(interim) <= tolerance:
             solution = tuple(x + alpha * p for x, p in zip(solution, preconditioned_search, strict=True))
             residual = interim
         else:
             preconditioned_interim = preconditioner(*interim)
             operator_interim = operator(*preconditioned_interim)
             denominator = vdot(operator_interim, operator_interim, force_real).real
-            if denominator == 0:
-                raise RuntimeError('BiCGStab breakdown: zero omega denominator')
             omega = vdot(operator_interim, interim, force_real) / denominator
-            if omega == 0 or not torch.isfinite(omega):
-                raise RuntimeError('BiCGStab breakdown: zero or non-finite omega')
+            if not valid_coefficient(omega, 'omega'):
+                break
 
             solution = tuple(
                 x + alpha * p + omega * s
