@@ -1,4 +1,4 @@
-"""MRtwo: PyTorch-based MR image reconstruction and processing package."""
+"""MR data handling and image reconstruction."""
 
 from mr2._version import __version__
 from mr2 import algorithms, operators, data, phantoms, utils, nn
