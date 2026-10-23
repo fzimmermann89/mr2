@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import warnings
 from typing import TYPE_CHECKING
 
 import torch
 from typing_extensions import Self
 
-from mr2.data.enums import TrajType
 from mr2.data.IData import IData
 from mr2.data.IHeader import IHeader
 from mr2.data.SpatialDimension import SpatialDimension
@@ -61,20 +59,19 @@ class CsmData(IData, init=False):
         kernel_width: int = 6,
         crop_threshold: float = 0.3,
         n_iterations: int = 10,
+        calibration_size: int | SpatialDimension[int] | None = None,
     ) -> Self:
         """ESPIRiT sensitivity estimation.
 
-        Estimate coil sensitivity maps from fully sampled Cartesian calibration
-        k-space data.
+        Prepare calibration data with `~mr2.data.KData.acs`, then estimate maps
+        on the encoded image grid and crop to the reconstruction grid.
 
         Parameters
         ----------
         acs
-            Complete, centered Cartesian calibration block with coordinates in
-            encoding-grid units. This can be obtained by indexing into the `KData`
-            object. Samples are reordered using the trajectory.
-            For non-Cartesian data, density compensation and adjoint NUFFT regridding is applied
-            before ESPIRiT estimation.
+            Acquisition or separate calibration data. Cartesian data may be
+            undersampled outside its central calibration region. Non-Cartesian
+            calibration is approximately gridded using density compensation.
         singular_value_threshold
             threshold for the singular value decomposition
         kernel_width
@@ -84,63 +81,31 @@ class CsmData(IData, init=False):
             the tensor-level `~mr2.algorithms.csm.espirit` defaults to 0.1.
         n_iterations
             Number of power iterations.
+        calibration_size
+            Requested ACS width or per-axis widths. If omitted, infer a common
+            centered square or cube using `~mr2.data.KData.acs`.
 
         Raises
         ------
         ValueError
-            If Cartesian `acs` does not cover a complete, centered calibration block.
+            If the requested calibration region has insufficient coverage, or the
+            reconstruction geometry is not a crop of the encoded image grid.
         """
         from mr2.algorithms.csm.espirit import espirit
+        from mr2.operators.ZeroPadOp import ZeroPadOp
 
-        if all(traj_type & TrajType.ONGRID for traj_type in acs.traj.type_along_k210):
-            from mr2.operators.CartesianSamplingOp import CartesianSamplingOp
-
-            calibration_shape = SpatialDimension(*acs.shape[-3:])
-            error = (
-                'ESPIRiT requires fully sampled Cartesian calibration data on a centered grid without missing samples.'
-            )
-            if acs.traj.shape[-3:] != calibration_shape.zyx:
-                raise ValueError(error)
-
-            # Shape and integer coordinates alone do not establish complete coverage.
-            coordinates = acs.traj.as_tensor().round().to(torch.int64)
-            index = torch.zeros_like(coordinates[0])
-            for coordinate, size in zip(coordinates, calibration_shape.zyx, strict=True):
-                offset = coordinate + size // 2
-                if torch.any((offset < 0) | (offset >= size)):
-                    raise ValueError(error)
-                index = index * size + offset
-            expected = torch.arange(
-                calibration_shape.z * calibration_shape.y * calibration_shape.x, device=index.device
-            )
-            if not torch.all(index.flatten(start_dim=-3).sort(dim=-1).values == expected):
-                raise ValueError(error)
-
-            # This also corrects reversed readouts according to their actual coordinates.
-            (kspace_data,) = CartesianSamplingOp(calibration_shape, acs.traj).H(
-                acs.data.expand(*acs.data.shape[:-3], *calibration_shape.zyx)
-            )
-        else:
-            from mr2.data.DcfData import DcfData
-            from mr2.operators.FastFourierOp import FastFourierOp
-            from mr2.operators.FourierOp import FourierOp
-
-            warnings.warn(
-                'ESPIRiT requires Cartesian k-space data. Regridding non-Cartesian data using density compensation, '
-                'adjoint NUFFT, and FFT before sensitivity estimation.',
-                stacklevel=2,
-            )
-            dcf = DcfData.from_traj_voronoi(acs.traj).as_operator()
-            fourier_op = FourierOp.from_kdata(acs)
-            fft_op = FastFourierOp(
-                dim=(-3, -2, -1), recon_matrix=acs.header.recon_matrix, encoding_matrix=acs.header.recon_matrix
-            )
-            (kspace_data,) = fft_op(*fourier_op.adjoint(*dcf(acs.data)))
-
+        # FourierOp uses encoding-grid voxel spacing and centered image cropping.
+        expected_fov = acs.header.encoding_fov * (acs.header.recon_matrix / acs.header.encoding_matrix)
+        if any(
+            abs(actual - expected) > 1e-6 * max(abs(actual), abs(expected), 1e-12)
+            for actual, expected in zip(acs.header.recon_fov.zyx, expected_fov.zyx, strict=True)
+        ) or any(r > e for r, e in zip(acs.header.recon_matrix.zyx, acs.header.encoding_matrix.zyx, strict=True)):
+            raise ValueError('ESPIRiT requires reconstruction geometry matching a crop of the encoded image grid.')
+        kspace_data = acs.acs(calibration_size)
         csm_data = smap(
             lambda c: espirit(
                 c,
-                img_shape=acs.header.recon_matrix,
+                img_shape=acs.header.encoding_matrix,
                 singular_value_threshold=singular_value_threshold,
                 kernel_width=kernel_width,
                 crop_threshold=crop_threshold,
@@ -149,6 +114,11 @@ class CsmData(IData, init=False):
             kspace_data,
             passed_dimensions=(-4, -3, -2, -1),  # coils, z, y, x
         )
+        (csm_data,) = ZeroPadOp(
+            dim=(-3, -2, -1),
+            original_shape=acs.header.encoding_matrix.zyx,
+            padded_shape=acs.header.recon_matrix.zyx,
+        )(csm_data)
         csm = cls(header=IHeader.from_kheader(acs.header), data=csm_data)
         return csm
 

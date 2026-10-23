@@ -1,6 +1,7 @@
 """Algorithms for reconstructions, optimization, density and sensitivity map estimation, etc."""
 
 from mr2.algorithms import csm, dcf, optimizers, reconstruction, image_registration
+from mr2.algorithms.prepare_acs import prepare_acs
 from mr2.algorithms.prewhiten_kspace import prewhiten_kspace
 from mr2.algorithms.rovir import rovir
 from mr2.algorithms.total_variation_denoising import total_variation_denoising
@@ -12,6 +13,7 @@ __all__ = [
     "dcf",
     "image_registration",
     "optimizers",
+    "prepare_acs",
     "prewhiten_kspace",
     "reconstruction",
     "rovir",

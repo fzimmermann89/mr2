@@ -30,6 +30,11 @@ def dcf_1d(traj: torch.Tensor) -> torch.Tensor:
     -------
         density compensation values
     """
+    return _dcf_1d_with_geometry(traj)[0]
+
+
+def _dcf_1d_with_geometry(traj: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return reconstruction weights and unsplit cell lengths from one calculation."""
     traj_sorted, inverse, counts = torch.unique(
         torch.round(traj, decimals=UNIQUE_ROUNDING_DECIMALS),
         sorted=True,
@@ -59,7 +64,7 @@ def dcf_1d(traj: torch.Tensor) -> torch.Tensor:
 
     # Repeated points are reduced by the number of repeats
     dcf = torch.nan_to_num(central_diff / counts)[inverse]
-    return dcf
+    return dcf, central_diff[inverse]
 
 
 def dcf_2d3d_voronoi(traj: torch.Tensor) -> torch.Tensor:
@@ -69,7 +74,7 @@ def dcf_2d3d_voronoi(traj: torch.Tensor) -> torch.Tensor:
     Points at the edge of k-space are detected as outliers and are assigned the area of the 1% largest DCF values.
 
     The Voronoi tessellation assigns each point in k-space a region based on the proximity to its nearest neighbors. The
-    DCF is then computed based on the inverse of the area of these regions.
+    DCF is then computed from the area of these regions.
 
     This function operates on a single `other` sample.
     See also `~mr2.data.DcfData` and `~mr2.utils.smap`.
@@ -83,6 +88,11 @@ def dcf_2d3d_voronoi(traj: torch.Tensor) -> torch.Tensor:
     -------
         density compensation values `(1, k2, k1, k0)`
     """
+    return _dcf_2d3d_with_geometry(traj)[0]
+
+
+def _dcf_2d3d_with_geometry(traj: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return weights and original unsplit cell volumes from one tessellation."""
     # 2D and 3D trajectories supported
     dim = traj.shape[0]
     if dim not in (2, 3):
@@ -120,6 +130,9 @@ def dcf_2d3d_voronoi(traj: torch.Tensor) -> torch.Tensor:
         future = ProcessPoolExecutor(max_workers=torch.get_num_threads()).map(_volume, vertices, chunksize=100)
         dcf = np.array(list(future))
 
+    # Preserve geometric coverage before correcting boundary weights or splitting duplicates.
+    geometry = dcf.copy()
+
     # Get outliers (i.e. voronoi cell which are unbound) and set them to a reasonable value
     # Outliers are defined as values larger than 1.5 * inter quartile range of the values
     # Outliers are set to the average of the 1% largest values.
@@ -137,4 +150,7 @@ def dcf_2d3d_voronoi(traj: torch.Tensor) -> torch.Tensor:
     # Sort dcf values back into the original order (i.e. before calling unique)
     dcf = np.reshape((dcf / counts)[inverse], traj_dim[1:])
 
-    return torch.tensor(dcf, dtype=torch.float32, device=traj.device)
+    return (
+        torch.tensor(dcf, dtype=torch.float32, device=traj.device),
+        torch.tensor(geometry[inverse].reshape(traj_dim[1:]), dtype=torch.float32, device=traj.device),
+    )

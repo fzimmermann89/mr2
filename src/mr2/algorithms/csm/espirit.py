@@ -17,8 +17,8 @@ def espirit(
     """Calculate a coil sensitivity map (csm) using the ESPIRIT method.
 
     This is for a single set of Cartesian coil k-space data. The input should be a
-    tensor with dimensions `(coils, z, y, x)`. The output will have the same
-    dimensions. Either apply this function individually to each set of coil
+    tensor with dimensions `(coils, kz, ky, kx)`. The output has shape
+    `(coils, *img_shape.zyx)`. Either apply this function individually to each set of coil
     k-space data, or see `~mr2.data.CsmData.from_kdata_espirit` which performs
     this operation on a whole dataset [UEC2013]_.
 
@@ -49,6 +49,15 @@ def espirit(
     .. [UEC2013] Uecker M, Lai P, Murphy MJ, Virtue P, Elad M, Pauly JM, Vasanawala SS, Lustig M (2013) ESPIRiT
     - an eigenvalue approach to autocalibrating parallel MRI: Where SENSE meets GRAPPA. MRM
     """
+    if coil_k_space.ndim != 4 or any(n < 1 for n in coil_k_space.shape):
+        raise ValueError('ESPIRiT expects nonempty (coils, kz, ky, kx) calibration data.')
+    if kernel_width < 1 or n_iterations < 1:
+        raise ValueError('kernel_width and n_iterations must be positive.')
+    if not 0 <= singular_value_threshold <= 1 or not 0 <= crop_threshold <= 1:
+        raise ValueError('ESPIRiT thresholds must lie between zero and one.')
+    if any(out < min(n, kernel_width) for n, out in zip(coil_k_space.shape[-3:], img_shape.zyx, strict=True)):
+        raise ValueError('The output grid must be at least as large as the calibration kernel.')
+
     # expecting coil_k_space to be of shape (coils, z, y, x)
     # inspired by https://sigpy.readthedocs.io/en/latest/_modules/sigpy/mri/app.html#EspiritCalib
 
@@ -73,13 +82,21 @@ def espirit(
 
     for kernel in kernels:
         img_kernel = torch.fft.ifftn(kernel, s=img_shape.zyx, dim=(-3, -2, -1), norm='ortho')
-        img_kernel = torch.fft.ifftshift(img_kernel, dim=(-1, -2, -3))
+        img_kernel = torch.fft.fftshift(img_kernel, dim=(-1, -2, -3))
         aha += torch.einsum('c z y x, d z y x->c d z y x ', img_kernel, img_kernel.conj())
 
     kernel_size = kernels.shape[-3] * kernels.shape[-2] * kernels.shape[-1]
     aha *= aha[0, 0].numel() / kernel_size
 
-    v = aha.sum(dim=0)
+    # A covariance column with maximal diagonal avoids cancellation of summed coils.
+    diagonal = aha.diagonal(dim1=0, dim2=1).real
+    seed = diagonal.argmax(dim=-1)
+    fallback = aha.gather(1, seed[None, None].expand(n_coils, 1, *img_shape.zyx)).squeeze(1)
+    # A small column component breaks symmetry in the summed seed, including
+    # opposite coils. Fall back to the column if the combined seed nearly cancels.
+    v = aha.sum(dim=1) + 0.01 * fallback
+    stable = v.norm(dim=0, keepdim=True) > 1e-3 * fallback.norm(dim=0, keepdim=True)
+    v = torch.where(stable, v, fallback)
     for _ in range(n_iterations):
         v /= v.norm(dim=0).clamp_min(1e-12)
         v = torch.einsum('abzyx,bzyx->azyx', aha, v)
@@ -87,7 +104,11 @@ def espirit(
     csm = v / max_eig.clamp_min(1e-12)
 
     # Normalize phase with respect to first channel
-    csm *= csm[0].conj() / csm[0].abs().clamp_min(1e-12)
+    reference = csm[0]
+    strongest = csm.gather(0, csm.abs().argmax(dim=0, keepdim=True)).squeeze(0)
+    reference = torch.where(reference.abs() > 1e-12, reference, strongest)
+    phase = torch.where(reference.abs() > 1e-12, reference.conj() / reference.abs().clamp_min(1e-12), 1)
+    csm = csm * phase
 
     csm *= max_eig > crop_threshold
 

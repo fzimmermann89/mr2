@@ -8,7 +8,7 @@ from mr2.algorithms.csm import espirit
 from mr2.data import CsmData, KData, KHeader, KTrajectory, SpatialDimension
 from mr2.data.traj_calculators.KTrajectoryCartesian import KTrajectoryCartesian
 from mr2.data.traj_calculators.KTrajectoryIsmrmrd import KTrajectoryIsmrmrd
-from mr2.operators import FourierOp
+from mr2.operators import FourierOp, ZeroPadOp
 
 from tests import relative_image_difference
 from tests.algorithms.csm.test_walsh import multi_coil_image
@@ -105,20 +105,19 @@ def test_CsmData_walsh_align_phase_matches_explicit_call(
     assert not torch.allclose(csm_default.data, csm_no_phase.data)
 
 
-def test_CsmData_kdata_espirit_requires_fully_sampled_cartesian(ismrmrd_cart_random_us) -> None:
-    """ESPIRiT should reject undersampled Cartesian k-space data."""
+def test_CsmData_kdata_espirit_requires_covered_center(ismrmrd_cart_random_us) -> None:
+    """ESPIRiT rejects Cartesian data without a complete centered region."""
     kdata = KData.from_file(ismrmrd_cart_random_us.filename, KTrajectoryCartesian())
 
-    with pytest.raises(ValueError, match='fully sampled Cartesian'):
+    with pytest.raises(ValueError, match='covered centered ACS'):
         CsmData.from_kdata_espirit(kdata)
 
 
 def test_CsmData_kdata_espirit_regrids_noncartesian(ismrmrd_rad) -> None:
-    """ESPIRiT should warn and regrid non-Cartesian k-space data."""
+    """ESPIRiT prepares non-Cartesian ACS and returns finite maps."""
     kdata = KData.from_file(ismrmrd_rad.filename, KTrajectoryIsmrmrd())
 
-    with pytest.warns(UserWarning, match='Regridding non-Cartesian data'):
-        csm = CsmData.from_kdata_espirit(kdata)
+    csm = CsmData.from_kdata_espirit(kdata)
 
     # Dataclass stores repeated map dimensions as singletons.
     expected_shape = (*kdata.shape[:-3], *kdata.header.recon_matrix.zyx)
@@ -145,7 +144,8 @@ def test_CsmData_kdata_espirit_indexed_acs(ismrmrd_cart_single_rep) -> None:
     assert acs.data.shape[-3:] != acs.header.encoding_matrix.zyx
 
     csm = CsmData.from_kdata_espirit(acs, n_iterations=3)
-    expected = espirit(acs.data[0], acs.header.recon_matrix, crop_threshold=0.3, n_iterations=3)
+    expected = espirit(acs.acs()[0], acs.header.encoding_matrix, crop_threshold=0.3, n_iterations=3)
+    expected = ZeroPadOp((-3, -2, -1), acs.header.encoding_matrix.zyx, acs.header.recon_matrix.zyx)(expected)[0]
 
     torch.testing.assert_close(csm.data[0], expected)
     assert csm.data.shape == (*acs.data.shape[:-3], *acs.header.recon_matrix.zyx)
@@ -174,8 +174,17 @@ def test_CsmData_kdata_espirit_duplicate_coordinates(ismrmrd_cart_single_rep) ->
     """Shape-matching Cartesian data with a duplicate and missing line is rejected."""
     kdata = KData.from_file(ismrmrd_cart_single_rep.filename, KTrajectoryCartesian())
     ky = kdata.traj.ky.clone()
-    ky[..., 0, :] = ky[..., 1, :]
+    center = ky.shape[-2] // 2
+    ky[..., center, :] = ky[..., center + 1, :]
     invalid = KData(kdata.header, kdata.data, KTrajectory(kdata.traj.kz, ky, kdata.traj.kx))
 
-    with pytest.raises(ValueError, match='fully sampled Cartesian'):
+    with pytest.raises(ValueError, match='covered centered ACS'):
         CsmData.from_kdata_espirit(invalid)
+
+
+def test_CsmData_espirit_rejects_inconsistent_fov(ismrmrd_cart_single_rep) -> None:
+    """Do not silently apply encoding-grid sensitivities at a different voxel spacing."""
+    kdata = KData.from_file(ismrmrd_cart_single_rep.filename, KTrajectoryCartesian())
+    kdata.header.recon_fov = kdata.header.recon_fov * 2
+    with pytest.raises(ValueError, match='reconstruction geometry'):
+        CsmData.from_kdata_espirit(kdata)
