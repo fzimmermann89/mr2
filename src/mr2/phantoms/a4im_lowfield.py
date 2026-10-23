@@ -39,7 +39,6 @@ _OSI2_FILES: dict[OSI2Subset, str] = {
 
 DatasetPath = str | PathLike | Sequence[str | PathLike]
 A4IMAcquisition = Literal['pdw', 't1w', 't2w', 't1map', 't2map']
-KneeSide = Literal['left', 'right']
 OSI2Acquisition = Literal['pdw', 't2w', 'ir_t1w', '3t_t1w']
 
 
@@ -275,7 +274,6 @@ class I3MDataset(IsmrmrdDataset):
         self,
         path: DatasetPath = CACHE_DIR_A4IM_LOWFIELD / 'i3m',
         acquisition: A4IMAcquisition | None = None,
-        side: KneeSide | None = None,
         *,
         trajectory: KTrajectoryCalculator | KTrajectory | KTrajectoryIsmrmrd | None = None,
     ) -> None:
@@ -287,8 +285,6 @@ class I3MDataset(IsmrmrdDataset):
             Extracted dataset directory, raw file, or sequence of raw files.
         acquisition
             Weighted image or mapping acquisition; all if ``None``.
-        side
-            In-vivo knee side. A side selection excludes ACR phantom files.
         trajectory
             Trajectory calculator or trajectory; Cartesian by default.
         """
@@ -304,8 +300,6 @@ class I3MDataset(IsmrmrdDataset):
             self.files = tuple(
                 file for file in self.files if re.search(patterns[acquisition], file.stem, re.IGNORECASE)
             )
-        if side is not None:
-            self.files = tuple(file for file in self.files if f'-{side}knee-' in file.stem.casefold())
 
 
 class FreeMaxDataset(IsmrmrdDataset):
@@ -334,7 +328,6 @@ class FreeMaxDataset(IsmrmrdDataset):
         self,
         path: DatasetPath = CACHE_DIR_A4IM_LOWFIELD / 'free_max',
         acquisition: A4IMAcquisition | None = None,
-        side: KneeSide | None = None,
         *,
         trajectory: KTrajectoryCalculator | KTrajectory | KTrajectoryIsmrmrd | None = None,
     ) -> None:
@@ -346,8 +339,6 @@ class FreeMaxDataset(IsmrmrdDataset):
             Extracted dataset directory, raw file, or sequence of raw files.
         acquisition
             Weighted image or mapping acquisition; all if ``None``.
-        side
-            Knee or phantom side; both if ``None``.
         trajectory
             Trajectory calculator or trajectory; Cartesian by default.
         """
@@ -362,8 +353,6 @@ class FreeMaxDataset(IsmrmrdDataset):
                 't2map': 't2map_',
             }
             self.files = tuple(file for file in self.files if file.name.casefold().startswith(prefixes[acquisition]))
-        if side is not None:
-            self.files = tuple(file for file in self.files if f'_{side}' in file.stem.casefold())
         corrupt = [
             file
             for file in self.files

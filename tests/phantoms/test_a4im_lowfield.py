@@ -99,8 +99,6 @@ def test_i3m_dataset_selectors(tmp_path) -> None:
         'Lab_n01_TI40ms.h5',
     ):
         (tmp_path / name).touch()
-    dataset = I3MDataset(tmp_path, acquisition='t1map', side='right')
-    assert [file.name for file in dataset.files] == ['Subject2-RightKnee-TI40ms (287).h5']
     assert [file.name for file in I3MDataset(tmp_path, acquisition='t1map').files] == [
         'Lab_n01_TI40ms.h5',
         'Subject2-LeftKnee-TI40ms (415).h5',
@@ -111,12 +109,12 @@ def test_i3m_dataset_selectors(tmp_path) -> None:
 @pytest.mark.parametrize(
     ('kwargs', 'expected'),
     [
-        ({'acquisition': 't2w', 'side': 'left'}, ['t2_tse_sag_Left.mrd']),
-        ({'acquisition': 't1map', 'side': 'right'}, ['t1map_MOLLI_Right.mrd']),
+        ({'acquisition': 't2w'}, ['t2_tse_sag_Left.mrd', 't2_tse_sag_Right.mrd']),
+        ({'acquisition': 't1map'}, ['t1map_MOLLI_Right.mrd']),
     ],
 )
 def test_free_max_dataset_selectors(tmp_path, kwargs, expected) -> None:
-    """Free.Max selectors recognize weighted and mapping acquisitions by side."""
+    """Free.Max selectors retain both sides and exclude Deep Resolve files."""
     for name in (
         't2_tse_sag_Left.mrd',
         't2_tse_sag_Left_DeepResolve.mrd',
@@ -210,7 +208,6 @@ def test_free_max_known_corrupt_file(tmp_path) -> None:
         dataset = FreeMaxDataset(tmp_path)
     assert len(dataset) == 1
     assert dataset.files[0].parent.parent.name == 'Subject10'
-    assert len(FreeMaxDataset(tmp_path, side='left')) == 0
 
 
 def test_ibt_missing_averages_and_metadata(ismrmrd_cart, tmp_path) -> None:
