@@ -1,6 +1,6 @@
 import pytest
 import torch
-from mr2.operators import ProximableFunctional, ProximableFunctionalSeparableSum
+from mr2.operators import OperatorStack, ProximableFunctional, ProximableFunctionalSeparableSum
 from mr2.utils import RandomGenerator
 
 
@@ -32,6 +32,7 @@ def test_separablesum_forward():
     x1 = rng.float32_tensor(3)
     x2 = rng.float32_tensor(3)
     summed = ProximableFunctionalSeparableSum(a, b)
+    assert isinstance(summed, OperatorStack)
     torch.testing.assert_close(summed(x1, x2)[0], a(x1)[0] + b(x2)[0])
 
 
