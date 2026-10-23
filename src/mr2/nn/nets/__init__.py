@@ -1,3 +1,5 @@
+"""Neural network architectures."""
+
 from mr2.nn.nets.SNRAware import SNRAware
 from mr2.nn.nets.BasicCNN import BasicCNN
 from mr2.nn.nets.DiT import DiT

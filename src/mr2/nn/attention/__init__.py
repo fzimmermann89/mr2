@@ -1,3 +1,5 @@
+"""Attention modules."""
+
 from mr2.nn.attention.ConvolutionalAttention import ConvolutionalAttention
 from mr2.nn.attention.AttentionGate import AttentionGate
 from mr2.nn.attention.LinearSelfAttention import LinearSelfAttention
