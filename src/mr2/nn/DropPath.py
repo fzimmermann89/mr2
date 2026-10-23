@@ -16,17 +16,25 @@ class DropPath(Module):
        ECCV 2016. https://link.springer.com/chapter/10.1007/978-3-319-46493-0_39
     """
 
-    def __init__(self, droprate: float = 0.0, scale_by_keep: bool = False):
+    def __init__(self, droprate: float = 0.0, scale_by_keep: bool = False) -> None:
         """Initialize the DropPath module.
 
         Parameters
         ----------
         droprate
-            Drop probability
+            Drop probability in [0, 1]. A value of 1 drops all samples during training.
         scale_by_keep
-            If True, the kept samples are scaled by :math:`1/(1-droprate)`
+            If True, the kept samples are scaled by :math:`1/(1-droprate)`.
+            During training, a `droprate` of 1 gives zero output regardless of this setting.
+
+        Raises
+        ------
+        ValueError
+            If `droprate` is outside [0, 1].
         """
         super().__init__()
+        if not 0 <= droprate <= 1:
+            raise ValueError('droprate must be between 0 and 1')
         self.droprate = droprate
         self.scale_by_keep = scale_by_keep
 
@@ -48,6 +56,8 @@ class DropPath(Module):
         """Apply DropPath."""
         if self.droprate == 0 or not self.training:
             return x
+        if self.droprate == 1:
+            return x.clone().zero_()
         shape = (x.shape[0],) + (1,) * (x.ndim - 1)
         mask = ((1 - self.droprate) + torch.rand(shape, dtype=x.dtype, device=x.device)).floor_()
         if self.scale_by_keep:

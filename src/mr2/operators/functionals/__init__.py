@@ -1,3 +1,5 @@
+"""Functionals and loss functions."""
+
 from mr2.operators.functionals.L1Norm import L1Norm
 from mr2.operators.functionals.L1NormViewAsReal import L1NormViewAsReal
 from mr2.operators.functionals.L21Norm import L21Norm
