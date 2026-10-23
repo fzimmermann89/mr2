@@ -50,58 +50,6 @@ from MRD or calculated from a `pulseq <http://pulseq.github.io/>`_ file. See `~m
 for available trajectory calculators and :doc:`_notebooks/comparison_trajectory_calculators` for an example.
 
 
-Creating KData from received acquisitions
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-`~mr2.data.KData.from_ismrmrd` accepts a parsed header or XML string/bytes and an iterable of
-acquisition objects. Reconstruction servers such as OpenRecon can pass their XML metadata and
-decoded acquisitions directly, without writing an intermediate MRD file:
-
-.. code-block:: python
-
-    from mr2.data import KData
-    from mr2.data.traj_calculators import KTrajectoryCartesian
-
-    kdata = KData.from_ismrmrd(metadata, acquisitions, KTrajectoryCartesian())
-
-The same constructor handles filtering, coil selection, readout cropping and sorting for all
-readers. It consumes acquisition iterators without modifying the input objects. A caller that
-already separates acquisitions into reconstruction batches can construct one KData per batch
-using the same header. Choose an acquisition predicate appropriate for each batch; pass
-``acquisition_filter_criterion=None`` to retain non-image acquisitions.
-
-Acquisitions with different post-discard lengths retain the longest readouts, with a warning.
-Precomputed trajectories must match the retained, cropped acquisitions. Unknown measurement
-timestamps remain unknown; ``header_defaults`` supplies fallback metadata and ``header_overwrites``
-takes precedence over both defaults and measurement metadata.
-
-Reading serialized streams
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-`~mr2.data.KData.from_file` accepts HDF5 paths/file-like objects and serialized ISMRMRD stream
-paths. Use `~mr2.data.KData.from_ismrmrd_stream` for a binary stream and
-`~mr2.data.KData.iter_ismrmrd_stream` to process successive measurements. For example, a script
-can read a serialized stream from standard input with ``python read_stream.py < data.ismrmrd``:
-
-.. code-block:: python
-
-    import sys
-
-    from mr2.data import KData
-    from mr2.data.traj_calculators import KTrajectoryIsmrmrd
-
-    for kdata in KData.iter_ismrmrd_stream(sys.stdin.buffer, KTrajectoryIsmrmrd()):
-        print(kdata.data.shape)
-
-A measurement ends at the next header or the protocol's CLOSE message. The iterator yields
-measurements at these boundaries; it does not infer reconstruction batches from acquisition flags.
-``from_ismrmrd_stream`` selects one measurement, defaulting to the last. Selecting from the end
-requires reading through CLOSE. EOF without CLOSE is an error. Caller-owned streams remain open;
-blocking streams may return short reads. Close a partially consumed iterator to release files it opened.
-
-Legacy XML repair applies to HDF5 input and XML passed to ``from_ismrmrd``; headers in serialized
-streams must parse with ISMRMRD. Path streams use file mtime as a timestamp fallback, while HDF5
-uses its dataset timestamp. Binary streams have no filesystem timestamp fallback.
-
-
 .. note::
     In MRtwo, we use the convention ``(z, y, x)`` for spatial dimensions and ``(k2, k1, k0)`` for k-space dimensions.
     Here, `k0` is the readout direction, `k1` and `k2` are phase encoding directions.
@@ -114,6 +62,45 @@ uses its dataset timestamp. Binary streams have no filesystem timestamp fallback
     The trajectory is expected to be defined within the space of the `encoding_matrix`, e.g. if the
     `encoding_matrix` is defined as ``(z=1, y=256, x=256)``, then a fully sampled Cartesian trajectory without partial
     echo or partial Fourier is expected to be within ``[-128, 127]`` along both readout and phase encoding.
+
+Creating KData from received acquisitions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+`~mr2.data.KData.from_ismrmrd` accepts a parsed header or XML string/bytes and an iterable of
+acquisition objects. Reconstruction servers such as OpenRecon can use their received metadata
+and acquisitions directly, without writing an intermediate MRD file:
+
+.. code-block:: python
+
+    from mr2.data import KData
+    from mr2.data.traj_calculators import KTrajectoryCartesian
+
+    kdata = KData.from_ismrmrd(metadata, acquisitions, KTrajectoryCartesian())
+
+The constructor filters, crops and sorts acquisitions without modifying the input objects.
+Servers can pass each reconstruction batch with the same header, choosing an appropriate
+``acquisition_filter_criterion``. Fallback metadata can be supplied through ``header_defaults``;
+``header_overwrites`` takes precedence over defaults and measurement metadata.
+
+Reading serialized streams
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+`~mr2.data.KData.from_file` accepts HDF5 paths/file-like objects and serialized ISMRMRD stream
+paths. Use `~mr2.data.KData.from_ismrmrd_stream` to select one measurement from a binary stream,
+or `~mr2.data.KData.iter_ismrmrd_stream` to process successive measurements. For example,
+``python read_stream.py < data.ismrmrd`` can run this script:
+
+.. code-block:: python
+
+    import sys
+
+    from mr2.data import KData
+    from mr2.data.traj_calculators import KTrajectoryIsmrmrd
+
+    for kdata in KData.iter_ismrmrd_stream(sys.stdin.buffer, KTrajectoryIsmrmrd()):
+        print(kdata.data.shape)
+
+Measurements end at the next header or CLOSE; acquisition flags do not define batch boundaries.
+Caller-owned streams remain open. See the reader docstrings for selection and completion requirements.
+
 
 Preparation for reconstruction
 ------------------------------

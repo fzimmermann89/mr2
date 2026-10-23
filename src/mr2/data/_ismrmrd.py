@@ -51,5 +51,6 @@ def read_stream(
                 if header is None:
                     raise ValueError('ISMRMRD stream contains acquisitions before the first header.')
                 acquisitions.append(obj)
+                del obj
         if header is not None:
             yield header, acquisitions

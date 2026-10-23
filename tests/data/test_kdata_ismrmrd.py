@@ -433,17 +433,29 @@ def test_short_reads(raw_data, reader) -> None:
     assert not truncated.closed
 
 
-def test_iter_measurements(raw_data) -> None:
+def test_iter_measurements(raw_data, monkeypatch) -> None:
     """Iteration yields at a measurement boundary before reading later payloads."""
     _, header, acquisitions = raw_data
     expected = KData.from_ismrmrd(header, acquisitions, DummyTrajectory())
     prefix = serialize_measurements([(header, acquisitions)]).getvalue()[:-2]
     rest = serialize_measurements([(header, acquisitions)]).getvalue()
     stream = io.BytesIO(prefix + rest)
+    references = []
+    deserialize = ismrmrd.Acquisition.deserialize_from
+
+    def track_acquisitions(read):
+        acq = deserialize(read)
+        references.append(weakref.ref(acq))
+        return acq
+
+    monkeypatch.setattr(ismrmrd.Acquisition, 'deserialize_from', staticmethod(track_acquisitions))
     with closing(KData.iter_ismrmrd_stream(stream, DummyTrajectory())) as measurements:
         assert_kdata_equal(next(measurements), expected)
+        assert references
+        assert all(ref() is None for ref in references)
         assert stream.tell() < len(stream.getvalue())
         assert_kdata_equal(next(measurements), expected)
+        assert all(ref() is None for ref in references)
         with pytest.raises(StopIteration):
             next(measurements)
     assert not stream.closed

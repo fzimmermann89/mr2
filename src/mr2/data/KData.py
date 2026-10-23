@@ -202,6 +202,7 @@ class KData(Dataclass):
         selection reads to CLOSE, retaining at most ``abs(dataset_idx)`` measurements.
         Missing CLOSE and corrupt messages raise the deserializer's errors in the consumed input.
         Images, waveforms and other non-acquisition objects are ignored.
+        Selection consumes the next header; use `iter_ismrmrd_stream` to read successive measurements.
 
         Parameters
         ----------
@@ -281,7 +282,7 @@ class KData(Dataclass):
             header_defaults['datetime'] = datetime.datetime.fromtimestamp(Path(filename).stat().st_mtime)
         with closing(read_stream(filename)) as measurements:
             for header, acquisitions in measurements:
-                yield cls.from_ismrmrd(
+                kdata = cls.from_ismrmrd(
                     header,
                     acquisitions,
                     trajectory,
@@ -289,7 +290,8 @@ class KData(Dataclass):
                     acquisition_filter_criterion,
                     header_defaults=header_defaults,
                 )
-                del acquisitions
+                acquisitions.clear()
+                yield kdata
 
     @classmethod
     def from_ismrmrd(
@@ -315,6 +317,7 @@ class KData(Dataclass):
         trajectory
             Trajectory calculator, stored ISMRMRD trajectory reader, or a KTrajectory
             of shape ``(acquisitions 1 1 k0)`` matching the retained, cropped acquisitions.
+            Stored ISMRMRD trajectories are currently read without discard cropping.
         header_overwrites
             Header fields to overwrite.
         acquisition_filter_criterion
