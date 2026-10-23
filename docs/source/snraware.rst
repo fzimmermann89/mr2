@@ -33,20 +33,39 @@ Input and output
 
 The model accepts real tensors shaped ``(batch, 3, frames, 64, 64)``. Channels
 are real image, imaginary image and g-factor map, in that order. It returns the
-two image channels. For complex image patches and real maps of matching shape::
+two image channels. Before inference, establish the noise scale from a compatible
+noise measurement or reconstruction noise propagation. Let ``noise_std`` be the
+positive standard deviation of one real noise component **before g-factor
+amplification**, in the image's current units. The local real/imaginary noise
+standard deviation must then be ``noise_std * gmap``. If the noise is spatially
+uniform, use an all-ones map, ``gmap = torch.ones_like(image.real)``. For an already calibrated SNR-unit image, use
+``noise_std = 1``. This assumes circular complex noise with equal real/imaginary
+component variances, not a standard deviation estimated from magnitude pixels.
+
+For complex image patches and real maps of matching shape::
 
     # image and gmap: (batch, frames, 64, 64)
-    x = torch.stack((image.real, image.imag, gmap), dim=1)
+    # noise_std: measured baseline component SD, broadcastable to image
+    noise_std = torch.as_tensor(noise_std, device=image.device, dtype=image.real.dtype)
+    image_snr = image / noise_std
+    x = torch.stack((image_snr.real, image_snr.imag, gmap), dim=1)
+    x = x.to(next(model.parameters()))  # match model device and real dtype
     with torch.inference_mode():
         prediction = model(x)
-    denoised = torch.complex(prediction[:, 0], prediction[:, 1])
+    denoised = torch.complex(prediction[:, 0], prediction[:, 1]) * noise_std.to(prediction)
 
-Images must use the upstream SNR-unit convention; a g-map describes spatial noise
-amplification, not arbitrary image intensity. The model performs no calibration
-or intensity normalization. Dividing by an image maximum changes the meaning of
-its input. The upstream inference code optionally multiplies the image channels
-by a positive factor and divides the predicted image by the same factor; smaller
-factors increase denoising strength. The g-map is unchanged by that adjustment.
+The output is restored to the image's original intensity units; the g-map is
+unchanged. When measured local component SD varies spatially, its decomposition
+into baseline scale and g-map must come from the reconstruction/calibration;
+do not divide by that local map and simultaneously supply it as g-factor noise
+amplification. The model does not estimate or calibrate noise, and a g-map does
+not represent arbitrary image intensity. Dividing by an image maximum changes
+the meaning of its input.
+
+The upstream inference code optionally multiplies the image channels by an
+additional positive factor and divides the predicted image by the same factor;
+smaller factors increase denoising strength. This is separate from measured noise
+calibration. The g-map remains unchanged by that adjustment.
 
 Published weights use learned spatial normalization on 64 x 64 patches. Other
 ``image_size``, ``n_features`` and ``n_heads`` values support training new models,

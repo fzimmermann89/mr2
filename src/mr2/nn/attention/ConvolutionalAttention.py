@@ -104,6 +104,8 @@ class ConvolutionalAttention(Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Apply attention to a real tensor of shape ``(batch, channels, frames, height, width)``."""
+        if x.ndim != 5 or x.shape[-2:] != (self.image_size, self.image_size):
+            raise ValueError(f'Expected (batch, channels, frames, {self.image_size}, {self.image_size}).')
         q, k, v = (self._pack(proj(x)) for proj in (self.to_q, self.to_k, self.to_v))
         weights = (normalize(q, dim=-1) @ normalize(k, dim=-1).transpose(-2, -1)).softmax(-1)
         if self.relative_position_bias_table is not None:

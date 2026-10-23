@@ -69,3 +69,6 @@ def test_attention_reference(mode: Literal['temporal', 'local', 'global']) -> No
                 for patch, (h, w) in zip(patches, offsets, strict=True):
                     result[0, :, frame, top + h : top + h + 4, left + w : left + w + 4] = patch.permute(2, 0, 1)
     torch.testing.assert_close(layer(x), layer.to_out(result))
+
+    with pytest.raises(ValueError, match='Expected'):
+        layer(torch.zeros(1, 4, 2, 16, 24, dtype=torch.float64))
