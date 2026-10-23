@@ -40,6 +40,7 @@ Content
    :maxdepth: 2
 
    user_guide
+   snraware
    data
    examples
    contributor_guide
