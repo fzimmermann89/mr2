@@ -9,4 +9,4 @@ from mr2.operators.functionals.NCC import NCC
 from mr2.operators.functionals.SSIM import SSIM
 from mr2.operators.functionals.ZeroFunctional import ZeroFunctional
 
-__all__ = ["L1Norm", "L1NormViewAsReal", "L21Norm", "L2NormSquared", "MSE", "NCC", "SSIM", "ZeroFunctional"]
+__all__ = ['MSE', 'NCC', 'SSIM', 'L1Norm', 'L1NormViewAsReal', 'L2NormSquared', 'L21Norm', 'ZeroFunctional']
