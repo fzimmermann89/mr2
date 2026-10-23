@@ -194,3 +194,28 @@ def test_l21_cuda():
         assert result.device == x.device
         torch.testing.assert_close(result.cpu(), getattr(f.cpu(), method)(x.cpu())[0])
         f.cuda()
+
+
+@pytest.mark.parametrize('method', ['prox', 'prox_convex_conj'])
+@pytest.mark.parametrize('parameter', ['target', 'weight'])
+@pytest.mark.parametrize('value', [torch.tensor([[1.0, 2.0]]), torch.ones(1, 1, 2)])
+def test_l21_prox_rejects_expansion(method, parameter, value):
+    """Proximal maps cannot duplicate input variables along expanded or added axes."""
+    x = torch.tensor([[3.0], [4.0]])
+    f = L21Norm(group_dim=-2, **{parameter: value})
+    assert torch.isfinite(f(x)[0])
+    with pytest.raises(ValueError, match='cannot expand'):
+        getattr(f, method)(x)
+
+
+@pytest.mark.parametrize('method', ['prox', 'prox_convex_conj'])
+def test_l21_step_precision(method):
+    """Python steps use input precision; tensor steps and weights retain their precision."""
+    x = torch.tensor([3.0, 4.0], dtype=torch.float64)
+    f = L21Norm(group_dim=0)
+    torch.testing.assert_close(f.prox(x, 1 / 3)[0], x * (1 - 1 / 15), atol=1e-15, rtol=1e-15)
+    weight = torch.tensor(1.0000000001, dtype=torch.float64)
+    sigma = torch.tensor(0.333333333333, dtype=torch.float64)
+    f = L21Norm(group_dim=0, weight=weight)
+    expected = x * (1 - sigma * weight / 5) if method == 'prox' else x * (weight / 5)
+    torch.testing.assert_close(getattr(f, method)(x, sigma)[0], expected, atol=1e-15, rtol=1e-15)

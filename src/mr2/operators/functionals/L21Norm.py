@@ -12,9 +12,15 @@ from mr2.utils.reshape import normalize_indices
 class L21Norm(ElementaryProximableFunctional):
     r"""Sum or mean of Euclidean group norms of ``weight * (x - target)``.
 
+    This implements :math:`f(x) = \frac{1}{n}\sum_g |w_g|\|x_g-b_g\|_2`,
+    where :math:`b` is `target`, :math:`w_g` is the scalar `weight` for group g,
+    and n is the number of outer groups for a mean, or one for a sum.
+
     The inner L2 norm groups components along `group_dim`. The outer sum (or mean)
     reduces the group norms along `dim`; remaining axes are batch axes. Weights
     act through their magnitude, just as in `L1Norm`, without a square root.
+    Forward evaluation supports broadcasting that expands the input. Proximal
+    mappings require target and weight to broadcast without expanding its shape.
     """
 
     def __init__(
@@ -97,10 +103,28 @@ class L21Norm(ElementaryProximableFunctional):
 
         Here n counts outer groups for a mean, and is one for a sum. Sigma must
         be real, nonnegative and broadcastable with singleton group axes.
+
+        Parameters
+        ----------
+        x
+            Input tensor. Target and weight must broadcast without expanding its shape.
+        sigma
+            Nonnegative scaling factor, scalar per group.
+
+        Returns
+        -------
+            Proximal mapping applied to the input tensor, with the same shape.
+
+        Raises
+        ------
+        ValueError
+            If target or weight expands the input shape.
         """
         throw_if_negative_or_complex(sigma)
         diff, group, _, radius = self._prepare(x)
-        sigma = torch.as_tensor(sigma, device=x.device)
+        if diff.shape != x.shape:
+            raise ValueError('Proximal mappings cannot expand the input shape')
+        sigma = sigma.to(device=x.device) if isinstance(sigma, torch.Tensor) else x.real.new_tensor(sigma)
         self._check_group_scalar(sigma, diff.shape, group, 'sigma')
         norm = torch.linalg.vector_norm(diff, dim=group, keepdim=True)
         threshold = sigma * radius
@@ -116,10 +140,28 @@ class L21Norm(ElementaryProximableFunctional):
         Sigma obeys the same restrictions as in `prox`. Zero steps return the
         input, including outside the conjugate domain. Zero weights project to
         zero for positive steps.
+
+        Parameters
+        ----------
+        x
+            Input tensor. Target and weight must broadcast without expanding its shape.
+        sigma
+            Nonnegative scaling factor, scalar per group.
+
+        Returns
+        -------
+            Proximal mapping of the convex conjugate, with the input shape.
+
+        Raises
+        ------
+        ValueError
+            If target or weight expands the input shape.
         """
         throw_if_negative_or_complex(sigma)
         diff, group, _, radius = self._prepare(x)
-        sigma = torch.as_tensor(sigma, device=x.device)
+        if diff.shape != x.shape:
+            raise ValueError('Proximal mappings cannot expand the input shape')
+        sigma = sigma.to(device=x.device) if isinstance(sigma, torch.Tensor) else x.real.new_tensor(sigma)
         self._check_group_scalar(sigma, diff.shape, group, 'sigma')
         shifted = torch.broadcast_to(x - sigma * self.target, diff.shape)
         norm = torch.linalg.vector_norm(shifted, dim=group, keepdim=True)
