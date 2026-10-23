@@ -363,3 +363,11 @@ def test_conv_analysis_dictionary_real_complex_compatibility() -> None:
 
     torch.testing.assert_close(forward_real_complex, forward_complex_complex, rtol=1e-5, atol=1e-5)
     torch.testing.assert_close(adjoint_real_complex, adjoint_complex_complex, rtol=1e-5, atol=1e-5)
+
+
+@pytest.mark.parametrize('operator', [ConvAnalysisDictionaryOp, ConvSynthesisDictionaryOp])
+@pytest.mark.parametrize('shape', [(2, 2), (2, 3, 2), (2, 2, 3, 3)])
+def test_even_kernel(operator, shape: tuple[int, ...]) -> None:
+    """Even spatial kernels cannot preserve shape with symmetric padding."""
+    with pytest.raises(ValueError, match='odd spatial kernel'):
+        operator(torch.ones(shape))
