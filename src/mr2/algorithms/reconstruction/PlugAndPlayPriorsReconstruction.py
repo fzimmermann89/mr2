@@ -5,7 +5,7 @@ from collections.abc import Callable
 import torch
 
 from mr2.algorithms.optimizers.pnp_admm import PNPADMMStatus, pnp_admm
-from mr2.algorithms.prewhiten_kspace import prewhiten_kspace
+from mr2.algorithms.prewhiten_kspace import _prewhiten_tensor, prewhiten_kspace
 from mr2.algorithms.reconstruction.DirectReconstruction import DirectReconstruction
 from mr2.data.CsmData import CsmData
 from mr2.data.DcfData import DcfData
@@ -22,12 +22,21 @@ class PlugAndPlayPriorsReconstruction(DirectReconstruction):
 
     Uses `~mr2.algorithms.optimizers.pnp_admm.pnp_admm` for iteration and
     `DirectReconstruction` for acquisition setup. The initial image is the adjoint
-    reconstruction, including density compensation if available.
+    reconstruction, including density compensation if available, without an
+    additional normalization. Denoiser strength must match this image scale.
     Density compensation only affects initialization. An arbitrary denoiser
     need not define a regularization objective or guarantee convergence.
 
     Based on the reconstruction proposed in PTB-MR/mrpro PR #1013.
     """
+
+    denoiser: Callable[[torch.Tensor], torch.Tensor]
+    tau: torch.Tensor
+    max_iterations: int
+    tolerance: float
+    cg_max_iterations: int
+    cg_tolerance: float
+    callback: Callable[[PNPADMMStatus], bool | None] | None
 
     def __init__(
         self,
@@ -55,7 +64,9 @@ class PlugAndPlayPriorsReconstruction(DirectReconstruction):
             Fourier operator. If None, estimated from kdata.
         csm
             Coil sensitivity maps, operator, or estimation callable. None disables
-            coil combination. See `DirectReconstruction` for setup details.
+            coil combination. Explicit maps must be in the original coil basis;
+            they are whitened when noise is supplied. Callable estimates already
+            use whitened data. See `DirectReconstruction` for setup details.
         noise
             Optional noise data for prewhitening, including CSM estimation.
         dcf
@@ -78,6 +89,9 @@ class PlugAndPlayPriorsReconstruction(DirectReconstruction):
             Optional callback receiving `PNPADMMStatus` after each iteration.
         """
         super().__init__(kdata, fourier_op, csm, noise, dcf)
+        if noise is not None and isinstance(csm, CsmData | SensitivityOp):
+            assert self.csm_op is not None
+            self.csm_op = SensitivityOp(_prewhiten_tensor(self.csm_op.csm_tensor, noise))
         self.denoiser = denoiser
         self.tau = torch.as_tensor(tau)
         self.max_iterations = max_iterations

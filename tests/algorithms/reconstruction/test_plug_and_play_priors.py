@@ -7,7 +7,7 @@ from mr2.algorithms.optimizers import pnp_admm
 from mr2.algorithms.optimizers.pnp_admm import PNPADMMStatus
 from mr2.algorithms.reconstruction import DirectReconstruction, PlugAndPlayPriorsReconstruction
 from mr2.data import CsmData, IData, KData, KNoise
-from mr2.operators import DensityCompensationOp, FourierOp
+from mr2.operators import DensityCompensationOp, FourierOp, SensitivityOp
 
 
 @pytest.mark.parametrize('with_noise', [False, True])
@@ -67,7 +67,16 @@ def test_wrapper_matches_tensor_solver(cartesian_kdata: KData, with_noise: bool,
     reference = DirectReconstruction(kdata=kdata, fourier_op=fourier, csm=csm, noise=noise, dcf=dcf)
     if reference.csm_op is not None:
         assert reconstruction.csm_op is not None
-        torch.testing.assert_close(reconstruction.csm_op.csm_tensor, reference.csm_op.csm_tensor)
+        if with_noise and csm_kind == 'explicit':
+            assert noise is not None
+            maps = reference.csm_op.csm_tensor
+            covariance = noise.data.flatten(-3) @ noise.data.flatten(-3).mH / noise.data.flatten(-3).shape[-1]
+            expected_maps = torch.linalg.solve_triangular(
+                torch.linalg.cholesky(covariance), maps.flatten(-3), upper=False
+            ).reshape_as(maps)
+            torch.testing.assert_close(reconstruction.csm_op.csm_tensor, expected_maps)
+        else:
+            torch.testing.assert_close(reconstruction.csm_op.csm_tensor, reference.csm_op.csm_tensor)
 
 
 def test_zero_kspace(cartesian_kdata: KData) -> None:
@@ -80,3 +89,41 @@ def test_zero_kspace(cartesian_kdata: KData) -> None:
     )
     result = reconstruction(kdata)
     torch.testing.assert_close(result.data, torch.zeros_like(result.data))
+
+
+@pytest.mark.parametrize('as_operator', [False, True])
+def test_explicit_csm_whitening(cartesian_kdata: KData, as_operator: bool) -> None:
+    """Non-diagonal noise transforms both measured data and explicit coil maps."""
+    kdata = cartesian_kdata
+    maps = CsmData.from_kdata_walsh(kdata)
+    n_coils = kdata.data.shape[-4]
+    mixing = torch.eye(n_coils, dtype=kdata.data.dtype)
+    if n_coils > 1:
+        mixing[1, 0] = torch.tensor(0.5 + 0.3j, dtype=mixing.dtype)
+    mixing[0, 0] = 2
+    noise_data = mixing.reshape(n_coils, 1, 1, n_coils)
+    noise = KNoise(noise_data)
+    covariance = mixing @ mixing.mH / n_coils
+    factor = torch.linalg.cholesky(covariance)
+    expected_maps = torch.linalg.solve_triangular(factor, maps.data.flatten(-3), upper=False).reshape_as(maps.data)
+    fourier = FourierOp.from_kdata(kdata)
+    dcf = DensityCompensationOp(torch.tensor(1.0))
+    reconstruction = PlugAndPlayPriorsReconstruction(
+        fourier_op=fourier,
+        csm=maps.as_operator() if as_operator else maps,
+        noise=noise,
+        dcf=dcf,
+        denoiser=lambda x: 0.8 * x,
+        tau=0.7,
+        max_iterations=3,
+        cg_max_iterations=8,
+    )
+    acquisition = fourier @ SensitivityOp(expected_maps)
+    whitened = torch.linalg.solve_triangular(factor, kdata.data.flatten(-3), upper=False).reshape_as(kdata.data)
+    (initial,) = acquisition.H(whitened)
+    (expected,) = pnp_admm(
+        lambda x: 0.8 * x, acquisition, whitened, initial, tau=0.7, max_iterations=3, cg_max_iterations=8
+    )
+    torch.testing.assert_close(reconstruction(kdata).data, expected)
+    # The supplied maps remain in their original coil basis.
+    torch.testing.assert_close(maps.data, CsmData.from_kdata_walsh(kdata).data)

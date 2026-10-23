@@ -4,9 +4,9 @@ from collections.abc import Callable
 
 import torch
 
-from mr2.algorithms.optimizers.admm import _admm_l2_x_update
+from mr2.algorithms.optimizers.cg import cg
 from mr2.algorithms.optimizers.OptimizerStatus import OptimizerStatus
-from mr2.operators import IdentityOp, LinearOperator, LinearOperatorMatrix
+from mr2.operators import IdentityOp, LinearOperator
 
 
 class PNPADMMStatus(OptimizerStatus):
@@ -84,6 +84,7 @@ def pnp_admm(
         ``||x-z|| <= tolerance * max(||x||, ||z||)`` and
         ``||(z-z_previous)/tau|| <= tolerance * ||u/tau||``.
         A zero scale requires an exactly zero residual. Zero disables stopping.
+        Unlike `admm_l2`, this checks split residuals rather than change in x.
     initial_z
         Initial denoised split variable. Defaults to x.
     initial_u
@@ -130,11 +131,16 @@ def pnp_admm(
     check_tensor(z, 'initial_z')
     check_tensor(u, 'initial_u')
     inv_tau = tau_.reciprocal()
-    identity = LinearOperatorMatrix.from_diagonal(IdentityOp())
-    h = LinearOperatorMatrix.from_diagonal(op.gram) + inv_tau * identity
-    op_h_b = op.H(b)
+    h = op.gram + inv_tau * IdentityOp()
+    (op_h_b,) = op.H(b)
     for iteration in range(max_iterations):
-        (x,) = _admm_l2_x_update(h, op_h_b, identity, (x,), (z,), (u,), inv_tau, cg_max_iterations, cg_tolerance)
+        (x,) = cg(
+            h,
+            op_h_b + inv_tau * (z - u),
+            initial_value=x,
+            max_iterations=cg_max_iterations,
+            tolerance=cg_tolerance,
+        )
         z_new = denoiser(x + u)
         check_tensor(z_new, 'denoiser output')
         primal_residual = x - z_new
