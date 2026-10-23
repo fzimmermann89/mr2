@@ -18,3 +18,12 @@ def test_espirit(ellipse_phantom, random_kheader):
     # Phase is only relative in csm calculation, therefore only the abs values are compared.
 
     assert relative_image_difference(torch.abs(csm), torch.abs(csm_ref[0, ...])) <= 0.04
+
+
+def test_espirit_zero_calibration() -> None:
+    """An empty retained subspace produces finite zero maps."""
+    csm = espirit(torch.zeros(2, 1, 8, 8, dtype=torch.complex64), SpatialDimension(1, 12, 12), kernel_width=3)
+
+    assert csm.shape == (2, 1, 12, 12)
+    assert torch.isfinite(csm).all()
+    assert torch.count_nonzero(csm) == 0

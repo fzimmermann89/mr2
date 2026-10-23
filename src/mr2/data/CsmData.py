@@ -60,7 +60,8 @@ class CsmData(IData, init=False):
         singular_value_threshold: float = 0.02,
         kernel_width: int = 6,
         crop_threshold: float = 0.3,
-    ) -> CsmData:
+        n_iterations: int = 10,
+    ) -> Self:
         """ESPIRiT sensitivity estimation.
 
         Estimate coil sensitivity maps from fully sampled Cartesian calibration
@@ -69,8 +70,9 @@ class CsmData(IData, init=False):
         Parameters
         ----------
         acs
-            Fully sampled Cartesian calibration k-space data.
-            This can be obtained by indexing into the `KData` object.
+            Complete, centered Cartesian calibration block with coordinates in
+            encoding-grid units. This can be obtained by indexing into the `KData`
+            object. Samples are reordered using the trajectory.
             For non-Cartesian data, density compensation and adjoint NUFFT regridding is applied
             before ESPIRiT estimation.
         singular_value_threshold
@@ -78,19 +80,46 @@ class CsmData(IData, init=False):
         kernel_width
             width of the kernel for the espirit algorithm
         crop_threshold
-            threshold for the crop of the espirit algorithm
+            Eigenvalue threshold for cropping the maps. Defaults to 0.3 here;
+            the tensor-level `~mr2.algorithms.csm.espirit` defaults to 0.1.
+        n_iterations
+            Number of power iterations.
 
         Raises
         ------
         ValueError
-            If `acs` is not fully sampled Cartesian k-space data.
+            If Cartesian `acs` does not cover a complete, centered calibration block.
         """
         from mr2.algorithms.csm.espirit import espirit
 
         if all(traj_type & TrajType.ONGRID for traj_type in acs.traj.type_along_k210):
-            if acs.traj.shape[-3:] != acs.header.encoding_matrix.zyx:
-                raise ValueError('ESPIRiT requires fully sampled Cartesian k-space data without missing samples.')
-            kspace_data = acs.data
+            from mr2.operators.CartesianSamplingOp import CartesianSamplingOp
+
+            calibration_shape = SpatialDimension(*acs.shape[-3:])
+            error = (
+                'ESPIRiT requires fully sampled Cartesian calibration data on a centered grid without missing samples.'
+            )
+            if acs.traj.shape[-3:] != calibration_shape.zyx:
+                raise ValueError(error)
+
+            # Shape and integer coordinates alone do not establish complete coverage.
+            coordinates = acs.traj.as_tensor().round().to(torch.int64)
+            index = torch.zeros_like(coordinates[0])
+            for coordinate, size in zip(coordinates, calibration_shape.zyx, strict=True):
+                offset = coordinate + size // 2
+                if torch.any((offset < 0) | (offset >= size)):
+                    raise ValueError(error)
+                index = index * size + offset
+            expected = torch.arange(
+                calibration_shape.z * calibration_shape.y * calibration_shape.x, device=index.device
+            )
+            if not torch.all(index.flatten(start_dim=-3).sort(dim=-1).values == expected):
+                raise ValueError(error)
+
+            # This also corrects reversed readouts according to their actual coordinates.
+            (kspace_data,) = CartesianSamplingOp(calibration_shape, acs.traj).H(
+                acs.data.expand(*acs.data.shape[:-3], *calibration_shape.zyx)
+            )
         else:
             from mr2.data.DcfData import DcfData
             from mr2.operators.FastFourierOp import FastFourierOp
@@ -115,7 +144,7 @@ class CsmData(IData, init=False):
                 singular_value_threshold=singular_value_threshold,
                 kernel_width=kernel_width,
                 crop_threshold=crop_threshold,
-                n_iterations=10,
+                n_iterations=n_iterations,
             ),
             kspace_data,
             passed_dimensions=(-4, -3, -2, -1),  # coils, z, y, x

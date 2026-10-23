@@ -4,7 +4,8 @@ from collections.abc import Callable
 
 import pytest
 import torch
-from mr2.data import CsmData, KData, KHeader, SpatialDimension
+from mr2.algorithms.csm import espirit
+from mr2.data import CsmData, KData, KHeader, KTrajectory, SpatialDimension
 from mr2.data.traj_calculators.KTrajectoryCartesian import KTrajectoryCartesian
 from mr2.data.traj_calculators.KTrajectoryIsmrmrd import KTrajectoryIsmrmrd
 from mr2.operators import FourierOp
@@ -117,4 +118,64 @@ def test_CsmData_kdata_espirit_regrids_noncartesian(ismrmrd_rad) -> None:
     kdata = KData.from_file(ismrmrd_rad.filename, KTrajectoryIsmrmrd())
 
     with pytest.warns(UserWarning, match='Regridding non-Cartesian data'):
-        CsmData.from_kdata_espirit(kdata)
+        csm = CsmData.from_kdata_espirit(kdata)
+
+    # Dataclass stores repeated map dimensions as singletons.
+    expected_shape = (*kdata.shape[:-3], *kdata.header.recon_matrix.zyx)
+    assert torch.broadcast_shapes(csm.data.shape, expected_shape) == expected_shape
+    assert torch.isfinite(csm.data).all()
+
+
+def test_CsmData_kdata_espirit_cartesian(ismrmrd_cart_single_rep) -> None:
+    """Cartesian ESPIRiT preserves batch and coil axes and uses the reconstruction size."""
+    _, kdata = create_matching_idata_kdata(ismrmrd_cart_single_rep)
+    csm = CsmData.from_kdata_espirit(kdata)
+
+    assert csm.data.shape == (*kdata.data.shape[:-3], *kdata.header.recon_matrix.zyx)
+    assert torch.isfinite(csm.data).all()
+    assert csm.data.abs().max() > 0
+
+
+def test_CsmData_kdata_espirit_indexed_acs(ismrmrd_cart_single_rep) -> None:
+    """An indexed central ACS block keeps the original encoding and reconstruction metadata."""
+    _, kdata = create_matching_idata_kdata(ismrmrd_cart_single_rep)
+    ny, nx = kdata.data.shape[-2:]
+    acs = kdata[..., ny // 2 - 8 : ny // 2 + 8, nx // 2 - 8 : nx // 2 + 8]
+    assert acs.header.encoding_matrix.zyx == kdata.header.encoding_matrix.zyx
+    assert acs.data.shape[-3:] != acs.header.encoding_matrix.zyx
+
+    csm = CsmData.from_kdata_espirit(acs, n_iterations=3)
+    expected = espirit(acs.data[0], acs.header.recon_matrix, crop_threshold=0.3, n_iterations=3)
+
+    torch.testing.assert_close(csm.data[0], expected)
+    assert csm.data.shape == (*acs.data.shape[:-3], *acs.header.recon_matrix.zyx)
+
+
+def test_CsmData_kdata_espirit_reversed_readouts(ismrmrd_cart_single_rep) -> None:
+    """Trajectory-based reordering handles reversed readouts and permuted phase encodes."""
+    _, kdata = create_matching_idata_kdata(ismrmrd_cart_single_rep)
+    reversed_lines = (torch.arange(kdata.data.shape[-2]) % 2 == 0).reshape(1, 1, 1, -1, 1)
+    kx = kdata.traj.kx.expand(kdata.traj.shape)
+    acquired_data = torch.where(reversed_lines, kdata.data.flip(-1), kdata.data).flip(-2)
+    acquired_traj = KTrajectory(
+        kz=kdata.traj.kz,
+        ky=kdata.traj.ky.flip(-2),
+        kx=torch.where(reversed_lines, kx.flip(-1), kx).flip(-2),
+    )
+    acquired = KData(kdata.header, acquired_data, acquired_traj)
+
+    expected = CsmData.from_kdata_espirit(kdata)
+    actual = CsmData.from_kdata_espirit(acquired)
+
+    torch.testing.assert_close(actual.data, expected.data)
+
+
+def test_CsmData_kdata_espirit_duplicate_coordinates(ismrmrd_cart_single_rep) -> None:
+    """Shape-matching Cartesian data with a duplicate and missing line is rejected."""
+    kdata = KData.from_file(ismrmrd_cart_single_rep.filename, KTrajectoryCartesian())
+    ky = kdata.traj.ky.clone()
+    ky[..., 0, :] = ky[..., 1, :]
+    invalid = KData(kdata.header, kdata.data, KTrajectory(kdata.traj.kz, ky, kdata.traj.kx))
+
+    with pytest.raises(ValueError, match='fully sampled Cartesian'):
+        CsmData.from_kdata_espirit(invalid)

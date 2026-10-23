@@ -65,7 +65,7 @@ def espirit(
     _, s, vh = torch.linalg.svd(mat, full_matrices=False)
 
     # Get kernels
-    vh = torch.diag((s > singular_value_threshold * s.max()).type(vh.type())) @ vh
+    vh = vh[s > singular_value_threshold * s.max()]
     kernels = rearrange(vh, 'n (coils c b a) -> n coils c b a', coils=n_coils, c=c, b=b, a=a)
 
     # Get covariance matrix in image domain
