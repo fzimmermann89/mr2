@@ -48,7 +48,7 @@ def total_variation_denoising(
 ) -> IData | torch.Tensor:
     r"""Apply total variation denoising.
 
-    This algorithm solves the problem :math:`min_x ||x - y||_2^2 + \sum_i l_i ||\nabla_i x||_1`
+    This algorithm solves the problem :math:`\min_x ||x - y||_2^2 + \sum_i l_i ||\nabla_i x||_1`
     by using the PDHG-algorithm. :math:`y` is the given noisy image, :math:`l_i` are the strengths of the regularization
     along the different dimensions and :math:`\nabla_i` is the finite difference operator applied to :math:`x` along
     different dimensions :math:`i`.
@@ -58,16 +58,16 @@ def total_variation_denoising(
     idata
         input image
     regularization_dim
-        Dimensions along which the total variation reguarization is applied (:math:`i`).
+        Dimensions along which the total variation regularization is applied (:math:`i`).
     regularization_weight
-        Strengths of the regularization (:math:`l_i`). If a single values is given, it is applied to all dimensions.
+        Strengths of the regularization (:math:`l_i`). If a single value is given, it is applied to all dimensions.
         If a sequence is given, it must have the same length as `regularization_dim`.
     initial_image
         Initial image, moved to the input image device. If `None` then the target image :math:`y` will be used.
     max_iterations
         Maximum number of PDHG iterations.
     tolerance
-            Tolerance of PDHG for relative change of the primal solution; if zero, `max_iterations` of PDHG are run.
+        Tolerance of PDHG for relative change of the primal solution; if zero, `max_iterations` of PDHG are run.
 
     Returns
     -------

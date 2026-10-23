@@ -2,7 +2,7 @@
 
 import pytest
 import torch
-from mr2.algorithms.total_variation_denoising import total_variation_denoising
+from mr2.algorithms.denoising import total_variation_denoising
 from mr2.data import IData, IHeader, SpatialDimension
 from mr2.utils import RandomGenerator
 from tests.helper import relative_image_difference
