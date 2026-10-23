@@ -109,6 +109,13 @@ def test_incompatible_weights(denoise) -> None:
 
 
 @pytest.mark.parametrize('denoise', [analysis_denoising, synthesis_denoising])
+def test_weight_conversion_overflow(denoise) -> None:
+    """Finite double-precision weights must remain finite after conversion to image precision."""
+    with pytest.raises(ValueError, match='finite in the coefficient dtype'):
+        denoise(torch.ones(1, 3, 4), IdentityOp(), torch.tensor(1e40, dtype=torch.float64))
+
+
+@pytest.mark.parametrize('denoise', [analysis_denoising, synthesis_denoising])
 def test_even_kernel(denoise) -> None:
     """Reject the operators' unsupported even spatial kernels before running a solver."""
     operator = (ConvAnalysisDictionaryOp if denoise is analysis_denoising else ConvSynthesisDictionaryOp)(

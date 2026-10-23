@@ -57,7 +57,10 @@ def _weight(weight: float | torch.Tensor, coefficients: torch.Tensor) -> torch.T
         raise ValueError('regularization_weight must broadcast to the coefficient shape') from error
     if shape != coefficients.shape:
         raise ValueError('regularization_weight must not expand the coefficient shape')
-    return weight.to(dtype=coefficients.real.dtype)
+    weight = weight.to(dtype=coefficients.real.dtype)
+    if not torch.isfinite(weight).all():
+        raise ValueError('regularization_weight must be finite in the coefficient dtype')
+    return weight
 
 
 def _initial(initial: torch.Tensor | None, reference: torch.Tensor) -> torch.Tensor:
