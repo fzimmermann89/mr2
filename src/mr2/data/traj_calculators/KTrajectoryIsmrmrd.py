@@ -43,20 +43,29 @@ class KTrajectoryIsmrmrd:
         Parameters
         ----------
         acquisitions
-            list of ismrmrd acquisistions to read from. Needs at least one acquisition.
+            List of ISMRMRD acquisitions to read from. Needs at least one acquisition.
+            Trajectories must have one, two or three coordinate dimensions in x, y, z order.
+            Missing y and z coordinates are set to zero.
         encoding_matrix
             encoding matrix, used to normalize the trajectory.
 
         Returns
         -------
             trajectory in the shape of the original raw data.
+
+        Raises
+        ------
+        ValueError
+            If trajectory information is missing or has more than three coordinate dimensions.
         """
         traj = torch.stack([torch.as_tensor(acq.traj, dtype=torch.float32) for acq in acquisitions])
 
         if not traj.numel():
-            raise ValueError('No trajectory information available in the ISMRMD file.')
+            raise ValueError('No trajectory information available in the ISMRMRD file.')
+        if traj.shape[-1] > 3:
+            raise ValueError('Trajectory must have 1, 2 or 3 coordinate dimensions.')
 
-        if traj.shape[-1] != 3:  # ISMRMRD can contain 2D trajectories. We enforce 3D
+        if traj.shape[-1] < 3:  # pad missing y and z coordinates
             zero = torch.zeros_like(traj[..., :1])
             traj = torch.cat([traj, *([zero] * (3 - traj.shape[-1]))], dim=-1)
 

@@ -140,8 +140,9 @@ class KTrajectory(Dataclass):
     ) -> Self:
         """Read a k-space trajectory from an ISMRMRD file.
 
-        The trajectory is extracted from an ISMRMRD file. If the encoding matrix is set in the header,
-        the trajectory is rescaled to fit within the dimensions of the matrix.
+        The trajectory must have one, two or three coordinate dimensions in x, y, z order.
+        Missing y and z coordinates are set to zero. If normalization is enabled, the trajectory
+        is rescaled to fit within the encoding matrix in the header.
 
         Parameters
         ----------
@@ -156,6 +157,11 @@ class KTrajectory(Dataclass):
         normalize
             Normalize the trajectory to the encoding matrix. Consider enabling for non-cartesian trajectories or
             non-normalized ISMRMRD trajectories.
+
+        Raises
+        ------
+        ValueError
+            If trajectory information is missing or has more than three coordinate dimensions.
         """
         with ismrmrd.File(filename, 'r') as file:
             datasets = list(file.keys())
@@ -173,6 +179,10 @@ class KTrajectory(Dataclass):
             if not acquisitions:
                 raise ValueError('No matching acquisitions found in the ISMRMRD file.')
             traj = torch.stack([torch.as_tensor(acq.traj, dtype=torch.float32) for acq in acquisitions], dim=0)
+            if not traj.numel():
+                raise ValueError('No trajectory information available in the ISMRMRD file.')
+            if traj.shape[-1] > 3:
+                raise ValueError('Trajectory must have 1, 2 or 3 coordinate dimensions.')
             if not normalize:
                 scaling_matrix = None
             elif (
@@ -187,7 +197,7 @@ class KTrajectory(Dataclass):
                     'Consider adding it to the header.'
                 )
 
-        if traj.shape[-1] != 3:  # enforce 3D trajectory
+        if traj.shape[-1] < 3:  # pad missing y and z coordinates
             zero = torch.zeros_like(traj[..., :1])
             traj = torch.cat([traj, *([zero] * (3 - traj.shape[-1]))], dim=-1)
         traj = unsqueeze_at(traj, dim=-3, n=5 - traj.ndim + 1)  # +1 due to stack_dim

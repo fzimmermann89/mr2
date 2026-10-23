@@ -1,13 +1,59 @@
 """Tests for KTrajectory class."""
 
+from pathlib import Path
+
+import ismrmrd
 import pytest
 import torch
 from einops import rearrange
-from mr2.data import KTrajectory
+from mr2.data import KTrajectory, SpatialDimension
 from mr2.data.enums import TrajType
 from mr2.data.KData import has_n_coils
+from mr2.data.traj_calculators import KTrajectoryIsmrmrd
 
 from tests.conftest import COMMON_MR_TRAJECTORIES, create_traj
+from tests.data import IsmrmrdRawTestData
+
+
+@pytest.mark.parametrize('n_dimensions', [0, 1, 2, 3, 4, 5])
+@pytest.mark.parametrize('normalize', [False, True])
+@pytest.mark.parametrize('use_calculator', [False, True])
+def test_ismrmrd_trajectory_dimensions(
+    tmp_path: Path, n_dimensions: int, normalize: bool, use_calculator: bool
+) -> None:
+    """ISMRMRD imports preserve supported coordinates and reject missing or extra ones."""
+    raw = IsmrmrdRawTestData(tmp_path / 'source.h5', matrix_size=4, n_coils=1, oversampling=1)
+    source = ismrmrd.Dataset(raw.filename)
+    header = source.read_xml_header()
+    acquisition = source.read_acquisition(raw.n_noise_samples)
+    source.close()
+    acquisition.resize(4, 1, trajectory_dimensions=n_dimensions)
+    coordinates = torch.arange(4 * n_dimensions, dtype=torch.float32).reshape(4, n_dimensions)
+    acquisition.traj[:] = coordinates.numpy()
+    filename = tmp_path / 'trajectory.h5'
+    dataset = ismrmrd.Dataset(filename)
+    dataset.write_xml_header(header)
+    dataset.append_acquisition(acquisition)
+    dataset.close()
+
+    def read() -> KTrajectory:
+        if use_calculator:
+            return KTrajectoryIsmrmrd(normalize)([acquisition], SpatialDimension(z=1, y=4, x=4))
+        return KTrajectory.from_ismrmrd(filename, normalize=normalize)
+
+    if n_dimensions == 0:
+        with pytest.raises(ValueError, match='No trajectory information available'):
+            read()
+    elif n_dimensions > 3:
+        with pytest.raises(ValueError, match='Trajectory must have 1, 2 or 3 coordinate dimensions'):
+            read()
+    else:
+        trajectory = read()
+        for axis, actual in enumerate((trajectory.kx, trajectory.ky, trajectory.kz)):
+            expected = coordinates[:, axis] if axis < n_dimensions else torch.zeros(4)
+            if normalize:
+                expected = expected * (2 / expected.abs().max()) if axis < 2 and expected.any() else torch.zeros(4)
+            torch.testing.assert_close(actual.broadcast_to(1, 1, 1, 1, 4).flatten(), expected)
 
 
 def test_trajectory_repeat_detection_tol(cartesian_grid) -> None:
