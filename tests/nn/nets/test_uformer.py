@@ -71,7 +71,8 @@ def test_uformer_forward(shape: tuple[int, int], torch_compile: bool, device: st
     x = x.to(device)
     cond = cond.to(device)
     if torch_compile:
-        uformer = cast(Uformer, torch.compile(uformer))
+        # Avoid automatic dynamic-shape recompilation in older PyTorch versions.
+        uformer = cast(Uformer, torch.compile(uformer, dynamic=False))
     y = uformer(x, cond=cond)
     assert y.shape == (1, 1, *shape)
 
