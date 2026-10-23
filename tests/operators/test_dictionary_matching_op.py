@@ -96,7 +96,7 @@ def test_dictionary_matching_op_not_differentiable() -> None:
     rng = RandomGenerator(2)
     model = InversionRecovery(rng.float32_tensor(5))
     operator = DictionaryMatchOp(model)
-    operator.append(torch.zeros(5, 4, 3), torch.zeros(5, 4, 3))
+    operator.append(torch.ones(5, 4, 3), torch.ones(5, 4, 3))
     y = torch.zeros(5, 5, 4, 3)
     with pytest.raises(ValueError, match='differentiable'):
         _ = operator(y.requires_grad_(True))
@@ -126,3 +126,18 @@ def test_dictionary_matching_op_cuda() -> None:
     operator.append(m0.cuda(), t1.cuda())
     result = operator(y.cuda())
     assert all(tensor.is_cuda for tensor in result)
+
+
+@pytest.mark.parametrize('dtype', [torch.float32, torch.complex64])
+@pytest.mark.parametrize('invalid_value', [0.0, float('nan'), float('inf')])
+def test_dictionary_matching_op_invalid_atoms(dtype: torch.dtype, invalid_value: float) -> None:
+    """Reject invalid atoms without changing the existing dictionary."""
+    operator = DictionaryMatchOp(lambda x: (x.unsqueeze(0).expand(2, -1),))
+    operator.append(torch.ones(1, dtype=dtype))
+    old_x, old_y = operator.x, operator.y
+    with pytest.raises(ValueError, match='finite, positive inverse norms'):
+        operator.append(torch.tensor([2.0, invalid_value], dtype=dtype))
+    assert operator.x is old_x
+    assert operator.y is old_y
+    (matched,) = operator(torch.ones(2, 1, dtype=dtype))
+    torch.testing.assert_close(matched, torch.ones(1, dtype=dtype))
