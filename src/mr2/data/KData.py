@@ -289,11 +289,9 @@ class KData(Dataclass):
         acquisition_filter_criterion
             Acquisition predicate, or None to disable filtering.
         modification_time
-            Fallback header datetime. Defaults to the current time for objects and binary
-            streams, the path mtime for stream files, and the dataset timestamp for HDF5.
+            Fallback header datetime. Unknown for objects and binary streams unless supplied;
+            stream files use path mtime, and HDF5 uses its dataset timestamp.
         """
-        if modification_time is None:
-            modification_time = datetime.datetime.now()
         acquisitions = [
             acq for acq in acquisitions if acquisition_filter_criterion is None or acquisition_filter_criterion(acq)
         ]

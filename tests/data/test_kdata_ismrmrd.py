@@ -317,3 +317,14 @@ def test_hdf5_measurements(raw_data, index) -> None:
     expected = original.data * (1 if index % 2 == 0 else 2)
     result = KData.from_file(io.BytesIO(filename.read_bytes()), DummyTrajectory(), dataset_idx=index)
     torch.testing.assert_close(result.data, expected)
+
+
+def test_unknown_timestamp_stays_unknown(raw_data) -> None:
+    """Loading undated in-memory data does not invent a measurement time."""
+    _, header, acquisitions = raw_data
+    first = KData.from_ismrmrd(header, acquisitions, DummyTrajectory())
+    second = KData.from_ismrmrd(header, acquisitions, DummyTrajectory())
+    assert first.header.datetime is None
+    assert second.header.datetime is None
+    stream = serialize_measurements([(header, acquisitions)])
+    assert KData.from_ismrmrd_stream(stream, DummyTrajectory()).header.datetime is None

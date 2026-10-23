@@ -50,21 +50,15 @@ from MRD or calculated from a `pulseq <http://pulseq.github.io/>`_ file. See `~m
 for available trajectory calculators and :doc:`_notebooks/comparison_trajectory_calculators` for an example.
 
 
-`~mr2.data.KData.from_ismrmrd` accepts a parsed ISMRMRD header and acquisitions directly.
-It shares filtering, cropping, header normalization and sorting with the file readers.
-`~mr2.data.KData.from_file` accepts HDF5 paths and seekable HDF5 file-like objects, and detects
-serialized ISMRMRD stream paths. Use `~mr2.data.KData.from_ismrmrd_stream` explicitly for binary
-streams, including nonseekable inputs. Caller-owned streams remain open, including after errors.
-
-Stream measurements are delimited by XML headers and a final CLOSE message. ``dataset_idx`` defaults
-to ``-1`` (the last measurement); nonnegative indices stop at the next header or CLOSE, while negative
-indices read to CLOSE and retain only the requested trailing measurements. Missing CLOSE and corrupt
-messages raise errors. This loads complete serialized measurements and does not provide live reconstruction.
-File-like inputs must return the requested bytes unless at EOF.
-
-Use ``header_overwrites={'datetime': ...}`` to set an explicit timestamp. Otherwise, when the XML has no
-measurement timestamp, HDF5 uses its dataset timestamp fallback, stream paths use their modification time,
-and object or binary-stream inputs use the current time.
+`~mr2.data.KData.from_ismrmrd` accepts a parsed header and acquisitions directly, sharing
+acquisition filtering, cropping and sorting with the file readers. `~mr2.data.KData.from_file`
+accepts HDF5 paths/file-like objects and serialized ISMRMRD stream paths. Use
+`~mr2.data.KData.from_ismrmrd_stream` explicitly for binary or nonseekable streams;
+caller-owned streams remain open. This reads complete measurements, not live reconstructions.
+See its docstring for measurement selection, completion and read requirements.
+Legacy XML repair applies only to HDF5 input; serialized headers must parse with ISMRMRD.
+When XML measurement time is absent, objects/binary streams retain an unknown timestamp unless
+supplied explicitly; path streams use file mtime and HDF5 uses its dataset timestamp fallback.
 
 
 .. note::
