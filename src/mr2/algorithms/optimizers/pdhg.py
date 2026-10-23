@@ -80,17 +80,17 @@ def pdhg(
 
         :math:`\min_{x=(x_1,\ldots,x_n)} \sum_{i=1}^m f_i\big( (Kx)_i\big) + \sum_{j=1}^n g_j(x_j)`.
 
-    If neither primal nor dual step size are supplied, they are both chosen as :math:`0.95/||K||_2`.
+    If neither primal nor dual step size are supplied, they are both chosen as :math:`1/||K||_2`.
     If only one of them is supplied, the other is chosen such that
 
-        :math:`\tau \sigma = 0.95/||K||_2^2`,
+        :math:`\tau \sigma = 1/||K||_2^2`,
 
-    where :math:`||K||_2` denotes the operator-norm of :math:`K`.
-    If the operator norm is zero, each omitted step size is set to ``1.0``;
-    supplied step sizes are kept. The primal and dual updates then decouple.
+    where :math:`1/||K||_2` denotes the operator-norm of :math:`K`.
     Note that the computation of the operator-norm can be computationally expensive and
-    that if either stepsize is omitted, the algorithm runs a power iteration to obtain the
+    that if no stepsizes are provided, the algorithm runs a power iteration to obtain the
     upper bound for the stepsizes.
+
+    If the operator norm is zero, each omitted step size is set to ``1.0``.
 
     For a warm start, the initial relaxed primal and dual variables can be supplied.
     These might be obtained from the status object of a previous run.
@@ -174,12 +174,11 @@ def pdhg(
         raise ValueError('Number of columns in operator does not match number of functionals in g')
 
     if primal_stepsize is None or dual_stepsize is None:
-        # Use a safety factor for the norm-based convergence bound.
+        # choose primal and dual step size such that their product is 1/|operator|**2
+        # to ensure convergence
         safety_factor = 0.95
 
         operator_norm = operator_matrix.operator_norm(*[torch.randn_like(v) for v in initial_values]).amax()
-        if not torch.isfinite(operator_norm):
-            raise ValueError('Automatic step sizes require a finite operator norm.')
         norm_sq = operator_norm.square()
 
         if operator_norm == 0:
