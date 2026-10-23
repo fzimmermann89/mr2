@@ -15,17 +15,17 @@ from mr2.operators.models import BMC
 from mr2.operators.models import EPG
 
 __all__ = [
-    "BMC",
-    "CardiacFingerprinting",
-    "EPG",
-    "InversionRecovery",
-    "MOLLI",
-    "MonoExponentialDecay",
-    "MultiEchoSpinEcho",
-    "NeuroMRF",
-    "SaturationRecovery",
-    "SpoiledGRE",
-    "TransientSteadyStateWithPreparation",
-    "WASABI",
-    "WASABITI"
+    'BMC',
+    'EPG',
+    'MOLLI',
+    'WASABI',
+    'WASABITI',
+    'CardiacFingerprinting',
+    'InversionRecovery',
+    'MonoExponentialDecay',
+    'MultiEchoSpinEcho',
+    'NeuroMRF',
+    'SaturationRecovery',
+    'SpoiledGRE',
+    'TransientSteadyStateWithPreparation',
 ]
