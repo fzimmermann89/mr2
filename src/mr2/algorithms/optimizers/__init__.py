@@ -8,5 +8,6 @@ from mr2.algorithms.optimizers.cg import cg
 from mr2.algorithms.optimizers.lbfgs import lbfgs
 from mr2.algorithms.optimizers.pdhg import pdhg
 from mr2.algorithms.optimizers.pgd import pgd
+from mr2.algorithms.optimizers.pnp_admm import pnp_admm
 
-__all__ = ['OptimizerStatus', 'adam', 'admm_l2', 'admm_linear', 'bicg', 'cg', 'lbfgs', 'pdhg', 'pgd']
+__all__ = ['OptimizerStatus', 'adam', 'admm_l2', 'admm_linear', 'bicg', 'cg', 'lbfgs', 'pdhg', 'pgd', 'pnp_admm']

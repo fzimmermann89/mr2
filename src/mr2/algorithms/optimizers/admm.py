@@ -86,6 +86,23 @@ class ADMML2Status(OptimizerStatus):
     u: tuple[torch.Tensor, ...]
 
 
+def _admm_l2_x_update(
+    h: LinearOperatorMatrix,
+    op_h_b: tuple[torch.Tensor, ...],
+    a: LinearOperatorMatrix,
+    x: tuple[torch.Tensor, ...],
+    z: tuple[torch.Tensor, ...],
+    u: tuple[torch.Tensor, ...],
+    inv_tau: torch.Tensor,
+    cg_max_iterations: int,
+    cg_tolerance: float,
+) -> tuple[torch.Tensor, ...]:
+    """Solve the quadratic ADMM subproblem, warm-started at the current primal iterate."""
+    a_h_z_minus_u = a.H(*tuple(zi - ui for zi, ui in zip(z, u, strict=True)))
+    rhs = tuple(op_rhs + inv_tau * a_rhs for op_rhs, a_rhs in zip(op_h_b, a_h_z_minus_u, strict=True))
+    return cg(h, rhs, initial_value=x, max_iterations=cg_max_iterations, tolerance=cg_tolerance)
+
+
 def admm_linear(
     f: ProximableFunctionalSeparableSum | ProximableFunctional,
     g: ProximableFunctionalSeparableSum | ProximableFunctional,
@@ -375,15 +392,7 @@ def admm_l2(
     op_h_b = op_matrix.H(*b_tuple)
 
     for iteration in range(max_iterations):
-        a_h_z_minus_u = a_matrix.H(*tuple(zi - ui for zi, ui in zip(z, u, strict=True)))
-        rhs = tuple(op_rhs + inv_tau * a_rhs for op_rhs, a_rhs in zip(op_h_b, a_h_z_minus_u, strict=True))
-        x_new = cg(
-            h,
-            rhs,
-            initial_value=x,
-            max_iterations=cg_max_iterations,
-            tolerance=cg_tolerance,
-        )
+        x_new = _admm_l2_x_update(h, op_h_b, a_matrix, x, z, u, inv_tau, cg_max_iterations, cg_tolerance)
         ax = a_matrix(*x_new)
         z_new = g_sum.prox(*tuple(ax_i + ui for ax_i, ui in zip(ax, u, strict=True)), sigma=tau_)
         u = tuple(ui + ax_i - zi for ui, ax_i, zi in zip(u, ax, z_new, strict=True))
