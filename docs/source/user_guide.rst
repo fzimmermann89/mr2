@@ -63,6 +63,45 @@ for available trajectory calculators and :doc:`_notebooks/comparison_trajectory_
     `encoding_matrix` is defined as ``(z=1, y=256, x=256)``, then a fully sampled Cartesian trajectory without partial
     echo or partial Fourier is expected to be within ``[-128, 127]`` along both readout and phase encoding.
 
+Creating KData from received acquisitions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+`~mr2.data.KData.from_ismrmrd` accepts a parsed header or XML string/bytes and an iterable of
+acquisition objects. Reconstruction servers such as OpenRecon can use their received metadata
+and acquisitions directly, without writing an intermediate MRD file:
+
+.. code-block:: python
+
+    from mr2.data import KData
+    from mr2.data.traj_calculators import KTrajectoryCartesian
+
+    kdata = KData.from_ismrmrd(metadata, acquisitions, KTrajectoryCartesian())
+
+The constructor filters, crops and sorts acquisitions without modifying the input objects.
+Servers can pass each reconstruction batch with the same header, choosing an appropriate
+``acquisition_filter_criterion``. Fallback metadata can be supplied through ``header_defaults``;
+``header_overwrites`` takes precedence over defaults and measurement metadata.
+
+Reading serialized streams
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+`~mr2.data.KData.from_file` accepts HDF5 paths/file-like objects and serialized ISMRMRD stream
+paths. Use `~mr2.data.KData.from_ismrmrd_stream` to select one measurement from a binary stream,
+or `~mr2.data.KData.iter_ismrmrd_stream` to process successive measurements. For example,
+``python read_stream.py < data.ismrmrd`` can run this script:
+
+.. code-block:: python
+
+    import sys
+
+    from mr2.data import KData
+    from mr2.data.traj_calculators import KTrajectoryIsmrmrd
+
+    for kdata in KData.iter_ismrmrd_stream(sys.stdin.buffer, KTrajectoryIsmrmrd()):
+        print(kdata.data.shape)
+
+Measurements end at the next header or CLOSE; acquisition flags do not define batch boundaries.
+Caller-owned streams remain open. See the reader docstrings for selection and completion requirements.
+
+
 Preparation for reconstruction
 ------------------------------
 MRtwo provides a range of functionality to prepare the data for image reconstruction such as:
