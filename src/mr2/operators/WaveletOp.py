@@ -170,7 +170,7 @@ class WaveletOp(LinearOperator):
 
         # the ptwt functions work only for real data, thus we handle complex inputs as an additional channel
         x_real = torch.view_as_real(x).moveaxis(-1, 0) if x.is_complex() else x
-        unbatched = x_real.ndim == len(self._dim) and len(self._dim) > 1
+        unbatched = x_real.ndim == len(self._dim)
         if unbatched:
             x_real = x_real.unsqueeze(0)
 
@@ -244,7 +244,7 @@ class WaveletOp(LinearOperator):
             else coefficients_stack
         )
 
-        unbatched = coefficients_stack_real.ndim == 1 and len(self._dim) > 1
+        unbatched = coefficients_stack_real.ndim == 1
         if unbatched:
             coefficients_stack_real = coefficients_stack_real.unsqueeze(0)
         coefficients_list = self._stacked_tensor_to_coeff(coefficients_stack_real)
