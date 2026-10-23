@@ -26,7 +26,7 @@ from mr2.operators import (
 )
 from mr2.utils.to_tuple import to_tuple
 
-ADMMSplitUpdate = Callable[..., tuple[torch.Tensor, ...]]
+_ADMMSplitUpdate = Callable[..., tuple[torch.Tensor, ...]]
 """Callable ``update(*values, sigma=tau)`` preserving the split tensor contract."""
 
 
@@ -83,6 +83,12 @@ class ADMML2Status(OptimizerStatus):
         Current auxiliary split variable(s).
     u
         Current scaled dual variable(s).
+    primal_residual
+        Split residual Ax - z, in the split space.
+    dual_residual
+        Dual residual A.H(z - z_previous) / tau, in the primal space.
+    data_fidelity
+        Current value of 0.5 * ||op(x) - b|| squared.
     """
 
     objective: NotRequired[Callable[[*tuple[torch.Tensor, ...]], torch.Tensor]]
@@ -91,13 +97,8 @@ class ADMML2Status(OptimizerStatus):
     u: tuple[torch.Tensor, ...]
 
     primal_residual: tuple[torch.Tensor, ...]
-    """Split residual Ax - z, in the split space."""
-
     dual_residual: tuple[torch.Tensor, ...]
-    """Dual residual A.H(z - z_previous) / tau, in the primal space."""
-
     data_fidelity: torch.Tensor
-    """Current value of 0.5 * ||op(x) - b|| squared."""
 
 
 def admm_linear(
@@ -262,7 +263,7 @@ def admm_linear(
 
 
 def admm_l2(
-    g: ProximableFunctionalSeparableSum | ProximableFunctional | ADMMSplitUpdate,
+    g: ProximableFunctionalSeparableSum | ProximableFunctional | _ADMMSplitUpdate,
     op: LinearOperator | LinearOperatorMatrix,
     b: Sequence[torch.Tensor] | torch.Tensor,
     a: LinearOperator | LinearOperatorMatrix,
@@ -306,7 +307,7 @@ def admm_l2(
     ----------
     g
         Proximable regularizer. Can be a single functional or a
-        `~mr2.operators.ProximableFunctionalSeparableSum`, or an `ADMMSplitUpdate`
+        `~mr2.operators.ProximableFunctionalSeparableSum`, or a split-update
         callable with signature ``g(*values, sigma=tau) -> tuple[Tensor, ...]``.
         The callable replaces the proximal step and must preserve tensor count,
         shapes, dtypes and devices without modifying inputs in place. It need not
@@ -322,7 +323,10 @@ def admm_l2(
     initial_values
         Initial primal variable(s). Single tensor or tuple of tensors.
     tau
-        Positive finite real scalar inverse penalty: tau = 1/rho.
+        Positive finite real inverse penalty: tau = 1/rho. Callable updates
+        require a scalar tensor. Functional updates with solution stopping also
+        accept broadcastable tensors, preserving the existing convention.
+        Residual stopping requires a single value.
     max_iterations
         Maximum number of ADMM iterations.
     tolerance
@@ -359,24 +363,10 @@ def admm_l2(
     Raises
     ------
     ValueError
-        If parameters are inconsistent (non-positive `tau`, incompatible
-        operator dimensions, mismatched number of regularizers, or invalid
-        initial values).
+        If the penalty or iteration/tolerance controls are invalid, the stopping
+        criterion is unknown, operator or functional dimensions are incompatible,
+        or a callable update or its initial split state violates the tensor contract.
     """
-    if not isinstance(initial_values, torch.Tensor) and not len(initial_values):
-        raise ValueError('initial_values must contain at least one tensor')
-    x_device = initial_values.device if isinstance(initial_values, torch.Tensor) else initial_values[0].device
-    tau_ = torch.as_tensor(tau, device=x_device)
-    if tau_.is_complex() or tau_.ndim != 0 or not torch.isfinite(tau_) or not tau_ > 0:
-        raise ValueError('tau must be a positive finite real scalar')
-    if max_iterations < 0 or cg_max_iterations <= 0:
-        raise ValueError('max_iterations must be nonnegative and cg_max_iterations positive')
-    if not 0 <= tolerance < float('inf') or not 0 <= cg_tolerance < float('inf'):
-        raise ValueError('tolerance and cg_tolerance must be nonnegative finite')
-    if stopping_criterion not in ('solution', 'residual'):
-        raise ValueError("stopping_criterion must be 'solution' or 'residual'")
-    inv_tau = tau_.reciprocal()
-
     g_sum = ProximableFunctionalSeparableSum(g) if isinstance(g, ProximableFunctional) else g
     if isinstance(g_sum, ProximableFunctionalSeparableSum):
         functional: ProximableFunctionalSeparableSum | None = g_sum
@@ -384,6 +374,26 @@ def admm_l2(
     else:
         functional = None
         split_update = g_sum
+
+    if not isinstance(initial_values, torch.Tensor) and not len(initial_values):
+        raise ValueError('initial_values must contain at least one tensor')
+    x_device = initial_values.device if isinstance(initial_values, torch.Tensor) else initial_values[0].device
+    tau_ = torch.as_tensor(tau, device=x_device)
+    if tau_.is_complex() or not torch.isfinite(tau_).all() or not (tau_ > 0).all():
+        raise ValueError('tau must be positive finite and real')
+    if functional is None and tau_.ndim != 0:
+        raise ValueError('tau must be a scalar for callable split updates')
+    if stopping_criterion == 'residual':
+        if tau_.numel() != 1:
+            raise ValueError('tau must contain a single value for residual stopping')
+        tau_ = tau_.reshape(())
+    if max_iterations < 0 or cg_max_iterations <= 0:
+        raise ValueError('max_iterations must be nonnegative and cg_max_iterations positive')
+    if not 0 <= tolerance < float('inf') or not 0 <= cg_tolerance < float('inf'):
+        raise ValueError('tolerance and cg_tolerance must be nonnegative finite')
+    if stopping_criterion not in ('solution', 'residual'):
+        raise ValueError("stopping_criterion must be 'solution' or 'residual'")
+    inv_tau = tau_.reciprocal()
 
     op_matrix = LinearOperatorMatrix.from_diagonal(op) if isinstance(op, LinearOperator) else op
     a_matrix = LinearOperatorMatrix.from_diagonal(a) if isinstance(a, LinearOperator) else a
@@ -426,8 +436,9 @@ def admm_l2(
         ):
             raise ValueError(f'{name} must preserve split tensor count, shape, dtype and device')
 
-    check_tensors(z, 'initial_z')
-    check_tensors(u, 'initial_u')
+    if functional is None:
+        check_tensors(z, 'initial_z')
+        check_tensors(u, 'initial_u')
 
     def data_fidelity(*values: torch.Tensor) -> torch.Tensor:
         return 0.5 * _norm_squared(
@@ -452,7 +463,8 @@ def admm_l2(
         )
         ax = a_matrix(*x_new)
         z_new = split_update(*tuple(ax_i + ui for ax_i, ui in zip(ax, u, strict=True)), sigma=tau_)
-        check_tensors(z_new, 'split update output')
+        if functional is None:
+            check_tensors(z_new, 'split update output')
         primal_residual = tuple(ax_i - zi for ax_i, zi in zip(ax, z_new, strict=True))
         u = tuple(ui + ri for ui, ri in zip(u, primal_residual, strict=True))
         if callback is not None or (stopping_criterion == 'residual' and tolerance > 0):

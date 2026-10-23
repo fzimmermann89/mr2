@@ -7,7 +7,7 @@ import torch
 from mr2.algorithms.optimizers import admm_l2
 from mr2.algorithms.optimizers.admm import ADMML2Status
 from mr2.operators import IdentityOp, LinearOperatorMatrix
-from mr2.operators.functionals import L1Norm
+from mr2.operators.functionals import L1Norm, L2NormSquared
 
 
 @pytest.mark.parametrize('dtype', [torch.float32, torch.float64, torch.complex64, torch.complex128])
@@ -351,3 +351,48 @@ def test_update_component_count(count: int) -> None:
     data = torch.ones(2)
     with pytest.raises(ValueError, match='split update output'):
         admm_l2(lambda x, **_: (x,) * count, IdentityOp(), data, IdentityOp(), data, tau=1)
+
+
+@pytest.mark.parametrize(
+    'case',
+    [
+        'target_dtype',
+        'initial_z_shape',
+        'initial_z_dtype',
+        'initial_u_shape',
+        'initial_u_dtype',
+        'tau_singleton',
+        'tau_broadcast',
+    ],
+)
+def test_functional_broadcast_and_promotion(case: str) -> None:
+    """Functional updates retain their established broadcasting and dtype promotion."""
+    data = torch.arange(1, 11, dtype=torch.float32).reshape(2, 5)
+    target = torch.zeros_like(data, dtype=torch.float64 if case == 'target_dtype' else torch.float32)
+    z = torch.zeros((1, 5)) if case == 'initial_z_shape' else torch.zeros_like(data)
+    u = torch.zeros((1, 5)) if case == 'initial_u_shape' else torch.zeros_like(data)
+    if case == 'initial_z_dtype':
+        z = z.double()
+    if case == 'initial_u_dtype':
+        u = u.double()
+    tau = torch.ones(5) if case == 'tau_broadcast' else torch.tensor([1.0] if case == 'tau_singleton' else 1.0)
+    statuses: list[ADMML2Status] = []
+    (result,) = admm_l2(
+        L2NormSquared(target=target, divide_by_n=False),
+        IdentityOp(),
+        data,
+        IdentityOp(),
+        torch.zeros_like(data),
+        tau=tau,
+        initial_z=z,
+        initial_u=u,
+        max_iterations=2,
+        callback=statuses.append,
+    )
+    first_x = (data + (z - u) / tau) / (1 + 1 / tau)
+    first_z = (first_x + u + 2 * tau * target) / (1 + 2 * tau)
+    first_u = u + first_x - first_z
+    expected = (data + (first_z - first_u) / tau) / (1 + 1 / tau)
+    torch.testing.assert_close(result, expected)
+    assert len(statuses) == 2
+    assert 'objective' in statuses[-1]
