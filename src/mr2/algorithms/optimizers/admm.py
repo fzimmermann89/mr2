@@ -1,16 +1,19 @@
 """Alternating Direction Method of Multipliers variants.
 
-This module provides ADMM-based optimizers for convex composite problems using
+This module provides ADMM-based optimizers for composite problems using
 `~mr2.operators.ProximableFunctional` objects and `~mr2.operators.LinearOperator`
-or `~mr2.operators.LinearOperatorMatrix` objects.
+or `~mr2.operators.LinearOperatorMatrix` objects. Quadratic ADMM also accepts
+callable split updates, including denoisers without a known objective.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 import torch
+from typing_extensions import NotRequired
 
 from mr2.algorithms.optimizers.cg import cg, vdot
 from mr2.algorithms.optimizers.OptimizerStatus import OptimizerStatus
@@ -22,6 +25,9 @@ from mr2.operators import (
     ProximableFunctionalSeparableSum,
 )
 from mr2.utils.to_tuple import to_tuple
+
+_ADMMSplitUpdate = Callable[..., tuple[torch.Tensor, ...]]
+"""Callable ``update(*values, sigma=tau)`` preserving the split tensor contract."""
 
 
 def _norm_squared(values: Sequence[torch.Tensor]) -> torch.Tensor:
@@ -59,7 +65,6 @@ class ADMMLinearStatus(OptimizerStatus):
     u: tuple[torch.Tensor, ...]
 
 
-@dataclass
 class ADMML2Status(OptimizerStatus):
     r"""Status of ADMM with L2 data term.
 
@@ -70,20 +75,30 @@ class ADMML2Status(OptimizerStatus):
     iteration_number
         Current iteration count.
     objective
-        Callable returning the objective value
+        Present only for a functional regularizer. Callable returning the objective value
         :math:`\frac{1}{2}\|Op\,x-b\|_2^2 + g(Ax)`.
     tau
-        ADMM penalty parameter.
+        Inverse ADMM penalty, tau = 1/rho.
     z
         Current auxiliary split variable(s).
     u
         Current scaled dual variable(s).
+    primal_residual
+        Split residual Ax - z, in the split space.
+    dual_residual
+        Dual residual A.H(z - z_previous) / tau, in the primal space.
+    data_fidelity
+        Current value of 0.5 * ||op(x) - b|| squared.
     """
 
-    objective: Callable[[*tuple[torch.Tensor, ...]], torch.Tensor]
+    objective: NotRequired[Callable[[*tuple[torch.Tensor, ...]], torch.Tensor]]
     tau: float | torch.Tensor
     z: tuple[torch.Tensor, ...]
     u: tuple[torch.Tensor, ...]
+
+    primal_residual: tuple[torch.Tensor, ...]
+    dual_residual: tuple[torch.Tensor, ...]
+    data_fidelity: torch.Tensor
 
 
 def admm_linear(
@@ -248,7 +263,7 @@ def admm_linear(
 
 
 def admm_l2(
-    g: ProximableFunctionalSeparableSum | ProximableFunctional,
+    g: ProximableFunctionalSeparableSum | ProximableFunctional | _ADMMSplitUpdate,
     op: LinearOperator | LinearOperatorMatrix,
     b: Sequence[torch.Tensor] | torch.Tensor,
     a: LinearOperator | LinearOperatorMatrix,
@@ -257,6 +272,7 @@ def admm_l2(
     tau: float | torch.Tensor,
     max_iterations: int = 128,
     tolerance: float = 0.0,
+    stopping_criterion: Literal['solution', 'residual'] = 'solution',
     initial_z: Sequence[torch.Tensor] | torch.Tensor | None = None,
     initial_u: Sequence[torch.Tensor] | torch.Tensor | None = None,
     cg_max_iterations: int = 128,
@@ -291,7 +307,12 @@ def admm_l2(
     ----------
     g
         Proximable regularizer. Can be a single functional or a
-        `~mr2.operators.ProximableFunctionalSeparableSum`.
+        `~mr2.operators.ProximableFunctionalSeparableSum`, or a split-update
+        callable with signature ``g(*values, sigma=tau) -> tuple[Tensor, ...]``.
+        The callable replaces the proximal step and must preserve tensor count,
+        shapes, dtypes and devices without modifying inputs in place. It need not
+        define an objective or converge. For a tensor denoiser, use
+        ``lambda x, **_: (denoiser(x),)`` and bind its strength explicitly.
     op
         Forward operator :math:`Op` in the data term.
     b
@@ -302,13 +323,22 @@ def admm_l2(
     initial_values
         Initial primal variable(s). Single tensor or tuple of tensors.
     tau
-        Positive ADMM penalty parameter.
+        Positive finite real inverse penalty: tau = 1/rho. Callable updates
+        require a scalar tensor. Functional updates with solution stopping also
+        accept broadcastable tensors, preserving the existing convention.
+        Residual stopping requires a single value.
     max_iterations
         Maximum number of ADMM iterations.
     tolerance
-        Relative stopping tolerance on the primal update
-        :math:`\|x_{k+1}-x_k\|_2 / \|x_{k+1}\|_2`.
-        If zero, no tolerance-based early stopping is applied.
+        Nonnegative finite relative stopping tolerance. Zero disables stopping.
+    stopping_criterion
+        ``'solution'`` preserves relative x-change stopping:
+        :math:`\|x_{k+1}-x_k\|_2 < tolerance \|x_{k+1}\|_2`.
+        ``'residual'`` requires both ``||Ax-z|| <= tolerance * max(||Ax||, ||z||)``
+        and ``||A.H(z-z_previous)/tau|| <= tolerance * ||A.H(u)/tau||``.
+        Norms combine all tuple components; zero scales require zero residuals.
+        Residual stopping is recommended for arbitrary split updates, where
+        unchanged x alone need not imply convergence.
     initial_z
         Optional initial split variable(s). If `None`, initialized as
         :math:`z_0 = A x_0`.
@@ -318,10 +348,13 @@ def admm_l2(
     cg_max_iterations
         Maximum CG iterations used inside each ADMM x-update.
     cg_tolerance
-        Residual tolerance used by CG for each x-update.
+        Nonnegative finite absolute residual tolerance used by CG for each x-update.
     callback
         Optional callback called after each iteration with `ADMML2Status`.
-        If it returns `False`, iterations stop early.
+        If it returns `False`, iterations stop early. With residual stopping,
+        callbacks include the converged iteration. With solution stopping, an
+        early return precedes the callback, preserving existing behavior.
+        Status includes an objective only when ``g`` is a functional.
 
     Returns
     -------
@@ -330,19 +363,37 @@ def admm_l2(
     Raises
     ------
     ValueError
-        If parameters are inconsistent (non-positive `tau`, incompatible
-        operator dimensions, mismatched number of regularizers, or invalid
-        initial values).
+        If the penalty or iteration/tolerance controls are invalid, the stopping
+        criterion is unknown, operator or functional dimensions are incompatible,
+        or a callable update or its initial split state violates the tensor contract.
     """
-    tau_ = torch.as_tensor(tau)
-    if (tau_ <= 0).any() or tau_.dtype.is_complex:
-        raise ValueError('tau must be real and positive')
-    inv_tau = 1 / tau_
-
-    if isinstance(g, ProximableFunctional):
-        g_sum = ProximableFunctionalSeparableSum(g)
+    g_sum = ProximableFunctionalSeparableSum(g) if isinstance(g, ProximableFunctional) else g
+    if isinstance(g_sum, ProximableFunctionalSeparableSum):
+        functional: ProximableFunctionalSeparableSum | None = g_sum
+        split_update = g_sum.prox
     else:
-        g_sum = g
+        functional = None
+        split_update = g_sum
+
+    if not isinstance(initial_values, torch.Tensor) and not len(initial_values):
+        raise ValueError('initial_values must contain at least one tensor')
+    x_device = initial_values.device if isinstance(initial_values, torch.Tensor) else initial_values[0].device
+    tau_ = torch.as_tensor(tau, device=x_device)
+    if tau_.is_complex() or not torch.isfinite(tau_).all() or not (tau_ > 0).all():
+        raise ValueError('tau must be positive finite and real')
+    if functional is None and tau_.ndim != 0:
+        raise ValueError('tau must be a scalar for callable split updates')
+    if stopping_criterion == 'residual':
+        if tau_.numel() != 1:
+            raise ValueError('tau must contain a single value for residual stopping')
+        tau_ = tau_.reshape(())
+    if max_iterations < 0 or cg_max_iterations <= 0:
+        raise ValueError('max_iterations must be nonnegative and cg_max_iterations positive')
+    if not 0 <= tolerance < float('inf') or not 0 <= cg_tolerance < float('inf'):
+        raise ValueError('tolerance and cg_tolerance must be nonnegative finite')
+    if stopping_criterion not in ('solution', 'residual'):
+        raise ValueError("stopping_criterion must be 'solution' or 'residual'")
+    inv_tau = tau_.reciprocal()
 
     op_matrix = LinearOperatorMatrix.from_diagonal(op) if isinstance(op, LinearOperator) else op
     a_matrix = LinearOperatorMatrix.from_diagonal(a) if isinstance(a, LinearOperator) else a
@@ -350,7 +401,7 @@ def admm_l2(
     n_reg_rows, n_x_a = a_matrix.shape
     if n_x != n_x_a:
         raise ValueError('op and a must have matching number of columns')
-    if len(g_sum) != n_reg_rows:
+    if functional is not None and len(functional) != n_reg_rows:
         raise ValueError('Number of functionals in g must match rows of a')
     if (1 if isinstance(b, torch.Tensor) else len(b)) != n_data_rows:
         raise ValueError('b must have same length as rows of op')
@@ -371,6 +422,32 @@ def admm_l2(
     if len(u) != n_reg_rows:
         raise ValueError('initial_u must have same length as rows of a')
 
+    def check_tensors(values: tuple[torch.Tensor, ...], name: str) -> None:
+        if (
+            not isinstance(values, tuple)
+            or len(values) != len(ax)
+            or any(
+                not isinstance(value, torch.Tensor)
+                or value.shape != reference.shape
+                or value.dtype != reference.dtype
+                or value.device != reference.device
+                for value, reference in zip(values, ax, strict=True)
+            )
+        ):
+            raise ValueError(f'{name} must preserve split tensor count, shape, dtype and device')
+
+    if functional is None:
+        check_tensors(z, 'initial_z')
+        check_tensors(u, 'initial_u')
+
+    def data_fidelity(*values: torch.Tensor) -> torch.Tensor:
+        return 0.5 * _norm_squared(
+            tuple(predicted - measured for predicted, measured in zip(op_matrix(*values), b_tuple, strict=True))
+        )
+
+    def norm(values: tuple[torch.Tensor, ...]) -> torch.Tensor:
+        return torch.linalg.vector_norm(torch.stack([torch.linalg.vector_norm(value) for value in values]))
+
     h = op_matrix.gram + inv_tau * a_matrix.gram
     op_h_b = op_matrix.H(*b_tuple)
 
@@ -385,10 +462,17 @@ def admm_l2(
             tolerance=cg_tolerance,
         )
         ax = a_matrix(*x_new)
-        z_new = g_sum.prox(*tuple(ax_i + ui for ax_i, ui in zip(ax, u, strict=True)), sigma=tau_)
-        u = tuple(ui + ax_i - zi for ui, ax_i, zi in zip(u, ax, z_new, strict=True))
+        z_new = split_update(*tuple(ax_i + ui for ax_i, ui in zip(ax, u, strict=True)), sigma=tau_)
+        if functional is None:
+            check_tensors(z_new, 'split update output')
+        primal_residual = tuple(ax_i - zi for ax_i, zi in zip(ax, z_new, strict=True))
+        u = tuple(ui + ri for ui, ri in zip(u, primal_residual, strict=True))
+        if callback is not None or (stopping_criterion == 'residual' and tolerance > 0):
+            dual_residual = tuple(
+                inv_tau * value for value in a_matrix.H(*tuple(new - old for new, old in zip(z_new, z, strict=True)))
+            )
 
-        if tolerance > 0:
+        if tolerance > 0 and stopping_criterion == 'solution':
             change_squared = _norm_squared(tuple(old - new for old, new in zip(x, x_new, strict=True)))
             x_new_squared = _norm_squared(x_new)
             if change_squared < tolerance**2 * x_new_squared:
@@ -398,23 +482,25 @@ def admm_l2(
         z = z_new
 
         if callback is not None:
-            continue_iterations = callback(
-                ADMML2Status(
-                    solution=x,
-                    iteration_number=iteration,
-                    objective=lambda *x_: (
-                        0.5
-                        * _norm_squared(
-                            tuple(op_x_i - b_i for op_x_i, b_i in zip(op_matrix(*x_), b_tuple, strict=True))
-                        )
-                        + g_sum(*a_matrix(*x_))[0]
-                    ),
-                    tau=tau_,
-                    z=z,
-                    u=u,
-                )
+            status = ADMML2Status(
+                solution=x,
+                iteration_number=iteration,
+                tau=tau_,
+                z=z,
+                u=u,
+                primal_residual=primal_residual,
+                dual_residual=dual_residual,
+                data_fidelity=data_fidelity(*x),
             )
-            if continue_iterations is False:
+            if functional is not None:
+                status['objective'] = lambda *x_: data_fidelity(*x_) + functional(*a_matrix(*x_))[0]
+            if callback(status) is False:
+                break
+
+        if stopping_criterion == 'residual' and tolerance > 0:
+            primal_scale = torch.maximum(norm(ax), norm(z))
+            dual_scale = norm(tuple(inv_tau * value for value in a_matrix.H(*u)))
+            if norm(primal_residual) <= tolerance * primal_scale and norm(dual_residual) <= tolerance * dual_scale:
                 break
 
     return x
