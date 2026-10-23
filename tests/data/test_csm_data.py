@@ -117,7 +117,11 @@ def test_CsmData_kdata_espirit_regrids_noncartesian(ismrmrd_rad) -> None:
     """ESPIRiT prepares non-Cartesian ACS and returns finite maps."""
     kdata = KData.from_file(ismrmrd_rad.filename, KTrajectoryIsmrmrd())
 
-    csm = CsmData.from_kdata_espirit(kdata)
+    width = kdata.acs().shape[-1]
+    if width < 6:
+        with pytest.raises(ValueError, match='at least kernel_width'):
+            CsmData.from_kdata_espirit(kdata)
+    csm = CsmData.from_kdata_espirit(kdata, kernel_width=min(6, width))
 
     # Dataclass stores repeated map dimensions as singletons.
     expected_shape = (*kdata.shape[:-3], *kdata.header.recon_matrix.zyx)
@@ -188,3 +192,10 @@ def test_CsmData_espirit_rejects_inconsistent_fov(ismrmrd_cart_single_rep) -> No
     kdata.header.recon_fov = kdata.header.recon_fov * 2
     with pytest.raises(ValueError, match='reconstruction geometry'):
         CsmData.from_kdata_espirit(kdata)
+
+
+def test_CsmData_espirit_rejects_acs_smaller_than_kernel(ismrmrd_cart_single_rep) -> None:
+    """Do not silently reduce the calibration kernel on active encoding axes."""
+    kdata = KData.from_file(ismrmrd_cart_single_rep.filename, KTrajectoryCartesian())
+    with pytest.raises(ValueError, match='at least kernel_width'):
+        CsmData.from_kdata_espirit(kdata, calibration_size=3, kernel_width=6)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from hashlib import sha256
 from math import prod, sqrt
 from typing import TYPE_CHECKING
 
@@ -64,23 +65,32 @@ def _noncartesian_coverage(
     coordinates: torch.Tensor,
     geometry: torch.Tensor,
     encoded: tuple[int, int, int],
+    window: tuple[int, int, int],
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Check geometric density, distance and convex-hull support on the target grid."""
     active = [i for i, n in enumerate(encoded) if n > 1]
     points = coordinates[active].movedim(0, -1).detach().cpu().numpy()
     volumes = geometry.detach().cpu().numpy()
     available, dense = [], []
+    seen = set()
     for batch_points, batch_volumes in zip(points, volumes, strict=True):
+        # Dense copies of a repeated trajectory need only one coverage calculation.
+        fingerprint = sha256(batch_points.tobytes())
+        fingerprint.update(batch_volumes.tobytes())
+        key = fingerprint.digest()
+        if key in seen:
+            continue
+        seen.add(key)
         tree = cKDTree(batch_points)
         try:
             hull = ConvexHull(batch_points) if len(active) > 1 else None
         except QhullError as error:
             raise ValueError('Non-Cartesian ACS requires samples spanning the active spatial dimensions.') from error
         supported_parts, dense_parts = [], []
-        for start in range(0, prod(encoded), 65536):
-            indices = np.arange(start, min(start + 65536, prod(encoded)))
-            query = np.stack(np.unravel_index(indices, encoded), axis=-1)[:, active]
-            query = query - np.asarray(encoded)[active] // 2
+        for start in range(0, prod(window), 65536):
+            indices = np.arange(start, min(start + 65536, prod(window)))
+            query = np.stack(np.unravel_index(indices, window), axis=-1)[:, active]
+            query = query - np.asarray(window)[active] // 2
             distance, nearest = tree.query(query)
             inside = np.ones(len(query), dtype=bool)
             if hull is None:
@@ -92,8 +102,8 @@ def _noncartesian_coverage(
             supported_parts.append(inside & (distance <= sqrt(len(active)) / 2 + 1e-6))
             local_volume = batch_volumes[nearest]
             dense_parts.append(np.isfinite(local_volume) & (local_volume > 0) & (local_volume <= 1 + 1e-6))
-        available.append(np.concatenate(supported_parts).reshape(encoded))
-        dense.append(np.concatenate(dense_parts).reshape(encoded))
+        available.append(np.concatenate(supported_parts).reshape(window))
+        dense.append(np.concatenate(dense_parts).reshape(window))
     return torch.from_numpy(np.stack(available)), torch.from_numpy(np.stack(dense))
 
 
@@ -143,13 +153,14 @@ def prepare_acs(kdata: KData, size: int | SpatialDimension[int] | None = None) -
         _requested_shape(size, encoded)
     # Expand only the logical acquisition dimensions; repeated tensor storage is valid.
     acquisition_shape = kdata.shape
-    trajectory_shape = (*acquisition_shape[:-4], 1, *acquisition_shape[-3:])
+    cartesian = all(t & TrajType.ONGRID for t in kdata.traj.type_along_kzyx)
+    # Keep broadcast trajectory batches compact for non-Cartesian coverage checks.
+    trajectory_shape = (*acquisition_shape[:-4], 1, *acquisition_shape[-3:]) if cartesian else tuple(kdata.traj.shape)
     coords = torch.stack([k.expand(trajectory_shape) for k in (kdata.traj.kz, kdata.traj.ky, kdata.traj.kx)])
-    coords = coords.flatten(start_dim=-3).reshape(3, -1, prod(acquisition_shape[-3:]))
+    coords = coords.flatten(start_dim=-3).reshape(3, -1, prod(trajectory_shape[-3:]))
     if not torch.isfinite(coords).all():
         raise ValueError('ACS preparation requires finite trajectory coordinates.')
     batch_shape = acquisition_shape[:-4]
-    cartesian = all(t & TrajType.ONGRID for t in kdata.traj.type_along_kzyx)
     if cartesian:
         integer = coords.round().long()
         index = torch.zeros_like(integer[0])
@@ -184,7 +195,9 @@ def prepare_acs(kdata: KData, size: int | SpatialDimension[int] | None = None) -
     except QhullError as error:
         raise ValueError('Non-Cartesian ACS requires a non-degenerate sampling trajectory.') from error
     geometry = geometry.expand(trajectory_shape).reshape(coords.shape[1:])
-    available, dense = _noncartesian_coverage(coords, geometry, encoded)
+    max_width = min(n for n in encoded if n > 1)
+    window = _requested_shape(max_width if size is None else size, encoded)
+    available, dense = _noncartesian_coverage(coords, geometry, encoded, window)
     shape = _select_shape(available, dense, encoded, size)
     # The encoded image grid keeps the frequency spacing and FOV consistent with ACS.
     fourier = FourierOp.from_kdata(kdata, recon_shape=kdata.header.encoding_matrix)

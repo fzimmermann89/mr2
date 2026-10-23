@@ -88,8 +88,9 @@ class CsmData(IData, init=False):
         Raises
         ------
         ValueError
-            If the requested calibration region has insufficient coverage, or the
-            reconstruction geometry is not a crop of the encoded image grid.
+            If the requested calibration region has insufficient coverage or is
+            smaller than the kernel on an active axis, or the reconstruction
+            geometry is not a crop of the encoded image grid.
         """
         from mr2.algorithms.csm.espirit import espirit
         from mr2.operators.ZeroPadOp import ZeroPadOp
@@ -102,6 +103,11 @@ class CsmData(IData, init=False):
         ) or any(r > e for r, e in zip(acs.header.recon_matrix.zyx, acs.header.encoding_matrix.zyx, strict=True)):
             raise ValueError('ESPIRiT requires reconstruction geometry matching a crop of the encoded image grid.')
         kspace_data = acs.acs(calibration_size)
+        if any(
+            n < kernel_width and encoded > 1
+            for n, encoded in zip(kspace_data.shape[-3:], acs.header.encoding_matrix.zyx, strict=True)
+        ):
+            raise ValueError('The ACS region must be at least kernel_width along each active encoding axis.')
         csm_data = smap(
             lambda c: espirit(
                 c,

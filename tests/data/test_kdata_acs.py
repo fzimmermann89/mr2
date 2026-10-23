@@ -213,3 +213,38 @@ def test_acs_noncartesian_common_batch_size(random_kheader: KHeader) -> None:
     for i in range(2):
         single = acquisition[i : i + 1].acs(width)
         torch.testing.assert_close(combined[i : i + 1], single)
+
+
+@pytest.mark.parametrize('encoded', [(1, 25, 32), (1, 24, 33)])
+def test_noncartesian_coverage_window_and_reuse(encoded: tuple[int, int, int]) -> None:
+    """A parity-safe window matches the full check and repeated trajectories share one tree."""
+    import importlib
+
+    module = importlib.import_module('mr2.algorithms.prepare_acs')
+    traj = radial_trajectory(32, 32)
+    coords = traj.as_tensor().expand(3, 1, 1, 1, 32, 32).reshape(3, 1, -1)
+    _, geometry = DcfData._from_traj_voronoi_with_geometry(traj)
+    geometry = geometry.reshape(1, -1)
+    full = module._noncartesian_coverage(coords, geometry, encoded, encoded)
+    window = (1, 7, 8)
+    with patch.object(module, 'cKDTree', wraps=module.cKDTree) as tree:
+        cropped = module._noncartesian_coverage(coords.expand(-1, 3, -1), geometry.expand(3, -1), encoded, window)
+    tree.assert_called_once()
+    for actual, expected in zip(cropped, full, strict=True):
+        torch.testing.assert_close(actual, module._center_crop(expected, window))
+        assert actual.shape == (1, *window)
+
+
+def test_acs_noncartesian_broadcast_trajectory_stays_compact(random_kheader: KHeader) -> None:
+    """Coil-image batches do not expand the shared trajectory used for coverage."""
+    import importlib
+
+    module = importlib.import_module('mr2.algorithms.prepare_acs')
+    shape = SpatialDimension(1, 24, 32)
+    traj = radial_trajectory(24, 32)
+    kdata = make_kdata(random_kheader, shape, traj, torch.randn(4, 2, 1, 32, 24, dtype=torch.complex64))
+    with patch.object(module, '_noncartesian_coverage', wraps=module._noncartesian_coverage) as coverage:
+        actual = kdata.acs(SpatialDimension(1, 4, 6))
+    assert actual.shape == (4, 2, 1, 4, 6)
+    assert coverage.call_args.args[0].shape[1] == 1
+    assert coverage.call_args.args[3] == (1, 4, 6)
