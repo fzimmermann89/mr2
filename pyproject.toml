@@ -122,7 +122,7 @@ filterwarnings = [
     "ignore:\\s*Online softmax is disabled on the fly since Inductor decides to\\s+split the reduction\\. Cut an issue to PyTorch if this is an\\s+important use case and you want to speed it up with online\\s+softmax\\.\\s*:UserWarning:torch\\._inductor\\.lowering$",
     "ignore:`torch.jit.script` is deprecated:DeprecationWarning", # torch 2.10
     "ignore:`torch.jit.script_method` is deprecated", # torch 2.10
-    "ignore:`torch\\.jit\\.script(_method)?` is not supported in Python 3\\.14\\+ and may break.*:DeprecationWarning", # torch 2.10 on Python 3.14
+    "ignore:`torch\\.jit\\.script(_method)?` is not supported in Python 3\\.14\\+ and may break.*:FutureWarning", # torch JVP on Python 3.14
     "ignore:Due to '_pack_'.*Structure will use memory layout compatible with MSVC.*:DeprecationWarning:ismrmrd\\.acquisition", # ismrmrd on Python 3.14
 ]
 markers = ["cuda : Tests only to be run when cuda device is available"]
