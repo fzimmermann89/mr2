@@ -1,10 +1,10 @@
 """Synthesis dictionary denoising using PGD, with optional low-pass residual splitting."""
 
+import math
 from typing import TypeVar
 
 import torch
 
-from mr2.algorithms._dictionary_denoising import _image, _initial, _validate_controls, _weight
 from mr2.algorithms.optimizers.cg import cg
 from mr2.algorithms.optimizers.pgd import PGDStatus, pgd
 from mr2.data import IData
@@ -78,11 +78,17 @@ def synthesis_denoising(
     Adapted from PTB-MR/mrpro PR #1018 (https://github.com/PTB-MR/mrpro/pull/1018).
     mr2's existing CG and PGD implement the baseline and sparse coding stages.
     """
-    _validate_controls(max_iterations, tolerance)
-    _validate_controls(max_iterations_low_pass, tolerance_low_pass)
-    if tolerance_low_pass == 0:
-        raise ValueError('tolerance_low_pass must be positive')
-    image = _image(idata if isinstance(idata, torch.Tensor) else idata.data)
+    if max_iterations < 1:
+        raise ValueError('max_iterations must be positive')
+    if not math.isfinite(tolerance) or tolerance < 0:
+        raise ValueError('tolerance must be finite and nonnegative')
+    if max_iterations_low_pass < 1:
+        raise ValueError('max_iterations_low_pass must be positive')
+    if not math.isfinite(tolerance_low_pass) or tolerance_low_pass <= 0:
+        raise ValueError('tolerance_low_pass must be finite and positive')
+    image = idata if isinstance(idata, torch.Tensor) else idata.data
+    if not (image.is_floating_point() or image.is_complex()) or image.numel() == 0:
+        raise ValueError('image must be a nonempty floating point or complex tensor')
     baseline = torch.zeros_like(image)
     if low_pass_operator is not None:
         (baseline,) = cg(
@@ -93,8 +99,26 @@ def synthesis_denoising(
             tolerance=tolerance_low_pass,
         )
     reference = synthesis_operator.H(image)[0]
-    weight = _weight(regularization_weight, reference)
-    codes = _initial(initial_codes, torch.zeros_like(reference))
+    weight = torch.as_tensor(regularization_weight, device=reference.device)
+    if weight.is_complex() or not torch.isfinite(weight).all() or (weight < 0).any():
+        raise ValueError('regularization_weight must be real, finite and nonnegative')
+    try:
+        shape = torch.broadcast_shapes(weight.shape, reference.shape)
+    except RuntimeError as error:
+        raise ValueError('regularization_weight must broadcast to the coefficient shape') from error
+    if shape != reference.shape:
+        raise ValueError('regularization_weight must not expand the coefficient shape')
+    weight = weight.to(dtype=reference.real.dtype)
+    if not torch.isfinite(weight).all():
+        raise ValueError('regularization_weight must be finite in the coefficient dtype')
+    if initial_codes is None:
+        codes = torch.zeros_like(reference)
+    else:
+        if initial_codes.shape != reference.shape:
+            raise ValueError('initial value must have exactly the expected shape')
+        if initial_codes.is_complex() and not reference.is_complex():
+            raise ValueError('initial value must not introduce a complex dtype')
+        codes = initial_codes.to(reference)
     # A random probe avoids a zero starting vector, including for zero images.
     norm = float(synthesis_operator.operator_norm(torch.randn_like(reference), dim=None).detach())
     stepsize = 0.9 / norm**2 if norm > 0 else 1.0

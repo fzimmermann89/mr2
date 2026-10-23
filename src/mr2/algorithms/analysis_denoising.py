@@ -1,10 +1,10 @@
 """Analysis dictionary denoising using PDHG."""
 
+import math
 from typing import TypeVar
 
 import torch
 
-from mr2.algorithms._dictionary_denoising import _image, _initial, _validate_controls, _weight
 from mr2.algorithms.optimizers.pdhg import pdhg
 from mr2.data import IData
 from mr2.operators import IdentityOp, LinearOperator, LinearOperatorMatrix, ProximableFunctionalSeparableSum
@@ -57,15 +57,39 @@ def analysis_denoising(
     Adapted from the convolutional denoising recipe in PTB-MR/mrpro PR #1018
     (https://github.com/PTB-MR/mrpro/pull/1018), using mr2's existing operators and solvers.
     """
-    _validate_controls(max_iterations, tolerance)
-    image = _image(idata if isinstance(idata, torch.Tensor) else idata.data)
+    if max_iterations < 1:
+        raise ValueError('max_iterations must be positive')
+    if not math.isfinite(tolerance) or tolerance < 0:
+        raise ValueError('tolerance must be finite and nonnegative')
+    image = idata if isinstance(idata, torch.Tensor) else idata.data
+    if not (image.is_floating_point() or image.is_complex()) or image.numel() == 0:
+        raise ValueError('image must be a nonempty floating point or complex tensor')
     coefficients = analysis_operator(image)[0]
-    weight = _weight(regularization_weight, coefficients)
+    weight = torch.as_tensor(regularization_weight, device=coefficients.device)
+    if weight.is_complex() or not torch.isfinite(weight).all() or (weight < 0).any():
+        raise ValueError('regularization_weight must be real, finite and nonnegative')
+    try:
+        shape = torch.broadcast_shapes(weight.shape, coefficients.shape)
+    except RuntimeError as error:
+        raise ValueError('regularization_weight must broadcast to the coefficient shape') from error
+    if shape != coefficients.shape:
+        raise ValueError('regularization_weight must not expand the coefficient shape')
+    weight = weight.to(dtype=coefficients.real.dtype)
+    if not torch.isfinite(weight).all():
+        raise ValueError('regularization_weight must be finite in the coefficient dtype')
+    if initial_image is None:
+        initial_image = image
+    else:
+        if initial_image.shape != image.shape:
+            raise ValueError('initial value must have exactly the expected shape')
+        if initial_image.is_complex() and not image.is_complex():
+            raise ValueError('initial value must not introduce a complex dtype')
+        initial_image = initial_image.to(image)
     (result,) = pdhg(
         f=ProximableFunctionalSeparableSum(0.5 * L2NormSquared(target=image), L1Norm(weight=weight)),
         g=None,
         operator=LinearOperatorMatrix(((IdentityOp(),), (analysis_operator,))),
-        initial_values=(_initial(initial_image, image),),
+        initial_values=(initial_image,),
         max_iterations=max_iterations,
         tolerance=tolerance,
     )
