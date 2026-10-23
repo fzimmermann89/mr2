@@ -328,9 +328,9 @@ class KData(Dataclass):
                 'Please open an issue of you need to handle this kind of data.',
                 stacklevel=1,
             )
-        acquisitions = [
-            acq for acq in acquisitions if acq.number_of_samples - acq.discard_pre - acq.discard_post == shapes[-1]
-        ]
+            acquisitions = [
+                acq for acq in acquisitions if acq.number_of_samples - acq.discard_pre - acq.discard_post == shapes[-1]
+            ]
 
         if ismrmrd_header.acquisitionSystemInformation is not None and isinstance(
             ismrmrd_header.acquisitionSystemInformation.systemVendor, str
