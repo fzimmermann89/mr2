@@ -163,7 +163,7 @@ class L21Norm(ElementaryProximableFunctional):
             raise ValueError('Proximal mappings cannot expand the input shape')
         sigma = sigma.to(device=x.device) if isinstance(sigma, torch.Tensor) else x.real.new_tensor(sigma)
         self._check_group_scalar(sigma, diff.shape, group, 'sigma')
-        shifted = torch.broadcast_to(x - sigma * self.target, diff.shape)
+        shifted = x - sigma * self.target
         norm = torch.linalg.vector_norm(shifted, dim=group, keepdim=True)
         denominator = torch.maximum(norm, radius)
         factor = radius / torch.where(denominator > 0, denominator, 1)
