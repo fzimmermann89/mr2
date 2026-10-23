@@ -101,8 +101,6 @@ def test_uniform_filter_int_axis(data):
     """Test uniform filter."""
     result = uniform_filter(data, 3, -1)
     assert result.shape == data.shape
-    significant = result.abs() > 1e-6  # Ignore rounding noise from the convolution backend.
-    assert significant.sum() == 3
     expected = torch.zeros_like(data)
     expected[..., 2, 2, 1:4] = 1 / 3
     torch.testing.assert_close(result, expected, atol=1e-6, rtol=1e-5)
@@ -113,9 +111,6 @@ def test_uniform_filter_two_axis(data):
     """Test uniform filter along two axes."""
     result = uniform_filter(data, 3, (-1, -2))
     assert result.shape == data.shape
-    significant = result.abs() > 1e-6  # Ignore rounding noise from the convolution backend.
-    assert significant.sum() == 9
-    assert significant[..., 2].sum() == 3
     expected = torch.zeros_like(data)
     expected[..., 2, 1:4, 1:4] = 1 / 9
     torch.testing.assert_close(result, expected, atol=1e-6, rtol=1e-5)
@@ -126,9 +121,6 @@ def test_uniform_filter_two_widths(data):
     """Test uniform filter with two widths."""
     result = uniform_filter(data, (3, 5), (-1, -2))
     assert result.shape == data.shape
-    significant = result.abs() > 1e-6  # Ignore rounding noise from the convolution backend.
-    assert significant.sum() == 15
-    assert significant[..., 2].sum() == 5
     expected = torch.zeros_like(data)
     expected[..., 2, :, 1:4] = 1 / 15
     torch.testing.assert_close(result, expected, atol=1e-6, rtol=1e-5)
@@ -143,9 +135,6 @@ def test_uniform_filter_noaxis(data):
     expected = torch.zeros_like(data)
     expected[..., 1:4, 1:4, 1:4] = 1 / 27
     torch.testing.assert_close(result, expected, atol=1e-6, rtol=1e-5)
-    # result should be the same along different axes of same size
-    torch.testing.assert_close(result[0, 0, :, 2, 2], result[0, 0, 2, :, 2], atol=1e-6, rtol=1e-5)
-    torch.testing.assert_close(result[0, 0, :, 2, 2], result[0, 0, 2, 2, :], atol=1e-6, rtol=1e-5)
 
 
 def test_uniform_invalid_width(data):
