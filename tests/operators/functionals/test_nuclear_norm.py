@@ -59,12 +59,12 @@ def test_zeros():
     target = torch.ones_like(x)
     f = NuclearNorm(target, weight=torch.tensor([0.0, 2.0]).reshape(2, 1, 1))
     torch.testing.assert_close(f.prox(x, 0)[0], x)
-    torch.testing.assert_close(f.prox_convex_conj(x, 0)[0][0], torch.zeros_like(x[0]))
+    torch.testing.assert_close(f.prox_convex_conj(x, 0)[0], x)
     torch.testing.assert_close(f.prox(x)[0][0], x[0])
     torch.testing.assert_close(NuclearNorm()(torch.zeros_like(x))[0], torch.zeros(2))
     torch.testing.assert_close(NuclearNorm().prox(torch.zeros_like(x))[0], torch.zeros_like(x))
     torch.testing.assert_close(NuclearNorm().prox_convex_conj(torch.zeros_like(x))[0], torch.zeros_like(x))
-    torch.testing.assert_close(NuclearNorm().prox_convex_conj(x, 0)[0], NuclearNorm().prox_convex_conj(x, 1)[0])
+    torch.testing.assert_close(NuclearNorm().prox_convex_conj(x, 0)[0], x)
 
 
 @pytest.mark.parametrize('method', ['forward', 'prox', 'prox_convex_conj'])
@@ -132,3 +132,22 @@ def test_batch_broadcasting():
             torch.testing.assert_close(values[i, j], matrix_f(x[i, j])[0])
             torch.testing.assert_close(primal[i, j], matrix_f.prox(x[i, j], step[i, 0, 0, 0])[0])
             torch.testing.assert_close(dual[i, j], matrix_f.prox_convex_conj(x[i, j], step[i, 0, 0, 0])[0])
+
+
+@pytest.mark.parametrize('method', ['prox', 'prox_convex_conj'])
+def test_step_precision(method: str):
+    """Python steps use input precision; tensor steps retain their precision."""
+    x = torch.diag(torch.tensor([3.0, 0.5], dtype=torch.float64))
+    target = torch.diag(torch.tensor([1.0, -0.25], dtype=torch.float64))
+    f = NuclearNorm(target=target)
+    expected = x - torch.eye(2, dtype=x.dtype) / 3 if method == 'prox' else torch.diag(x.new_tensor([1.0, 7 / 12]))
+    torch.testing.assert_close(getattr(f, method)(x, 1 / 3)[0], expected, atol=1e-15, rtol=1e-15)
+    weight = torch.tensor(1.0000000001, dtype=torch.float64)
+    sigma = torch.tensor(0.333333333333, dtype=torch.float64)
+    f = NuclearNorm(target=target, weight=weight)
+    expected = (
+        x - sigma * weight * torch.eye(2, dtype=x.dtype)
+        if method == 'prox'
+        else torch.diag(torch.minimum(x.diag() - sigma * target.diag(), weight))
+    )
+    torch.testing.assert_close(getattr(f, method)(x, sigma)[0], expected, atol=1e-15, rtol=1e-15)

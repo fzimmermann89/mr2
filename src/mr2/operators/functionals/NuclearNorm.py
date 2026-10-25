@@ -54,8 +54,9 @@ class NuclearNorm(ElementaryProximableFunctional):
         """Broadcast a matrix-constant parameter without expanding the input."""
         if x.ndim < 2:
             raise ValueError('NuclearNorm requires at least two input dimensions')
+        value = value.to(device=x.device) if isinstance(value, torch.Tensor) else x.real.new_tensor(value)
         try:
-            return torch.broadcast_to(torch.as_tensor(value, device=x.device), (*x.shape[:-2], 1, 1))
+            return torch.broadcast_to(value, (*x.shape[:-2], 1, 1))
         except RuntimeError as error:
             raise ValueError(
                 'weight and sigma must broadcast to the input batch shape with two trailing singleton axes'
@@ -115,8 +116,8 @@ class NuclearNorm(ElementaryProximableFunctional):
     def prox_convex_conj(self, x: torch.Tensor, sigma: torch.Tensor | float = 1.0) -> tuple[torch.Tensor]:
         r"""Project ``x - sigma * target`` onto the spectral-norm ball.
 
-        The ball radius is :math:`|w|/N`. At zero step this returns the ball
-        projection, the limit as the step approaches zero from above.
+        The ball radius is :math:`|w|/N`. Zero steps return the input,
+        including outside the conjugate domain, as in the other group norms.
 
         Parameters
         ----------
@@ -135,4 +136,5 @@ class NuclearNorm(ElementaryProximableFunctional):
         step = self._matrix_parameter(sigma, x)
         diff = x - step * self._target(x)
         u, s, vh = torch.linalg.svd(diff.to(torch.result_type(diff, radius)), full_matrices=False)
-        return ((u * torch.clamp_max(s, radius[..., 0]).unsqueeze(-2)) @ vh,)
+        projected = (u * torch.clamp_max(s, radius[..., 0]).unsqueeze(-2)) @ vh
+        return (torch.where(step == 0, x, projected),)
