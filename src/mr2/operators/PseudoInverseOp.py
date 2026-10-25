@@ -29,6 +29,7 @@ Vectors = tuple[torch.Tensor, ...]
 
 
 def _validate_options(tolerance: float, max_iterations: int) -> None:
+    """Validate shared options for exact and iterative pseudoinverses."""
     if not math.isfinite(tolerance) or not 0 <= tolerance < 1:
         raise ValueError('tolerance must be finite and in [0, 1).')
     if isinstance(max_iterations, bool) or not isinstance(max_iterations, int) or max_iterations < 1:
@@ -48,6 +49,7 @@ def _snapshot(source: Source) -> tuple[Source, Vectors, Vectors]:
     memo: dict[int, Any] = {}
 
     def visit(value: Any) -> Any:  # noqa: ANN401
+        """Copy supported containers and collect each tensor once by identity."""
         result: Any
         if id(value) in memo:
             return memo[id(value)]
@@ -58,7 +60,13 @@ def _snapshot(source: Source) -> tuple[Source, Vectors, Vectors]:
         elif isinstance(value, torch.nn.Module):
             result = copy.copy(value)
             memo[id(value)] = result
-            result.__dict__ = {key: visit(item) for key, item in vars(value).items()}
+            # Rebuild cached matrix Grams from the current coefficient leaves.
+            # Cached scalar factors may otherwise survive attribute replacement.
+            result.__dict__ = {
+                key: visit(item)
+                for key, item in vars(value).items()
+                if not (isinstance(value, LinearOperatorMatrix) and key == 'gram')
+            }
         elif isinstance(value, dict):
             result = value.copy()
             memo[id(value)] = result
@@ -91,6 +99,7 @@ def _check_vectors(values: Vectors, reference: Vectors | None = None) -> None:
 
 
 def _norm(values: Vectors) -> torch.Tensor:
+    """Compute a global tuple norm without squaring unscaled entries."""
     # Scale before summation to avoid squaring large or tiny entries.
     scale = torch.stack([v.abs().amax() if v.numel() else v.real.new_zeros(()) for v in values]).amax()
     if scale == 0:
@@ -137,6 +146,8 @@ def _solve(source: Source, rhs: Vectors, tolerance: float, max_iterations: int) 
 
 
 class _PseudoInverseFunction(torch.autograd.Function):
+    """Differentiate converged pseudoinverse actions without unrolling CG."""
+
     @staticmethod
     def forward(
         ctx: Any,  # noqa: ANN401
@@ -147,6 +158,7 @@ class _PseudoInverseFunction(torch.autograd.Function):
         n_rhs: int,
         *tensors: torch.Tensor,
     ) -> Vectors:
+        """Solve without retaining the CG iteration graph."""
         rhs = tensors[:n_rhs]
         solution = _solve(source, rhs, tolerance, max_iterations)
         ctx.source, ctx.leaves = source, leaves
@@ -159,6 +171,7 @@ class _PseudoInverseFunction(torch.autograd.Function):
     @staticmethod
     @once_differentiable
     def backward(ctx: Any, *grad_output: torch.Tensor) -> tuple:  # noqa: ANN401
+        """Apply the constant-rank VJP, including residual and nullspace terms."""
         saved = ctx.saved_tensors  # also checks versions of fixed source buffers
         solution = saved[: ctx.n_solution]
         rhs = saved[ctx.n_solution : ctx.n_solution + ctx.n_rhs]
@@ -195,6 +208,7 @@ class _PseudoInverseFunction(torch.autograd.Function):
 
 
 def _apply(source: Source, rhs: Vectors, tolerance: float, max_iterations: int) -> Vectors:
+    """Freeze tensor state for this call and expose original tensors to autograd."""
     snapshot, originals, leaves = _snapshot(source)
     return _PseudoInverseFunction.apply(snapshot, leaves, tolerance, max_iterations, len(rhs), *rhs, *originals)
 

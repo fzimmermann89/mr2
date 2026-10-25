@@ -24,6 +24,7 @@ from mr2.operators import (
     ZeroOp,
     ZeroPadOp,
 )
+from mr2.operators.LinearOperator import LinearOperatorElementwiseProductRight
 
 
 def matrix(m: int, n: int, rank: int, dtype: torch.dtype) -> torch.Tensor:
@@ -337,7 +338,7 @@ def test_float32_and_small_rhs() -> None:
     """Ordinary single precision and small representable data need no absolute floor."""
     for dtype, scale in [(torch.float32, 1.0), (torch.complex64, 1e-8), (torch.float64, 1e-20)]:
         a = matrix(5, 3, 3, dtype).to(dtype)
-        b = torch.randn(5, dtype=dtype) * scale
+        b = torch.randn(5, dtype=dtype, generator=torch.Generator().manual_seed(7)) * scale
         actual = EinsumOp(a).pinv()(b)[0]
         expected = torch.linalg.pinv(a) @ b
         torch.testing.assert_close(actual / scale, expected / scale, atol=2e-5, rtol=2e-5)
@@ -403,3 +404,21 @@ def test_partial_input_compatibility(fft: bool) -> None:
         op.pinv()(partial)
     with pytest.raises(ValueError, match='declared reconstruction'):
         op.pinv().H(partial)
+
+
+def test_replaced_coefficient_after_gram_cache() -> None:
+    """A coupled inverse and its gradients use coefficients replaced after Gram caching."""
+    scaled = LinearOperatorElementwiseProductRight(IdentityOp(), torch.tensor(2.0, dtype=torch.float64))
+    source = scaled | IdentityOp()
+    _ = source.gram
+    scale = torch.tensor(3.0, dtype=torch.float64, requires_grad=True)
+    scaled._scalar = scale
+    b = torch.tensor([1.0, 2.0], dtype=scale.dtype, requires_grad=True)
+    actual = source.pinv(tolerance=1e-10)(b)
+    expected = (scale * b / (scale.square() + 1), b / (scale.square() + 1))
+    for value, ref in zip(actual, expected, strict=True):
+        torch.testing.assert_close(value, ref)
+    grads = torch.autograd.grad(2 * actual[0].sum() - actual[1].sum(), (scale, b), retain_graph=True)
+    refs = torch.autograd.grad(2 * expected[0].sum() - expected[1].sum(), (scale, b))
+    for grad, ref in zip(grads, refs, strict=True):
+        torch.testing.assert_close(grad, ref)
