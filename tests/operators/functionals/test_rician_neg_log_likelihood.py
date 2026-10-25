@@ -5,92 +5,32 @@ import torch
 from mr2.operators.functionals import RicianNegLogLikelihood
 
 # 80-digit mpmath evaluation of the defining I0/I1 expressions, rounded to double.
+# fmt: off
+# a, y, s, followed by loss, amplitude/data/noise gradients and amplitude curvature.
 REFERENCES = [
     (0.0, 2.0, 1.0, 2.0, 0.0, 2.0, -2.0, -1.0),
-    (1e-8, 2.0, 1.0, 2.0, -1e-8, 2.0, -2.0, -1.0),
-    (
-        0.7,
-        1.3,
-        0.8,
-        0.8038534090169546,
-        -0.07669366310723812,
-        1.4010111044807179,
-        0.29046391043766673,
-        0.47852418187537293,
-    ),
-    (
-        1.0,
-        32.0,
-        1.0,
-        483.14783710897024,
-        -30.495965297183584,
-        31.015751084463012,
-        -960.0080694056328,
-        0.49179529857619214,
-    ),
-    (
-        1.0,
-        32.00001,
-        1.0,
-        483.14814726653105,
-        -30.49597529848671,
-        31.015761079500077,
-        -960.0086894031266,
-        0.49179530127159166,
-    ),
-    (
-        1000.0,
-        1000.0,
-        1.0,
-        7.826693687186747,
-        0.000500000125000125,
-        0.000500000125000125,
-        0.99999974999975,
-        0.99999949999975,
-    ),
-    (
-        1.0,
-        15.999,
-        1.0,
-        114.78212729637322,
-        -14.49064352659498,
-        15.030774265479407,
-        -223.98671394681006,
-        0.48267939463389953,
-    ),
-    (
-        1.0,
-        16.0,
-        1.0,
-        114.79715856962822,
-        -14.49164408685056,
-        15.03177224457184,
-        -224.0167118262989,
-        0.48268060050244344,
-    ),
-    (
-        1.0,
-        16.001,
-        1.0,
-        114.81219084086246,
-        -14.492644647030778,
-        15.032770223921581,
-        -224.04671170593843,
-        0.48268180620217777,
-    ),
-    (
-        1.0,
-        31.999,
-        1.0,
-        483.1168218576376,
-        -30.494965166866915,
-        31.01475158077231,
-        -959.9460706662662,
-        0.49179502902728983,
-    ),
-    (10000.0, 10000.0, 1.0, 10.129278903930855, 5.0000000125e-5, 5.0000000125e-5, 0.9999999975, 0.999999995),
-    (1e6, 1e6, 1.0, 14.734449091168822, 5.00000000000125e-7, 5.00000000000125e-7, 0.99999999999975, 0.9999999999995),
+    (1e-08, 2.0, 1.0, 2.0, -1e-08, 2.0, -2.0, -1.0),
+    (0.7, 1.3, 0.8,
+     0.8038534090169546, -0.07669366310723812, 1.4010111044807179, 0.29046391043766673, 0.47852418187537293),
+    (1.0, 32.0, 1.0,
+     483.14783710897024, -30.495965297183584, 31.015751084463012, -960.0080694056328, 0.49179529857619214),
+    (1.0, 32.00001, 1.0,
+     483.14814726653105, -30.49597529848671, 31.015761079500077, -960.0086894031266, 0.49179530127159166),
+    (1000.0, 1000.0, 1.0,
+     7.826693687186747, 0.000500000125000125, 0.000500000125000125, 0.99999974999975, 0.99999949999975),
+    (1.0, 15.999, 1.0,
+     114.78212729637322, -14.49064352659498, 15.030774265479407, -223.98671394681006, 0.48267939463389953),
+    (1.0, 16.0, 1.0,
+     114.79715856962822, -14.49164408685056, 15.03177224457184, -224.0167118262989, 0.48268060050244344),
+    (1.0, 16.001, 1.0,
+     114.81219084086246, -14.492644647030778, 15.032770223921581, -224.04671170593843, 0.48268180620217777),
+    (1.0, 31.999, 1.0,
+     483.1168218576376, -30.494965166866915, 31.01475158077231, -959.9460706662662, 0.49179502902728983),
+    (10000.0, 10000.0, 1.0, 10.129278903930855, 5.0000000125e-05, 5.0000000125e-05, 0.9999999975, 0.999999995),
+    (1000000.0, 1000000.0, 1.0,
+     14.734449091168822, 5.00000000000125e-07, 5.00000000000125e-07, 0.99999999999975, 0.9999999999995),
 ]
+# fmt: on
 
 
 @pytest.mark.parametrize(
@@ -155,27 +95,26 @@ def test_broadcast_reduction(dim: int | tuple[int, ...] | None, mean: bool, keep
 
 def test_higher_derivatives_and_func() -> None:
     """Check joint amplitude/data/noise HVPs, forward AD and batching."""
-    a = torch.tensor([0.1, 2.0, 20.0], dtype=torch.float64, requires_grad=True)
-    y = torch.tensor([2.0, 1.0, 21.0], dtype=a.dtype, requires_grad=True)
-    s = torch.tensor(0.8, dtype=a.dtype, requires_grad=True)
+    parameters = torch.tensor([[0.1, 2.0, 20.0], [2.0, 1.0, 21.0], [0.8, 0.8, 0.8]], dtype=torch.float64)
+    parameters.requires_grad_()
 
-    def loss(a: torch.Tensor, y: torch.Tensor, s: torch.Tensor) -> torch.Tensor:
+    def loss(parameters: torch.Tensor) -> torch.Tensor:
+        a, y, s = parameters.unbind()
         return RicianNegLogLikelihood(y, s)(a)[0]
 
-    assert torch.autograd.gradcheck(loss, (a, y, s))
-    assert torch.autograd.gradgradcheck(loss, (a, y, s))
-    direction = (torch.ones_like(a), torch.ones_like(y), torch.ones_like(s))
-    _, hvp, *_ = torch.func.jvp(torch.func.grad(loss, argnums=(0, 1, 2)), (a, y, s), direction)
-    gradients = torch.autograd.grad(loss(a, y, s), (a, y, s), create_graph=True)
-    expected = torch.autograd.grad(torch.stack([g.sum() for g in gradients]).sum(), (a, y, s))
-    for actual, reference in zip(hvp, expected, strict=True):
-        torch.testing.assert_close(actual, reference)
-    functional = RicianNegLogLikelihood(y.detach(), s.detach())
+    assert torch.autograd.gradcheck(loss, (parameters,))
+    assert torch.autograd.gradgradcheck(loss, (parameters,))
+    direction = torch.ones_like(parameters)
+    _, hvp, *_ = torch.func.jvp(torch.func.grad(loss), (parameters,), (direction,))
+    torch.testing.assert_close(hvp, torch.autograd.functional.hvp(loss, parameters, direction)[1])
+
+    a, y, s = parameters.detach().unbind()
+    functional = RicianNegLogLikelihood(y, s)
     batched = torch.stack((a, a * 2))
     torch.testing.assert_close(
         torch.vmap(lambda x: functional(x)[0])(batched), torch.stack([functional(x)[0] for x in batched])
     )
-    torch.testing.assert_close(torch.func.jacfwd(lambda x: functional(x)[0])(a), gradients[0])
+    torch.testing.assert_close(torch.func.jacfwd(lambda x: functional(x)[0])(a), torch.func.grad(loss)(parameters)[0])
 
 
 @pytest.mark.parametrize(('dtype', 'amplitude'), [(torch.float32, 1e20), (torch.float64, 1e160)])
