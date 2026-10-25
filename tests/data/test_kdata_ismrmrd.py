@@ -410,7 +410,7 @@ class ShortReads(Nonseekable):
         return super().read(3 if size is None or size < 0 else min(size, 3))
 
 
-@pytest.mark.parametrize('reader', ['from_ismrmrd_stream', 'iter_ismrmrd_stream'])
+@pytest.mark.parametrize('reader', ['from_ismrmrd_stream', 'iter_ismrmrd'])
 def test_short_reads(raw_data, reader) -> None:
     """Chunked nonseekable transports preserve data and report premature EOF."""
     _, header, acquisitions = raw_data
@@ -420,7 +420,7 @@ def test_short_reads(raw_data, reader) -> None:
         expected = KData.from_ismrmrd(header, acquisitions, DummyTrajectory())
         assert_kdata_equal(KData.from_ismrmrd_stream(stream, DummyTrajectory()), expected)
     else:
-        results = list(KData.iter_ismrmrd_stream(stream, DummyTrajectory()))
+        results = list(KData.iter_ismrmrd(stream, DummyTrajectory()))
         imaging = [acq for acq in acquisitions if is_image_acquisition(acq)]
         assert len(results) == len(imaging)
         for result, acq in zip(results, imaging, strict=True):
@@ -432,7 +432,7 @@ def test_short_reads(raw_data, reader) -> None:
             KData.from_ismrmrd_stream(truncated, DummyTrajectory())
     else:
         with pytest.raises(EOFError):
-            list(KData.iter_ismrmrd_stream(truncated, DummyTrajectory()))
+            list(KData.iter_ismrmrd(truncated, DummyTrajectory()))
     assert not truncated.closed
 
 
@@ -454,7 +454,7 @@ def test_iter_acquisitions(raw_data, monkeypatch) -> None:
         return acq
 
     monkeypatch.setattr(ismrmrd.Acquisition, 'deserialize_from', staticmethod(track_acquisitions))
-    with closing(KData.iter_ismrmrd_stream(stream, KTrajectoryCartesian())) as readouts:
+    with closing(KData.iter_ismrmrd(stream, KTrajectoryCartesian())) as readouts:
         for index, acq in enumerate(imaging):
             result = next(readouts)
             assert_kdata_equal(result, KData.from_ismrmrd(header, [acq], KTrajectoryCartesian()))
@@ -482,13 +482,13 @@ def test_iter_close_owned_file(raw_data, tmp_path, monkeypatch) -> None:
         return stream
 
     monkeypatch.setattr(type(filename), 'open', track_open)
-    with closing(KData.iter_ismrmrd_stream(filename, DummyTrajectory())) as measurements:
+    with closing(KData.iter_ismrmrd(filename, DummyTrajectory())) as measurements:
         next(measurements)
         assert not opened[-1].closed
     assert opened[-1].closed
     filename.write_bytes(filename.read_bytes()[:-1])
     with pytest.raises(EOFError):
-        list(KData.iter_ismrmrd_stream(filename, DummyTrajectory()))
+        list(KData.iter_ismrmrd(filename, DummyTrajectory()))
     assert opened[-1].closed
 
 
@@ -521,7 +521,7 @@ def test_stdin(raw_data) -> None:
 import sys
 from mr2.data import KData
 from mr2.data.traj_calculators.KTrajectoryCalculator import DummyTrajectory
-for kdata in KData.iter_ismrmrd_stream(sys.stdin.buffer, DummyTrajectory()):
+for kdata in KData.iter_ismrmrd(sys.stdin.buffer, DummyTrajectory()):
     assert kdata.data.shape == (1, 2, 1, 1, 4)
 assert not sys.stdin.buffer.closed
 """

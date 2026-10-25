@@ -242,7 +242,7 @@ class KData(Dataclass):
         selection reads to CLOSE, retaining at most ``abs(dataset_idx)`` measurements.
         Missing CLOSE and corrupt messages raise the deserializer's errors in the consumed input.
         Images, waveforms and other non-acquisition objects are ignored.
-        Selection consumes the next header. Use `iter_ismrmrd_stream` to process acquisitions as they arrive.
+        Selection consumes the next header. Use `iter_ismrmrd` to process acquisitions as they arrive.
 
         Parameters
         ----------
@@ -299,7 +299,7 @@ class KData(Dataclass):
         )
 
     @classmethod
-    def iter_ismrmrd_stream(
+    def iter_ismrmrd(
         cls,
         filename: str | PathLike | BinaryIO,
         trajectory: KTrajectoryCalculator | KTrajectory | KTrajectoryIsmrmrd,
