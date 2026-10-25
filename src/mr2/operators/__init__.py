@@ -15,6 +15,7 @@ from mr2.operators.CartesianSamplingOp import CartesianSamplingOp, CartesianMask
 from mr2.operators.ConjugateGradientOp import ConjugateGradientOp
 from mr2.operators.ConstraintsOp import ConstraintsOp
 from mr2.operators.ConvAnalysisDictionaryOp import ConvAnalysisDictionaryOp
+from mr2.operators.ConvolutionOp import ConvolutionOp
 from mr2.operators.ConvSynthesisDictionaryOp import ConvSynthesisDictionaryOp
 from mr2.operators.DensityCompensationOp import DensityCompensationOp
 from mr2.operators.DictionaryMatchOp import DictionaryMatchOp
@@ -56,6 +57,7 @@ __all__ = [
     'ConstraintsOp',
     'ConvAnalysisDictionaryOp',
     'ConvSynthesisDictionaryOp',
+    'ConvolutionOp',
     'DensityCompensationOp',
     'DictionaryMatchOp',
     'DifferentiableDictionaryMatchOp',
