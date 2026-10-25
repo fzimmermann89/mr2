@@ -94,7 +94,7 @@ img_direct_24 = direct_reconstruction_24(kdata_24spokes)
 # reconstruction.
 
 # %%
-sense_reconstruction = mr2.algorithms.reconstruction.RegularizedIterativeSENSEReconstruction(
+sense_reconstruction = mr2.algorithms.reconstruction.IterativeSENSEReconstruction(
     kdata_24spokes,
     n_iterations=8,
     csm=direct_reconstruction_24.csm_op,
