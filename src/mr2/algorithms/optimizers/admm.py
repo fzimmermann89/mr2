@@ -402,9 +402,13 @@ def admm_l2(
                 ADMML2Status(
                     solution=x,
                     iteration_number=iteration,
-                    objective=lambda *x_: 0.5
-                    * _norm_squared(tuple(op_x_i - b_i for op_x_i, b_i in zip(op_matrix(*x_), b_tuple, strict=True)))
-                    + g_sum(*a_matrix(*x_))[0],
+                    objective=lambda *x_: (
+                        0.5
+                        * _norm_squared(
+                            tuple(op_x_i - b_i for op_x_i, b_i in zip(op_matrix(*x_), b_tuple, strict=True))
+                        )
+                        + g_sum(*a_matrix(*x_))[0]
+                    ),
                     tau=tau_,
                     z=z,
                     u=u,

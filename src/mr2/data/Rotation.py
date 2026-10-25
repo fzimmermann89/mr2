@@ -1824,7 +1824,7 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
     @classmethod
     def identity(
         cls,
-        shape: int | None | tuple[int, ...] = None,
+        shape: int | tuple[int, ...] | None = None,
         *,
         device: torch.device | str | None = None,
     ) -> Self:
@@ -2019,7 +2019,7 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
     def mean(
         self,
         weights: torch.Tensor | NestedSequence[float] | None = None,
-        dim: None | int | Sequence[int] = None,
+        dim: int | Sequence[int] | None = None,
         keepdim: bool = False,
     ) -> Self:
         r"""Get the mean of the rotations.

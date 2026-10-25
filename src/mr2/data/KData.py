@@ -7,6 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 from importlib.metadata import version
 from types import EllipsisType
 from typing import TYPE_CHECKING, Literal, cast
+from xml.etree import ElementTree as ET
 
 import h5py
 import ismrmrd
@@ -118,7 +119,18 @@ class KData(Dataclass):
         # Can raise FileNotFoundError
         with ismrmrd.File(filename, 'r') as file:
             dataset = file[list(file.keys())[dataset_idx]]
-            ismrmrd_header = dataset.header
+            try:
+                ismrmrd_header = dataset.header
+            except TypeError:
+                root = ET.fromstring(dataset._contents['xml'][0])  # noqa: S314
+                prefix = root.tag.removesuffix('ismrmrdHeader')
+                measurement = root.find(f'{prefix}measurementInformation')
+                if measurement is not None and measurement.find(f'{prefix}patientPosition') is None:
+                    ET.SubElement(measurement, f'{prefix}patientPosition').text = 'HFS'
+                for encoding in root.findall(f'{prefix}encoding'):
+                    if encoding.find(f'{prefix}trajectory') is None:
+                        ET.SubElement(encoding, f'{prefix}trajectory').text = 'other'
+                ismrmrd_header = ismrmrd.xsd.CreateFromDocument(ET.tostring(root))
             acquisitions = dataset.acquisitions[:]
             try:
                 mtime: int = h5py.h5g.get_objinfo(dataset['data']._contents.id).mtime
@@ -270,7 +282,7 @@ class KData(Dataclass):
         return kdata
 
     def reshape_by_idx(self) -> Self:
-        """Sort and reshape according to the acquisistion indices.
+        """Sort and reshape according to the acquisition indices.
 
         Reshapes the data to ("all other labels", coils, k2, k1, k0).
         Within "all other labels", the order is determined by `KDIM_SORT_LABELS`.
@@ -299,30 +311,28 @@ class KData(Dataclass):
 
         if len(n_acqs_per_other_and_k2) == 1:
             # This is the most common case:
-            # All other and k2 combinations have the same number of aquisistions which we can use as k1
+            # All other and k2 combinations have the same number of acquisitions which we can use as k1
             # to reshape to (other, coils, k2, k1, k0)
             n_k1 = n_acqs_per_other_and_k2[0]
             n_k2 = n_acqs_per_other[0] // n_k1
         elif len(n_acqs_per_other) == 1:
             # We cannot split the data along phase encoding steps into k2 and k1, as there are different numbers of k1.
-            # But all "other labels" combinations have the same number of aquisisitions,
+            # But all "other labels" combinations have the same number of acquisitions,
             # so we can reshape to (other, coils, k, 1, k0)
             n_k1 = 1
             n_k2 = n_acqs_per_other[0]  # total number of k encoding steps
         else:
-            # For different other combinations we have different numbers of aquisistions,
+            # For different other combinations we have different numbers of acquisitions,
             # so we can only reshape to (acquisitions, coils, 1, 1, k0)
             # This might be an user error.
             warnings.warn(
-                f'There are different numbers of acquisistions in'
-                'different combinations of labels {"/".join(OTHER_LABELS)}: \n'
-                f'Found {n_acqs_per_other.tolist()}. \n'
-                'The data will be reshaped to (acquisitions, coils, 1, 1, k0). \n'
-                'This needs to be adjusted be reshaping for a successful reconstruction. \n'
-                'If unintenional, this might be caused by wrong labels in the ismrmrd file or a wrong flag filter. \n'
-                'To fix, it might be necessary to subset the data such that it can be reshaped to '
-                '(other, coils, k2, k1, k0), or indexes needs to be fixed. \n'
-                'After fixing the issue, call reshape_by_idx and consider recalculating the trajectory.',
+                f'There are different numbers of acquisitions for combinations of labels {"/".join(OTHER_LABELS)}.\n'
+                f'Found {n_acqs_per_other.tolist()}.\n'
+                'The data will be reshaped to (acquisitions, coils, 1, 1, k0).\n'
+                'For reconstruction, subset the data or fix the indices so it can be reshaped to '
+                '(other, coils, k2, k1, k0).\n'
+                'If unintentional, check the labels in the ISMRMRD file and the acquisition flag filter.\n'
+                'Then call reshape_by_idx and consider recalculating the trajectory.',
                 stacklevel=1,
             )
             n_k1 = 1

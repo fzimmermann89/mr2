@@ -322,7 +322,7 @@ class Dataclass:
         If other conversions are desired, please use the `~torch.Tensor.to` method of
         the fields directly.
 
-        If the copy argument is set to `True` (default), a deep copy will be returned
+        If the copy argument is set to `True`, a deep copy will be returned
         even if no conversion is necessary.
         If two fields are views of the same data before, in the result they will be independent
         copies if copy is set to `True` or a conversion is necessary.
@@ -350,7 +350,7 @@ class Dataclass:
 
         def parse1(
             device: str | torch.device | int | None = None,
-            dtype: None | torch.dtype = None,
+            dtype: torch.dtype | None = None,
             non_blocking: bool = False,
             copy: bool = False,
             memory_format: torch.memory_format = torch.preserve_format,
@@ -592,7 +592,7 @@ class Dataclass:
         -------
             The device of the fields or `None` if no field implements a `device` attribute.
         """
-        device: None | torch.device = None
+        device: torch.device | None = None
         for _, data in self.items():
             if not hasattr(data, 'device'):
                 continue

@@ -90,6 +90,8 @@ def pdhg(
     that if no stepsizes are provided, the algorithm runs a power iteration to obtain the
     upper bound for the stepsizes.
 
+    If the operator norm is zero, each omitted step size is set to ``1.0``.
+
     For a warm start, the initial relaxed primal and dual variables can be supplied.
     These might be obtained from the status object of a previous run.
 
@@ -179,7 +181,10 @@ def pdhg(
         operator_norm = operator_matrix.operator_norm(*[torch.randn_like(v) for v in initial_values]).amax()
         norm_sq = operator_norm.square()
 
-        if primal_stepsize is None and dual_stepsize is None:
+        if operator_norm == 0:
+            primal_stepsize_ = torch.as_tensor(1.0 if primal_stepsize is None else primal_stepsize)
+            dual_stepsize_ = torch.as_tensor(1.0 if dual_stepsize is None else dual_stepsize)
+        elif primal_stepsize is None and dual_stepsize is None:
             primal_stepsize_ = dual_stepsize_ = safety_factor / operator_norm
         elif primal_stepsize is None and dual_stepsize is not None:
             dual_stepsize_ = torch.as_tensor(dual_stepsize)

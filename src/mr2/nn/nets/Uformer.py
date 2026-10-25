@@ -11,7 +11,8 @@ from mr2.nn.CondMixin import CondMixin
 from mr2.nn.DropPath import DropPath
 from mr2.nn.FiLM import FiLM
 from mr2.nn.join import Concat
-from mr2.nn.ndmodules import convND, convTransposeND, instanceNormND
+from mr2.nn.LayerNorm import LayerNorm
+from mr2.nn.ndmodules import convND, convTransposeND
 from mr2.nn.nets.UNet import UNetBase, UNetDecoder, UNetEncoder
 from mr2.nn.Sequential import Sequential
 
@@ -57,7 +58,7 @@ class LeWinTransformerBlock(CondMixin, Module):
         super().__init__()
         channels = n_channels_per_head * n_heads
         hidden_dim = int(channels * mlp_ratio)
-        self.norm1 = instanceNormND(n_dim)(channels)
+        self.norm1 = LayerNorm(channels, features_last=False)
         self.attn = ShiftedWindowAttention(
             n_dim=n_dim,
             n_channels_in=channels,
@@ -66,7 +67,7 @@ class LeWinTransformerBlock(CondMixin, Module):
             window_size=window_size,
             shifted=shifted,
         )
-        self.norm2 = instanceNormND(n_dim)(channels)
+        self.norm2 = LayerNorm(channels, features_last=False)
         self.ff = Sequential(
             convND(n_dim)(channels, hidden_dim, 1),
             GELU(),
@@ -86,7 +87,9 @@ class LeWinTransformerBlock(CondMixin, Module):
         Parameters
         ----------
         x
-            Input tensor
+            Input tensor of shape ``(batch, channels, *spatial)``. The learned window modulator repeats
+            periodically from the spatial origin, including in padded windows. For 1D and 2D inputs,
+            spatial sizes need not be multiples of ``window_size``.
         cond
             Conditioning tensor
 
@@ -98,11 +101,18 @@ class LeWinTransformerBlock(CondMixin, Module):
 
     def forward(self, x: torch.Tensor, *, cond: torch.Tensor | None = None) -> torch.Tensor:
         """Apply the transformer block."""
-        modulator = self.modulator.tile([t // s for t, s in zip(x.shape[1:], self.modulator.shape, strict=False)])
-        x_mod = self.norm1(x) + modulator
-        x_attn = self.attn(x_mod)
-        x_ff = self.ff(self.norm2(x_attn), cond=cond)
-        return x + self.drop_path(x_ff)
+        modulator = self.modulator.tile(
+            [(t + s - 1) // s for t, s in zip(x.shape[1:], self.modulator.shape, strict=True)]
+        )
+        normalized = self.norm1(x)
+        padding = [
+            p for t, s in zip(reversed(x.shape[2:]), reversed(modulator.shape[1:]), strict=True) for p in (0, s - t)
+        ]
+        if any(padding):
+            normalized = torch.nn.functional.pad(normalized, padding, mode='circular')
+        attended = self.attn(normalized + modulator)[tuple(slice(0, size) for size in x.shape)]
+        x = x + self.drop_path(attended)
+        return x + self.drop_path(self.ff(self.norm2(x), cond=cond))
 
 
 class Uformer(UNetBase):

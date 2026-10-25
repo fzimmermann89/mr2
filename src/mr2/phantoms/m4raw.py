@@ -1,4 +1,4 @@
-"""FastMRI dataset."""
+"""M4Raw dataset."""
 
 import re
 from collections import defaultdict
@@ -51,14 +51,14 @@ class M4RawDataset(torch.utils.data.Dataset):
             Whether to return single slices or stacks of slices.
         """
         pattern = re.compile(r'(\d+_(?:FLAIR|T1|T2|GRE))(\d+)')
-        grouped: dict[str, list] = defaultdict(list)
+        grouped: dict[str, list[Path]] = defaultdict(list)
         for fn in Path(path).rglob('*.h5') if isinstance(path, str | Path | PathLike) else [Path(p) for p in path]:
             m = pattern.fullmatch(fn.stem)
             if m is None:
                 warn(f'Ignoring file {fn} because it does not match pattern.', stacklevel=2)
                 continue
             grouped[m[1]].append(fn)
-        self._filenames = list(grouped.values())
+        self._filenames = [sorted(filenames) for _, filenames in sorted(grouped.items())]
         self.single_slice = single_slice
 
     def __len__(self) -> int:
@@ -104,7 +104,7 @@ class M4RawDataset(torch.utils.data.Dataset):
         echo_spacing = [
             ms_to_s(float(e.replace('ms', ''))) for e in get('ns0:sequenceParameters/ns0:echo_spacing') if e != 'N/A'
         ]
-        echo_train_length = int(get('ns0:encoding/ns0:echoTrainLength')[0])
+        echo_train_length = int(get('ns0:sequenceParameters/ns0:echo_train_length')[0])
         sequence_type = get('ns0:sequenceParameters/ns0:sequence_type')[0]
         model = get('ns0:acquisitionSystemInformation/ns0:systemModel')[0]
         vendor = get('ns0:acquisitionSystemInformation/ns0:systemVendor')[0]
@@ -137,14 +137,15 @@ class M4RawDataset(torch.utils.data.Dataset):
             with h5py.File(filename, 'r') as file:
                 reps.append(torch.as_tensor(np.array(file['kspace'][slice_idx, ..., 30:225])))
         data = rearrange(torch.stack(reps), 'reps ... coils k0 k1 -> ... reps coils 1 k1 k0')
-        info = AcqInfo()
-        info.idx.k1 = unsqueeze_left(torch.arange(30, 225)[:, None], data.ndim - 2)
-        info.idx.repetition = unsqueeze_left(torch.arange(data.shape[-5])[:, None, None, None, None], data.ndim - 5)
+        header.acq_info.idx.k1 = unsqueeze_left(torch.arange(30, 225)[:, None], data.ndim - 2)
+        header.acq_info.idx.repetition = unsqueeze_left(
+            torch.arange(data.shape[-5])[:, None, None, None, None], data.ndim - 5
+        )
 
         traj = KTrajectoryCartesian()(
             n_k0=256,
             k0_center=128,
-            k1_idx=info.idx.k1,
+            k1_idx=header.acq_info.idx.k1,
             k1_center=128,
             k2_idx=torch.tensor(0),
             k2_center=0,

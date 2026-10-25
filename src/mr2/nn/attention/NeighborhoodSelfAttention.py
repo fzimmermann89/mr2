@@ -186,6 +186,10 @@ class NeighborhoodSelfAttention(Module):
         if parse_version(torch.__version__) < parse_version('2.6.0'):
             raise NotImplementedError('NeighborhoodSelfAttention requires PyTorch 2.6.0 or higher')
         super().__init__()
+        if n_heads <= 0:
+            raise ValueError('n_heads must be positive')
+        if n_channels_in % n_heads:
+            raise ValueError('n_channels_in must be divisible by n_heads')
         self.n_head = n_heads
         self.kernel_size = kernel_size if isinstance(kernel_size, int) else tuple(kernel_size)
         self.dilation = dilation if isinstance(dilation, int) else tuple(dilation)
