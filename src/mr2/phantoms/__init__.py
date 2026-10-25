@@ -1,9 +1,10 @@
 """Numerical phantoms and datasets."""
 
-from mr2.phantoms import brainweb, coils, mdcnn
+from mr2.phantoms import a4im_lowfield, brainweb, coils, mdcnn
 from mr2.phantoms.b0map import b0map_from_sh_coefficients, random_b0_sh_coefficients, random_b0map
 from mr2.phantoms.EllipsePhantom import EllipsePhantom
 from mr2.phantoms.fastmri import FastMRIImageDataset, FastMRIKDataDataset
+from mr2.phantoms.ismrmrd import IsmrmrdDataset
 from mr2.phantoms.m4raw import M4RawDataset
 from mr2.phantoms.phantom_elements import EllipseParameters
 
@@ -12,7 +13,9 @@ __all__ = [
     'EllipsePhantom',
     'FastMRIImageDataset',
     'FastMRIKDataDataset',
+    'IsmrmrdDataset',
     'M4RawDataset',
+    'a4im_lowfield',
     'b0map_from_sh_coefficients',
     'brainweb',
     'coils',
