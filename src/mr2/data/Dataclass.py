@@ -26,7 +26,7 @@ from mr2.utils.reshape import (
     normalize_indices,
 )
 from mr2.utils.summarize import summarize_object
-from mr2.utils.typing import TorchIndexerType
+from mr2.utils.typing import FileOrPath, TorchIndexerType
 
 _MR2_ATTR_PY_TYPE = 'py_type'
 _MR2_ATTR_PY_MODULE = 'py_module'
@@ -858,7 +858,7 @@ class Dataclass:
                                 f"Could not load enum '{enum_class_name}' from '{enum_module_name}'. Error: {e}"
                             ) from e
                     case 'str':
-                        init_args[field_name] = str(data)
+                        init_args[field_name] = h5_item.asstr()[()]
                     case 'bool':
                         init_args[field_name] = bool(data)
                     case 'int':
@@ -891,18 +891,14 @@ class Dataclass:
             self._mr2_save_to_group(f)
 
     @classmethod
-    def from_mr2(cls, filepath: str | Path) -> Self:
+    def from_mr2(cls, filepath: FileOrPath) -> Self:
         """Load a dataclass from an MR2 file.
 
         Parameters
         ----------
         filepath
-            The path to the MR2 file.
+            Path or seekable binary file containing MR2 data.
         """
-        filepath = Path(filepath)
-        if not filepath.exists():
-            raise FileNotFoundError(f'HDF5 file not found: {filepath}')
-
         with h5py.File(filepath, 'r') as f:
             if (version := f.attrs.get('version', None)) != _MR2_VERSION:
                 warn(f'Unsupported MR2 version {version}. Only version {_MR2_VERSION} is supported.', stacklevel=2)

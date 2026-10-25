@@ -5,7 +5,7 @@ import datetime
 import warnings
 from collections import deque
 from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
-from contextlib import closing
+from contextlib import contextmanager, nullcontext
 from importlib.metadata import version
 from os import PathLike
 from pathlib import Path
@@ -15,6 +15,7 @@ from xml.etree import ElementTree as ET
 
 import h5py
 import ismrmrd
+import ismrmrd.serialization
 import numpy as np
 import torch
 from einops import rearrange
@@ -23,7 +24,6 @@ from typing_extensions import Self, TypeVar, overload
 if TYPE_CHECKING:
     from mr2.operators.LinearOperator import LinearOperator
 
-from mr2.data._ismrmrd import read_stream
 from mr2.data.acq_filters import has_n_coils, is_image_acquisition
 from mr2.data.AcqInfo import (
     AcqInfo,
@@ -83,6 +83,37 @@ OTHER_LABELS = (
 T = TypeVar('T', Rotation, torch.Tensor, Rotation | torch.Tensor)
 
 
+class _ReadExact:
+    """Read full protocol fields from blocking streams that return short reads."""
+
+    def __init__(self, stream: BinaryIO) -> None:
+        """Wrap a binary stream."""
+        self.stream = stream
+
+    def read(self, size: int) -> bytes:
+        """Read size bytes or stop at EOF."""
+        chunks = []
+        while size:
+            chunk = self.stream.read(size)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size -= len(chunk)
+        return b''.join(chunks)
+
+
+@contextmanager
+def _open_ismrmrd_stream(
+    filename: str | PathLike | BinaryIO,
+) -> Generator[ismrmrd.serialization.ProtocolDeserializer, None, None]:
+    """Open a protocol reader, leaving caller-owned streams open."""
+    with (
+        Path(filename).open('rb') if isinstance(filename, (str, PathLike)) else nullcontext(filename) as stream,
+        ismrmrd.serialization.ProtocolDeserializer(cast(BinaryIO, _ReadExact(stream))) as reader,
+    ):
+        yield reader
+
+
 class KData(Dataclass):
     """MR raw data / k-space data class."""
 
@@ -99,24 +130,25 @@ class KData(Dataclass):
     def from_file(
         cls,
         filename: FileOrPath,
-        trajectory: KTrajectoryCalculator | KTrajectory | KTrajectoryIsmrmrd,
+        trajectory: KTrajectoryCalculator | KTrajectory | KTrajectoryIsmrmrd | None = None,
         header_overwrites: Mapping[str, object] | None = None,
         dataset_idx: int = -1,
         acquisition_filter_criterion: Callable[[ismrmrd.Acquisition], bool] | None = is_image_acquisition,
     ) -> Self:
-        """Load k-space data from an ISMRMRD HDF5 or serialized stream file.
+        """Load k-space data from an MR2 or ISMRMRD file.
 
         Paths are detected by HDF5 content; .h5 and .mrd paths always use the HDF5 reader
         so damaged HDF5 files retain their original errors. File-like objects retain the
         HDF5 behavior. Use `from_ismrmrd_stream` explicitly for binary streams, including
         nonseekable inputs such as sys.stdin.buffer.
+        MR2 files restore the saved KData; the remaining options apply to ISMRMRD input.
 
         Parameters
         ----------
         filename
-            path to the ISMRMRD file or file-like object
+            path to the file or a seekable binary file-like object
         trajectory
-            KTrajectoryCalculator to calculate the k-space trajectory or an already calculated KTrajectory
+            Trajectory source for ISMRMRD input. MR2 files contain their own trajectory.
             If a KTrajectory is given, the shape should be `(acquisisions 1 1 k0)` in the same order as the acquisitions
             retained after filtering, coil selection and readout-length selection.
         header_overwrites
@@ -126,13 +158,21 @@ class KData(Dataclass):
         acquisition_filter_criterion
             function which returns True if an acquisition should be included in KData, or None to disable filtering
         """
-        if (
-            isinstance(filename, (str, PathLike))
-            and Path(filename).suffix.lower() not in ('.h5', '.mrd')
-            and not h5py.is_hdf5(filename)
-        ):
+        is_hdf5 = (
+            not isinstance(filename, (str, PathLike))
+            or Path(filename).suffix.lower() in ('.h5', '.mrd')
+            or h5py.is_hdf5(filename)
+        )
+        if is_hdf5:
+            with h5py.File(filename, 'r') as file:
+                is_mr2 = 'class_name' in file.attrs and 'py_module' in file.attrs
+            if is_mr2:
+                return cls.from_mr2(filename)
+        if trajectory is None:
+            raise ValueError('A trajectory source is required for ISMRMRD input.')
+        if not is_hdf5:
             return cls.from_ismrmrd_stream(
-                filename, trajectory, header_overwrites, dataset_idx, acquisition_filter_criterion
+                cast(str | PathLike, filename), trajectory, header_overwrites, dataset_idx, acquisition_filter_criterion
             )
         return cls.from_ismrmrd_hdf5(filename, trajectory, header_overwrites, dataset_idx, acquisition_filter_criterion)
 
@@ -202,7 +242,7 @@ class KData(Dataclass):
         selection reads to CLOSE, retaining at most ``abs(dataset_idx)`` measurements.
         Missing CLOSE and corrupt messages raise the deserializer's errors in the consumed input.
         Images, waveforms and other non-acquisition objects are ignored.
-        Selection consumes the next header; use `iter_ismrmrd_stream` to read successive measurements.
+        Selection consumes the next header. Use `iter_ismrmrd_stream` to process acquisitions as they arrive.
 
         Parameters
         ----------
@@ -225,15 +265,28 @@ class KData(Dataclass):
         trailing: deque[tuple[ismrmrd.xsd.ismrmrdHeader, list[ismrmrd.Acquisition]]] = deque(
             maxlen=-dataset_idx if dataset_idx < 0 else 1
         )
-        with closing(read_stream(filename)) as measurements:
-            for index, measurement in enumerate(measurements):
-                trailing.append(measurement)
-                if index == dataset_idx:
-                    break
+        header = None
+        acquisitions: list[ismrmrd.Acquisition] = []
+        index = 0
+        with _open_ismrmrd_stream(filename) as reader:
+            for obj in reader.deserialize():
+                if isinstance(obj, ismrmrd.xsd.ismrmrdHeader):
+                    if header is not None:
+                        trailing.append((header, acquisitions))
+                        if index == dataset_idx:
+                            break
+                        index += 1
+                    header, acquisitions = obj, []
+                elif isinstance(obj, ismrmrd.Acquisition):
+                    if header is None:
+                        raise ValueError('ISMRMRD stream contains acquisitions before the first header.')
+                    acquisitions.append(obj)
             else:
+                if header is not None:
+                    trailing.append((header, acquisitions))
                 if not trailing:
                     raise ValueError('No ISMRMRD header found in stream.')
-                if dataset_idx >= 0 or len(trailing) < -dataset_idx:
+                if dataset_idx > index or (dataset_idx < 0 and len(trailing) < -dataset_idx):
                     raise IndexError('ISMRMRD measurement index out of range.')
         header, acquisitions = trailing[0]
         return cls.from_ismrmrd(
@@ -253,12 +306,11 @@ class KData(Dataclass):
         header_overwrites: Mapping[str, object] | None = None,
         acquisition_filter_criterion: Callable[[ismrmrd.Acquisition], bool] | None = is_image_acquisition,
     ) -> Generator[Self, None, None]:
-        """Yield KData for each complete measurement in a serialized ISMRMRD stream.
+        """Yield one KData per selected acquisition in stream order.
 
-        Measurements end at the next header or CLOSE. Measurements are accumulated
-        separately; reconstruction can start before the stream ends. Missing CLOSE
-        and corrupt messages raise the deserializer's errors. Images, waveforms and
-        other non-acquisition messages are ignored.
+        Each KData contains one readout and its acquisition counters. The XML header
+        supplies the encoding geometry. Images, waveforms and other messages are ignored.
+        Missing CLOSE and corrupt messages raise the deserializer's errors.
 
         Parameters
         ----------
@@ -266,7 +318,7 @@ class KData(Dataclass):
             Path or blocking binary stream, including sys.stdin.buffer. Caller streams
             remain open. Close the iterator when stopping early to release an owned file.
         trajectory
-            Trajectory source, as in `from_ismrmrd`, applied to each measurement.
+            Trajectory source, as in `from_ismrmrd`, applied to each acquisition.
         header_overwrites
             Header fields to overwrite.
         acquisition_filter_criterion
@@ -275,23 +327,30 @@ class KData(Dataclass):
         Yields
         ------
         KData
-            Sorted k-space data for each measurement, in stream order.
+            K-space data with shape ``(1, coils, 1, 1, samples)``.
         """
         header_defaults: dict[str, object] = {}
         if isinstance(filename, (str, PathLike)):
             header_defaults['datetime'] = datetime.datetime.fromtimestamp(Path(filename).stat().st_mtime)
-        with closing(read_stream(filename)) as measurements:
-            for header, acquisitions in measurements:
-                kdata = cls.from_ismrmrd(
-                    header,
-                    acquisitions,
-                    trajectory,
-                    header_overwrites,
-                    acquisition_filter_criterion,
-                    header_defaults=header_defaults,
-                )
-                acquisitions.clear()
-                yield kdata
+        header = None
+        with _open_ismrmrd_stream(filename) as reader:
+            for obj in reader.deserialize():
+                if isinstance(obj, ismrmrd.xsd.ismrmrdHeader):
+                    header = obj
+                elif isinstance(obj, ismrmrd.Acquisition):
+                    if header is None:
+                        raise ValueError('ISMRMRD stream contains acquisitions before the first header.')
+                    if acquisition_filter_criterion is None or acquisition_filter_criterion(obj):
+                        kdata = cls.from_ismrmrd(
+                            header,
+                            [obj],
+                            trajectory,
+                            header_overwrites,
+                            acquisition_filter_criterion=None,
+                            header_defaults=header_defaults,
+                        )
+                        del obj
+                        yield kdata
 
     @classmethod
     def from_ismrmrd(
@@ -371,7 +430,7 @@ class KData(Dataclass):
         if len(shapes) > 1:
             has_discards = any(acq.discard_pre or acq.discard_post for acq in acquisitions)
             warnings.warn(
-                f'Acquisitions have different shape. Got {list(shapes)}. '
+                f'Acquisitions have different shape. Got {shapes}. '
                 f'Keeping only acquisistions with {shapes[-1]} data samples. Note: discard_pre and discard_post '
                 f'{"have been applied. " if has_discards else "were empty. "}'
                 'Please open an issue of you need to handle this kind of data.',

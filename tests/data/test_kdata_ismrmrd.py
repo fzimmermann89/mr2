@@ -415,13 +415,16 @@ def test_short_reads(raw_data, reader) -> None:
     """Chunked nonseekable transports preserve data and report premature EOF."""
     _, header, acquisitions = raw_data
     data = serialize_measurements([(header, acquisitions)]).getvalue()
-    expected = KData.from_ismrmrd(header, acquisitions, DummyTrajectory())
     stream = ShortReads(data)
     if reader == 'from_ismrmrd_stream':
-        result = KData.from_ismrmrd_stream(stream, DummyTrajectory())
+        expected = KData.from_ismrmrd(header, acquisitions, DummyTrajectory())
+        assert_kdata_equal(KData.from_ismrmrd_stream(stream, DummyTrajectory()), expected)
     else:
-        (result,) = KData.iter_ismrmrd_stream(stream, DummyTrajectory())
-    assert_kdata_equal(result, expected)
+        results = list(KData.iter_ismrmrd_stream(stream, DummyTrajectory()))
+        imaging = [acq for acq in acquisitions if is_image_acquisition(acq)]
+        assert len(results) == len(imaging)
+        for result, acq in zip(results, imaging, strict=True):
+            assert_kdata_equal(result, KData.from_ismrmrd(header, [acq], DummyTrajectory()))
     assert not stream.closed
     truncated = ShortReads(data[:-1])
     if reader == 'from_ismrmrd_stream':
@@ -433,13 +436,15 @@ def test_short_reads(raw_data, reader) -> None:
     assert not truncated.closed
 
 
-def test_iter_measurements(raw_data, monkeypatch) -> None:
-    """Iteration yields at a measurement boundary before reading later payloads."""
+def test_iter_acquisitions(raw_data, monkeypatch) -> None:
+    """Yield each readout before reading the next message, preserving counters and headers."""
     _, header, acquisitions = raw_data
-    expected = KData.from_ismrmrd(header, acquisitions, DummyTrajectory())
-    prefix = serialize_measurements([(header, acquisitions)]).getvalue()[:-2]
-    rest = serialize_measurements([(header, acquisitions)]).getvalue()
-    stream = io.BytesIO(prefix + rest)
+    imaging = [acq for acq in acquisitions if is_image_acquisition(acq)]
+    next_header = copy.deepcopy(header)
+    next_header.measurementInformation = ismrmrd.xsd.measurementInformationType(
+        patientPosition=ismrmrd.xsd.patientPositionType.HFS, protocolName='next measurement'
+    )
+    stream = serialize_measurements([(header, imaging), (next_header, imaging[:1])])
     references = []
     deserialize = ismrmrd.Acquisition.deserialize_from
 
@@ -449,20 +454,22 @@ def test_iter_measurements(raw_data, monkeypatch) -> None:
         return acq
 
     monkeypatch.setattr(ismrmrd.Acquisition, 'deserialize_from', staticmethod(track_acquisitions))
-    with closing(KData.iter_ismrmrd_stream(stream, DummyTrajectory())) as measurements:
-        assert_kdata_equal(next(measurements), expected)
-        assert references
-        assert all(ref() is None for ref in references)
-        assert stream.tell() < len(stream.getvalue())
-        assert_kdata_equal(next(measurements), expected)
-        assert all(ref() is None for ref in references)
+    with closing(KData.iter_ismrmrd_stream(stream, KTrajectoryCartesian())) as readouts:
+        for index, acq in enumerate(imaging):
+            result = next(readouts)
+            assert_kdata_equal(result, KData.from_ismrmrd(header, [acq], KTrajectoryCartesian()))
+            assert len(references) == index + 1
+            assert all(ref() is None for ref in references)
+            assert result.header.acq_info.idx.k1.item() == acq.idx.kspace_encode_step_1
+        result = next(readouts)
+        assert result.header.protocol_name == 'next measurement'
         with pytest.raises(StopIteration):
-            next(measurements)
+            next(readouts)
     assert not stream.closed
 
 
 def test_iter_close_owned_file(raw_data, tmp_path, monkeypatch) -> None:
-    """Closing iteration early closes owned files, including on construction errors."""
+    """Closing iteration early or encountering corrupt input closes owned files."""
     filename, header, acquisitions = raw_data
     filename = tmp_path / 'measurements.ismrmrd'
     filename.write_bytes(serialize_measurements([(header, acquisitions)] * 2).getvalue())
@@ -479,9 +486,31 @@ def test_iter_close_owned_file(raw_data, tmp_path, monkeypatch) -> None:
         next(measurements)
         assert not opened[-1].closed
     assert opened[-1].closed
-    with pytest.raises(ValueError, match='No acquisitions meeting'):
-        next(KData.iter_ismrmrd_stream(filename, DummyTrajectory(), acquisition_filter_criterion=lambda _: False))
+    filename.write_bytes(filename.read_bytes()[:-1])
+    with pytest.raises(EOFError):
+        list(KData.iter_ismrmrd_stream(filename, DummyTrajectory()))
     assert opened[-1].closed
+
+
+@pytest.mark.parametrize('use_buffer', [False, True])
+def test_from_file_mr2(raw_data, tmp_path, use_buffer) -> None:
+    """Detect MR2 storage by content and restore its stored trajectory."""
+    _, header, acquisitions = raw_data
+    expected = KData.from_ismrmrd(header, acquisitions, KTrajectoryCartesian())
+    filename = tmp_path / 'stored.bin'
+    expected.header.trajectory = None
+    expected.save_as_mr2(filename)
+    source = io.BytesIO(filename.read_bytes()) if use_buffer else filename
+    assert_kdata_equal(KData.from_file(source), expected)
+    if use_buffer:
+        assert not source.closed
+
+
+def test_from_file_requires_trajectory(raw_data) -> None:
+    """ISMRMRD files still require an explicit trajectory source."""
+    filename, _, _ = raw_data
+    with pytest.raises(ValueError, match='trajectory source'):
+        KData.from_file(filename)
 
 
 def test_stdin(raw_data) -> None:
@@ -493,7 +522,7 @@ import sys
 from mr2.data import KData
 from mr2.data.traj_calculators.KTrajectoryCalculator import DummyTrajectory
 for kdata in KData.iter_ismrmrd_stream(sys.stdin.buffer, DummyTrajectory()):
-    assert kdata.data.shape == (1, 2, 1, 4, 4)
+    assert kdata.data.shape == (1, 2, 1, 1, 4)
 assert not sys.stdin.buffer.closed
 """
     subprocess.run([sys.executable, '-c', script], input=data, capture_output=True, check=True, timeout=60)  # noqa: S603
