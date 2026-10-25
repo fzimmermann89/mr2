@@ -258,9 +258,12 @@ if recon_resp_resolved.dcf_op is not None:
     (v,) = (acquisition_operator.H @ recon_resp_resolved.dcf_op @ acquisition_operator)(u)
     u_flat = u.flatten(start_dim=-3)
     v_flat = v.flatten(start_dim=-3)
-    initial_value = (
-        mr2.utils.unsqueeze_right(torch.linalg.vecdot(u_flat, u_flat) / torch.linalg.vecdot(v_flat, u_flat), 3) * u
-    )
+    numerator = torch.linalg.vecdot(u_flat, u_flat).real
+    denominator = torch.linalg.vecdot(v_flat, u_flat).real
+    valid = denominator > 0
+    safe_denominator = torch.where(valid, denominator, torch.ones_like(denominator))
+    scale = torch.where(valid, numerator / safe_denominator, torch.zeros_like(numerator))
+    initial_value = mr2.utils.unsqueeze_right(scale, 3) * u
 else:
     initial_value = torch.zeros_like(right_hand_side)
 
