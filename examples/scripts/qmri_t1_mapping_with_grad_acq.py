@@ -267,5 +267,5 @@ plt.show()
 # The quality of the final $T_1$ maps depends on the quality of the individual dynamic images. Using more advanced image
 # reconstruction methods, we can improve the image quality and hence the quality of the maps.
 # Try to exchange `~mr2.algorithms.reconstruction.DirectReconstruction` above with
-# `~mr2.algorithms.reconstruction.IterativeSENSEReconstruction`
+# `~mr2.algorithms.reconstruction.RegularizedIterativeSENSEReconstruction`
 # or try a different optimizer such as `~mr2.algorithms.optimizers.adam`.
