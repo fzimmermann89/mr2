@@ -1,9 +1,33 @@
 """Tests for TotalVariationRegularizedReconstruction."""
 
 import pytest
-from mr2.algorithms.reconstruction import TotalVariationRegularizedReconstruction
+import torch
+from mr2.algorithms.reconstruction import (
+    RegularizedIterativeSENSEReconstruction,
+    TotalVariationRegularizedReconstruction,
+)
 from mr2.data import CsmData, DcfData, KData
 from mr2.operators import FourierOp
+
+
+@pytest.mark.parametrize('iterations', [0, 2])
+def test_total_variation_initialization(cartesian_kdata: KData, iterations: int) -> None:
+    """Without PDHG steps, TV returns its unregularized CG initialization."""
+    reconstruction = TotalVariationRegularizedReconstruction(
+        kdata=cartesian_kdata,
+        regularization_dim=(-1, -2),
+        regularization_weight=0.01,
+        max_iterations=0,
+        initialization_iterations=iterations,
+    )
+    expected = RegularizedIterativeSENSEReconstruction(
+        fourier_op=reconstruction.fourier_op,
+        csm=reconstruction.csm_op,
+        dcf=reconstruction.dcf_op,
+        n_iterations=iterations,
+        regularization_weight=0,
+    )(cartesian_kdata)
+    torch.testing.assert_close(reconstruction(cartesian_kdata).data, expected.data)
 
 
 def test_total_variation_automatic(cartesian_kdata: KData) -> None:

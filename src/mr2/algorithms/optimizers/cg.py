@@ -152,7 +152,7 @@ def cg(
     for iteration in range(max_iterations):
         residual_dot_residual = vdot(residual, residual).real
 
-        if residual_dot_residual < tolerance**2:  # are we done?
+        if residual_dot_residual <= tolerance**2:  # are we done?
             break
 
         if preconditioner_inverse is not None:
