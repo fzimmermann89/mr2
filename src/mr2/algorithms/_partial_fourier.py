@@ -22,7 +22,7 @@ def _partial_fourier_center(acquired_mask: torch.Tensor, axis: int) -> torch.Ten
     first, last = int(indices[0]), int(indices[-1])
     if last - first + 1 != indices.numel() or (first != 0 and last != size - 1):
         raise ValueError('Acquired support must be contiguous and touch an edge of the partial Fourier axis.')
-    radius = min(size // 2 - first, last - size // 2, (size - 1) // 2)
+    radius = min(size // 2 - first, last - size // 2)
     if radius < 1:
         raise ValueError('Partial Fourier phase calibration requires DC and at least one acquired conjugate pair.')
     frequency = torch.arange(size, device=acquired_mask.device) - size // 2
