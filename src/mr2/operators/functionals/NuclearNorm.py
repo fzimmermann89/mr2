@@ -23,8 +23,9 @@ class NuclearNorm(ElementaryProximableFunctional):
     -----
     Proximal maps use a reduced SVD. Their gradients inherit PyTorch SVD
     limitations at repeated or zero singular values; finite gradients there
-    are not guaranteed. Forward uses ``torch.linalg.svdvals``; the nuclear
-    norm itself is not differentiable at rank-deficient matrices.
+    are not guaranteed, even for zero steps or weights. Forward uses
+    ``torch.linalg.svdvals``; the nuclear norm itself is not differentiable
+    at rank-deficient matrices.
     """
 
     def __init__(
@@ -65,7 +66,7 @@ class NuclearNorm(ElementaryProximableFunctional):
     def _target(self, x: torch.Tensor) -> torch.Tensor:
         """Broadcast the target without expanding the input."""
         try:
-            return torch.broadcast_to(self.target, x.shape)
+            return torch.broadcast_to(self.target.to(device=x.device), x.shape)
         except RuntimeError as error:
             raise ValueError('target must broadcast to the input shape without expanding it') from error
 
@@ -111,7 +112,8 @@ class NuclearNorm(ElementaryProximableFunctional):
         target = self._target(x)
         diff = x - target
         u, s, vh = torch.linalg.svd(diff.to(torch.result_type(diff, threshold)), full_matrices=False)
-        return ((u * torch.relu(s - threshold[..., 0]).unsqueeze(-2)) @ vh + target,)
+        result = (u * torch.relu(s - threshold[..., 0]).unsqueeze(-2)) @ vh + target
+        return (torch.where(threshold == 0, x, result),)
 
     def prox_convex_conj(self, x: torch.Tensor, sigma: torch.Tensor | float = 1.0) -> tuple[torch.Tensor]:
         r"""Project ``x - sigma * target`` onto the spectral-norm ball.

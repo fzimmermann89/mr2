@@ -112,6 +112,10 @@ def test_cuda():
     step = torch.tensor([0.3, 0.7]).reshape(2, 1, 1)
     f = NuclearNorm(target=x / 2, weight=torch.tensor([1.0, 2.0]).reshape(2, 1, 1))
     expected = (f(x)[0], f.prox(x, step)[0], f.prox_convex_conj(x, step)[0])
+    torch.testing.assert_close(NuclearNorm()(x.cuda())[0].cpu(), NuclearNorm()(x)[0])
+    actual = (f(x.cuda())[0], f.prox(x.cuda(), step.cuda())[0], f.prox_convex_conj(x.cuda(), step.cuda())[0])
+    for result, reference in zip(actual, expected, strict=True):
+        torch.testing.assert_close(result.cpu(), reference)
     f = f.cuda()
     actual = (f(x.cuda())[0], f.prox(x.cuda(), step.cuda())[0], f.prox_convex_conj(x.cuda(), step.cuda())[0])
     for result, reference in zip(actual, expected, strict=True):
@@ -151,3 +155,13 @@ def test_step_precision(method: str):
         else torch.diag(torch.minimum(x.diag() - sigma * target.diag(), weight))
     )
     torch.testing.assert_close(getattr(f, method)(x, sigma)[0], expected, atol=1e-15, rtol=1e-15)
+
+
+def test_zero_threshold_identity():
+    """Zero weights and steps preserve dense matrices exactly in a mixed batch."""
+    x = 100 * torch.randn(3, 4, 5, dtype=torch.complex64, generator=torch.Generator().manual_seed(13))
+    weight = torch.tensor([0.0, 1.0, 2.0]).reshape(3, 1, 1)
+    step = torch.tensor([1.0, 0.0, 0.5]).reshape(3, 1, 1)
+    f = NuclearNorm(target=0.2j, weight=weight)
+    torch.testing.assert_close(f.prox(x, step)[0][:2], x[:2], atol=0, rtol=0)
+    torch.testing.assert_close(f.prox_convex_conj(x, step)[0][1], x[1], atol=0, rtol=0)
