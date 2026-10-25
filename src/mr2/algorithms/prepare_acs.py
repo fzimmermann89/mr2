@@ -129,16 +129,18 @@ def prepare_acs(kdata: KData, size: int | SpatialDimension[int] | None = None) -
         raise ValueError('ACS preparation requires finite trajectory coordinates.')
     batch_shape = acquisition_shape[:-4]
     if cartesian:
+        max_width = min((n for n in encoded if n > 1), default=1)
+        window = _requested_shape(max_width if size is None else size, encoded)
         integer = coords.round().long()
         index = torch.zeros_like(integer[0])
         inside = torch.ones_like(index, dtype=torch.bool)
-        for coordinate, n in zip(integer, encoded, strict=True):
+        for coordinate, n in zip(integer, window, strict=True):
             offset = coordinate + n // 2
             inside &= (offset >= 0) & (offset < n)
             index = index * n + offset
-        counts = torch.zeros(index.shape[0], prod(encoded), dtype=torch.int32, device=index.device)
-        counts.scatter_add_(-1, index.clamp(0, prod(encoded) - 1), inside.to(counts.dtype))
-        complete = (counts == 1).reshape(-1, *encoded)
+        counts = torch.zeros(index.shape[0], prod(window), dtype=torch.int32, device=index.device)
+        counts.scatter_add_(-1, index.clamp(0, prod(window) - 1), inside.to(counts.dtype))
+        complete = (counts == 1).reshape(-1, *window)
         shape = _select_shape(complete, encoded, size)
         from mr2.data.KTrajectory import KTrajectory
         from mr2.operators.CartesianSamplingOp import CartesianSamplingOp
