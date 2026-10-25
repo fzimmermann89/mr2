@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import math
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, cast
 
 import torch
@@ -382,3 +383,25 @@ class _ScalarPseudoInverse(LinearOperator):
             return cast(tuple[torch.Tensor], _apply(self.source.H, (x,), self.tolerance, self.max_iterations))
         conjugate = factor.conj() if isinstance(factor, torch.Tensor) else factor.conjugate()
         return (self.inverse.adjoint(x)[0] * conjugate,)
+
+
+class _PartialIsometryPseudoInverse(LinearOperator):
+    """Use an adjoint on declared spaces without restricting ordinary source calls."""
+
+    def __init__(
+        self, source: LinearOperator, dim: Sequence[int], domain_shape: Sequence[int], range_shape: Sequence[int]
+    ) -> None:
+        super().__init__()
+        self.source = source
+        self.dim = tuple(dim)
+        self.domain_shape, self.range_shape = tuple(domain_shape), tuple(range_shape)
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor]:
+        if tuple(x.shape[d] for d in self.dim) != self.range_shape:
+            raise ValueError('Pseudoinverse input shape must match the declared encoding/padded shape.')
+        return self.source.adjoint(x)
+
+    def adjoint(self, x: torch.Tensor) -> tuple[torch.Tensor]:
+        if tuple(x.shape[d] for d in self.dim) != self.domain_shape:
+            raise ValueError('Pseudoinverse adjoint input shape must match the declared reconstruction/original shape.')
+        return self.source(x)

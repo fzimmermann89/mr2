@@ -63,8 +63,6 @@ class ZeroPadOp(LinearOperator):
             Prefer calling the instance of the ZeroPadOp operator as ``operator(x)`` over
             directly calling this method. See this PyTorch `discussion <https://discuss.pytorch.org/t/is-model-forward-x-the-same-as-model-call-x/33460/3>`_.
         """
-        if tuple(x.shape[d] for d in self.dim) != tuple(self.original_shape):
-            raise ValueError('Input shape must match the declared original_shape.')
         return (pad_or_crop(x, self.padded_shape, self.dim),)
 
     def adjoint(self, x: torch.Tensor) -> tuple[torch.Tensor,]:
@@ -86,10 +84,10 @@ class ZeroPadOp(LinearOperator):
             The cropped or padded tensor. Its shape along the dimensions in `dim`
             will match `original_shape` (from initialization).
         """
-        if tuple(x.shape[d] for d in self.dim) != tuple(self.padded_shape):
-            raise ValueError('Adjoint input shape must match the declared padded_shape.')
         return (pad_or_crop(x, self.original_shape, self.dim),)
 
     def _pinv(self, *, tolerance: float, max_iterations: int) -> LinearOperator:  # noqa: ARG002
         """Return the exact pseudoinverse on the declared tensor spaces."""
-        return self.H
+        from mr2.operators.PseudoInverseOp import _PartialIsometryPseudoInverse
+
+        return _PartialIsometryPseudoInverse(self, self.dim, self.original_shape, self.padded_shape)

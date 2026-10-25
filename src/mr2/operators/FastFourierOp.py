@@ -167,4 +167,7 @@ class FastFourierOp(LinearOperator):
 
     def _pinv(self, *, tolerance: float, max_iterations: int) -> LinearOperator:  # noqa: ARG002
         """Return the exact pseudoinverse on the declared tensor spaces."""
-        return self.H
+        from mr2.operators.PseudoInverseOp import _PartialIsometryPseudoInverse
+
+        pad = self._pad_op
+        return _PartialIsometryPseudoInverse(self, pad.dim, pad.original_shape, pad.padded_shape)

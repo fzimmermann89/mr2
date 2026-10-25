@@ -384,3 +384,22 @@ def test_structured_fallback(interpolation: bool) -> None:
     torch.testing.assert_close(p(b)[0].flatten(), torch.linalg.pinv(dense) @ b.flatten(), atol=1e-9, rtol=1e-9)
     g = torch.randn(1, 6, dtype=b.dtype)
     torch.testing.assert_close(torch.autograd.grad(p(b)[0], b, g)[0], p.H(g)[0], atol=1e-9, rtol=1e-9)
+
+
+@pytest.mark.parametrize('fft', [False, True])
+def test_partial_input_compatibility(fft: bool) -> None:
+    """Legacy partial-input adjoints still work; only pinv enforces fixed spaces."""
+    op = FastFourierOp((-2, -1), (4, 4), (4, 8)) if fft else ZeroPadOp((-2, -1), (4, 4), (4, 8))
+    partial = torch.randn(3, 6, dtype=torch.complex128)
+    result = op.adjoint(partial)[0]
+    expected = partial
+    if fft:
+        expected = torch.fft.fftshift(torch.fft.ifftn(torch.fft.ifftshift(partial), norm='ortho'))
+    cropped = expected[:, 1:5]
+    expected = partial.new_zeros(4, 4)
+    expected[1:] = cropped
+    torch.testing.assert_close(result, expected)
+    with pytest.raises(ValueError, match='declared encoding'):
+        op.pinv()(partial)
+    with pytest.raises(ValueError, match='declared reconstruction'):
+        op.pinv().H(partial)
