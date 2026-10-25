@@ -176,6 +176,20 @@ def test_fastmri_image_dataset(request, data_fixture, n_slices: int, n_coils: in
     assert not torch.isnan(img).any()
 
 
+def test_fastmri_image_dataset_output_shape(mock_fastmri_knee_data) -> None:
+    """Image output can retain the encoded knee matrix shape."""
+    dataset = FastMRIImageDataset(mock_fastmri_knee_data, coil_combine=True, output_shape=(N_K0, N_K1_KNEE))
+
+    assert dataset[0].shape == (1, 1, 1, N_K0, N_K1_KNEE)
+
+
+@pytest.mark.parametrize('output_shape', [(320,), (0, 320)])
+def test_fastmri_image_dataset_invalid_output_shape(mock_fastmri_knee_data, output_shape) -> None:
+    """Invalid output shapes are rejected."""
+    with pytest.raises(ValueError, match='output_shape'):
+        FastMRIImageDataset(mock_fastmri_knee_data, output_shape=output_shape)
+
+
 @pytest.mark.parametrize(
     ('data_fixture', 'n_coils'),
     [
