@@ -50,10 +50,9 @@ from MRD or calculated from a `pulseq <http://pulseq.github.io/>`_ file. See `~m
 for available trajectory calculators and :doc:`_notebooks/comparison_trajectory_calculators` for an example.
 
 
-`~mr2.data.KData.from_file` also loads MR2 storage and serialized ISMRMRD files. MR2 files include
-their trajectory. Reconstruction servers can use
-`~mr2.data.KData.from_ismrmrd` to create KData directly from an XML header and received
-acquisitions, without writing an intermediate file. Both use the same filtering and sorting.
+Use `~mr2.data.KData.from_file` for MR2 storage and ISMRMRD files. MR2 files include their trajectory.
+Reconstruction servers can pass an XML header and received acquisitions to
+`~mr2.data.KData.from_ismrmrd` without writing an intermediate file.
 
 
 .. note::
