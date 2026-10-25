@@ -201,14 +201,15 @@ def test_acs_noncartesian_common_batch_size(random_kheader: KHeader) -> None:
         torch.testing.assert_close(combined[i : i + 1], single)
 
 
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
 @pytest.mark.parametrize('encoded', [(1, 25, 32), (1, 24, 33)])
-def test_noncartesian_coverage_window(encoded: tuple[int, int, int]) -> None:
+def test_noncartesian_coverage_window(encoded: tuple[int, int, int], device: str) -> None:
     """A parity-safe window matches the full occupancy check, including repeated batches."""
     import importlib
 
     module = importlib.import_module('mr2.algorithms.prepare_acs')
     traj = radial_trajectory(32, 32)
-    coords = traj.as_tensor().expand(3, 1, 1, 1, 32, 32).reshape(3, 1, -1)
+    coords = traj.as_tensor().expand(3, 1, 1, 1, 32, 32).reshape(3, 1, -1).to(device)
     full = module._noncartesian_coverage(coords, encoded)
     window = (1, 7, 8)
     cropped = module._noncartesian_coverage(coords.expand(-1, 3, -1), window)

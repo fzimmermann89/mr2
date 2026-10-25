@@ -68,9 +68,9 @@ def _noncartesian_coverage(
         offset = coordinate.round().long() + n // 2
         inside &= (offset >= 0) & (offset < n)
         index = index * n + offset
-    occupied = torch.zeros(index.shape[0], prod(window), dtype=torch.bool, device=index.device)
-    occupied.scatter_reduce_(-1, index.clamp(0, prod(window) - 1), inside, reduce='amax')
-    return occupied.reshape(-1, *window)
+    occupied = torch.zeros(index.shape[0], prod(window), dtype=torch.uint8, device=index.device)
+    occupied.scatter_reduce_(-1, index.clamp(0, prod(window) - 1), inside.to(torch.uint8), reduce='amax')
+    return occupied.bool().reshape(-1, *window)
 
 
 def prepare_acs(kdata: KData, size: int | SpatialDimension[int] | None = None) -> torch.Tensor:
