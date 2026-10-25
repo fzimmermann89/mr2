@@ -83,7 +83,7 @@ kdata = mr2.data.KData.from_file(
 csm_maps = mr2.data.CsmData.from_kdata_inati(kdata, smoothing_width=3, downsampled_size=64)
 
 #  SENSE reconstruction
-iterative_sense = mr2.algorithms.reconstruction.IterativeSENSEReconstruction(kdata, csm=csm_maps)
+iterative_sense = mr2.algorithms.reconstruction.RegularizedIterativeSENSEReconstruction(kdata, csm=csm_maps)
 img = iterative_sense(kdata)
 
 # %% tags=["hide-cell"] mystnb={"code_prompt_show": "Show plotting details"}
@@ -184,7 +184,9 @@ kdata_resp_resolved = kdata[..., navigator_idx, :]
 # ### 3. Reconstruct dynamic images of different breathing states
 
 # %%
-recon_resp_resolved = mr2.algorithms.reconstruction.IterativeSENSEReconstruction(kdata_resp_resolved, csm=csm_maps)
+recon_resp_resolved = mr2.algorithms.reconstruction.RegularizedIterativeSENSEReconstruction(
+    kdata_resp_resolved, csm=csm_maps
+)
 img_resp_resolved = recon_resp_resolved(kdata_resp_resolved)
 
 
