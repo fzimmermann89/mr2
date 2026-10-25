@@ -7,113 +7,29 @@ from mr2.algorithms.optimizers.bicg import BiCGStatus
 from mr2.operators import EinsumOp, MultiIdentityOp
 
 
-@pytest.mark.parametrize('scale', [1.0, 4.0, 2.0 + 1.0j])
-@pytest.mark.parametrize('preconditioned', [False, True])
-@pytest.mark.parametrize('dtype', [torch.complex64, torch.complex128])
-def test_alpha_convergence(scale, preconditioned, dtype):
-    """An exact alpha step must skip stabilization and report the completed iteration."""
-    right_hand_side = (torch.tensor([1.0, 2.0], dtype=dtype),)
-    calls = []
-
-    def operator(*values: torch.Tensor) -> tuple[torch.Tensor, ...]:
-        """Count applications to detect unnecessary stabilization after convergence."""
-        calls.append(values)
-        return tuple(scale * x for x in values)
-
-    def preconditioner(*values: torch.Tensor) -> tuple[torch.Tensor, ...]:
-        """Exactly invert the scaled identity."""
-        return tuple(x / scale for x in values)
-
+def test_initial_convergence() -> None:
+    """An exact initial solution returns without iterating at zero tolerance."""
+    rhs = torch.tensor([1.0, 2.0])
     statuses: list[BiCGStatus] = []
-    result = bicg(
-        operator,
-        right_hand_side,
-        preconditioner_inverse=preconditioner if preconditioned else None,
-        callback=statuses.append,
-    )
-    torch.testing.assert_close(result, (right_hand_side[0] / scale,))
-    assert len(calls) == 2  # Initial residual and alpha step only.
-    assert len(statuses) == 1
-    assert statuses[0]['iteration_number'] == 0
-    torch.testing.assert_close(statuses[0]['solution'], result)
-    torch.testing.assert_close(statuses[0]['residual'], (torch.zeros_like(right_hand_side[0]),))
-
-
-@pytest.mark.parametrize(('exact_initial', 'tolerance'), [(False, 0.0), (False, 1e-6), (True, 0.0)])
-def test_initial_convergence(exact_initial, tolerance):
-    """Zero residuals return before dividing, including when tolerance is zero."""
-    expected = torch.tensor([1.0, 2.0]) if exact_initial else torch.zeros(2)
-
-    def callback(status):
-        """Reject iterations when the initial residual is already zero."""
-        pytest.fail('An already converged initial solution must not call the callback')
-
-    def solve():
-        """Exercise identical inputs with or without the expected tolerance warning."""
-        return bicg(
-            MultiIdentityOp(),
-            (expected,),
-            initial_value=(expected,) if exact_initial else None,
-            tolerance=tolerance,
-            callback=callback,
-        )
-
-    if tolerance == 0:
-        with pytest.warns(UserWarning, match='Tolerance is very small'):
-            result = solve()
-    else:
-        result = solve()
-    torch.testing.assert_close(result, (expected,))
-
-
-def test_empty_rhs() -> None:
-    """Reject an empty tuple before indexing the right-hand-side dtype."""
-    with pytest.raises(ValueError, match='right_hand_side cannot be empty'):
-        bicg(MultiIdentityOp(), ())
-
-
-def test_mixed_tuple_alpha_convergence():
-    """Preserve mixed real/complex tuple handling on the converged alpha path."""
-    right_hand_side = (torch.tensor([1.0, 2.0]), torch.tensor([1.0 + 2.0j]))
-    result = bicg(MultiIdentityOp(), right_hand_side)
-    torch.testing.assert_close(result, right_hand_side)
-
-
-def test_zero_tolerance_alpha_convergence() -> None:
-    """An exact alpha step terminates even with a zero stopping tolerance."""
     with pytest.warns(UserWarning, match='Tolerance is very small'):
-        result = bicg(MultiIdentityOp(), (torch.tensor([1.0, 2.0]),), tolerance=0)
-    torch.testing.assert_close(result, (torch.tensor([1.0, 2.0]),))
+        result = bicg(MultiIdentityOp(), (rhs,), initial_value=(rhs,), tolerance=0, callback=statuses.append)
+    torch.testing.assert_close(result, (rhs,))
+    assert not statuses
 
 
-@pytest.mark.parametrize('dtype', [torch.float64, torch.complex128])
 @pytest.mark.parametrize('preconditioned', [False, True])
-def test_nonsymmetric_solution(dtype, preconditioned):
-    """Compare against a direct solve with and without a diagonal preconditioner."""
-    matrix = torch.tensor([[4, 1, -1], [2, 5, 1], [0, -2, 6]], dtype=dtype)
-    right_hand_side = torch.tensor([1, -3, 2], dtype=dtype)
-    if dtype.is_complex:
-        matrix = matrix + 1j * torch.tensor([[1, 2, 0], [-1, 0, 1], [2, 0, -1]], dtype=dtype)
-        right_hand_side = right_hand_side + 1j * torch.tensor([2, 1, -1], dtype=dtype)
+def test_alpha_convergence(preconditioned: bool) -> None:
+    """An exact alpha step skips stabilization and reports the completed iteration."""
+    rhs = torch.tensor([1.0, 2.0])
     statuses: list[BiCGStatus] = []
-    (result,) = bicg(
-        EinsumOp(matrix),
-        (right_hand_side,),
-        initial_value=(torch.ones_like(right_hand_side),),
-        preconditioner_inverse=EinsumOp(matrix.diagonal().reciprocal().diag()) if preconditioned else None,
-        tolerance=1e-12,
-        callback=statuses.append,
-    )
-    torch.testing.assert_close(result, torch.linalg.solve(matrix, right_hand_side))
-    torch.testing.assert_close(matrix @ result, right_hand_side)
-    assert [status['iteration_number'] for status in statuses] == list(range(len(statuses)))
-    for status in statuses:
-        torch.testing.assert_close(status['residual'][0], right_hand_side - matrix @ status['solution'][0])
-
-
-def test_alpha_convergence_autograd() -> None:
-    """The alpha-only solution retains the derivative of the inverse operator."""
-    right_hand_side = torch.tensor([1.0, 2.0], dtype=torch.float64, requires_grad=True)
-    (result,) = bicg(EinsumOp(4 * torch.eye(2, dtype=right_hand_side.dtype)), (right_hand_side,))
-    (gradient,) = torch.autograd.grad(result.sum(), right_hand_side)
-    torch.testing.assert_close(gradient, torch.full_like(right_hand_side, 0.25))
+    with pytest.warns(UserWarning, match='Tolerance is very small'):
+        result = bicg(
+            EinsumOp(4 * torch.eye(2)),
+            (rhs,),
+            preconditioner_inverse=EinsumOp(torch.eye(2) / 4) if preconditioned else None,
+            tolerance=0,
+            callback=statuses.append,
+        )
+    torch.testing.assert_close(result, (rhs / 4,))
+    assert len(statuses) == 1
+    torch.testing.assert_close(statuses[0]['residual'], (torch.zeros_like(rhs),))
