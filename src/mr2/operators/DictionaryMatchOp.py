@@ -81,6 +81,12 @@ class DictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]):
         -------
             Self
 
+        Raises
+        ------
+        ValueError
+            If a generated signal has a nonfinite or nonpositive computed inverse norm,
+            including from norm underflow or overflow. The dictionary is left unchanged.
+
         """
         if self._index_of_scaling_parameter is not None:
             scaling_position = self._index_of_scaling_parameter % len(x)
@@ -95,6 +101,8 @@ class DictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]):
 
         y = y.flatten(start_dim=1)
         inverse_norm_y = torch.linalg.norm(y, dim=0).reciprocal()
+        if not (torch.isfinite(inverse_norm_y) & (inverse_norm_y > 0)).all():
+            raise ValueError('Dictionary signals must have finite, positive inverse norms.')
         y = y * inverse_norm_y
 
         if not self.x:
