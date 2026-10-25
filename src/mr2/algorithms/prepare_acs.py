@@ -108,7 +108,8 @@ def prepare_acs(kdata: KData, size: int | SpatialDimension[int] | None = None) -
     Raises
     ------
     ValueError
-        If the size is invalid or the requested region has insufficient coverage.
+        If the size or trajectory is invalid, automatic sizing finds no covered
+        center, or an explicit Cartesian block has missing or repeated samples.
     """
     from mr2.data.DcfData import DcfData
     from mr2.operators.FastFourierOp import FastFourierOp
@@ -135,8 +136,8 @@ def prepare_acs(kdata: KData, size: int | SpatialDimension[int] | None = None) -
             offset = coordinate + n // 2
             inside &= (offset >= 0) & (offset < n)
             index = index * n + offset
-        counts = torch.zeros(index.shape[0], prod(encoded), dtype=torch.int64, device=index.device)
-        counts.scatter_add_(-1, index.clamp(0, prod(encoded) - 1), inside.long())
+        counts = torch.zeros(index.shape[0], prod(encoded), dtype=torch.int32, device=index.device)
+        counts.scatter_add_(-1, index.clamp(0, prod(encoded) - 1), inside.to(counts.dtype))
         complete = (counts == 1).reshape(-1, *encoded)
         shape = _select_shape(complete, encoded, size)
         from mr2.data.KTrajectory import KTrajectory

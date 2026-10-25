@@ -121,7 +121,8 @@ class KData(Dataclass):
         Raises
         ------
         ValueError
-            If the requested calibration block has insufficient coverage.
+            If the size or trajectory is invalid, automatic sizing finds no covered
+            center, or an explicit Cartesian block has missing or repeated samples.
         """
         from mr2.algorithms.prepare_acs import prepare_acs
 
