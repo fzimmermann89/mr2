@@ -11,28 +11,24 @@ from mr2.operators.Operator import Operator
 
 def _rician_nll(amplitude: torch.Tensor, target: torch.Tensor, noise_std: torch.Tensor) -> torch.Tensor:
     """Evaluate the reduced likelihood without Bessel derivative cancellation."""
-    # Switch earlier in float32 to preserve curvature in the direct series.
-    large = (amplitude / noise_std) * (target / noise_std) >= (16 if amplitude.dtype == torch.float32 else 32)
+    z = (amplitude / noise_std) * (target / noise_std)
+    # At these switches, asymptotic truncation errors are < 5e-8 / 3e-17.
+    switch, terms = (10, 8) if z.dtype == torch.float32 else (32, 14)
+    large = z >= switch
+    # I0 is smooth at zero; i0e's absolute-value cusp gives the wrong gradient
+    # when combined with the residual form there. Mask before evaluating I0.
     u = torch.where(large, 0, amplitude) / noise_std
     v = torch.where(large, 0, target) / noise_std
+    small_value = (u.square() + v.square()) / 2 - torch.special.i0(u * v).log()
 
-    # DLMF 10.25.2: I0(z) = sum (z²/4)^k/(k!)². Nested evaluation
-    # avoids factorials and large coefficients; truncation error < 6e-21 at z=32.
-    t = (u * v / 2).square()
-    series = torch.zeros_like(t)
-    for k in range(48, 0, -1):
-        series = (1 + series) * (t / k**2)
-    small_value = (u.square() + v.square()) / 2 - series.log1p()
-
-    # DLMF 10.40.1: i0e(z) ~ P(1/z)/sqrt(2πz). The 16-term correction
-    # has relative error < 5e-13 at z=16 and < 2e-18 at z=32. Differentiating
-    # it preserves the small Bessel deficit without subtracting rounded ratios.
+    # DLMF 10.40.1: i0e(z) ~ P(1/z)/sqrt(2πz). Differentiating this
+    # correction preserves the small Bessel deficit without subtracting ratios.
     # Safe inactive inputs keep higher derivatives finite at zero.
     a = torch.where(large, amplitude, noise_std)
     y = torch.where(large, target, noise_std)
     inverse_z = (noise_std / a) * (noise_std / y)
     correction = torch.zeros_like(inverse_z)
-    for k in range(16, 0, -1):
+    for k in range(terms, 0, -1):
         correction = (1 + correction) * (inverse_z * ((2 * k - 1) ** 2 / (8 * k)))
     log_z = a.log() + y.log() - 2 * noise_std.log()
     residual = torch.where(large, amplitude - target, 0) / noise_std
@@ -81,7 +77,8 @@ class RicianNegLogLikelihood(Operator[torch.Tensor, tuple[torch.Tensor]]):
         noise_std
             Standard deviation of EACH real/imaginary Gaussian noise component
             (complex noise variance is twice its square). Strictly positive,
-            broadcastable with the input; may require gradients.
+            broadcastable with the input; may require gradients. Pass a float64
+            tensor for float64 noise precision; Python floats use the default dtype.
         weight
             Nonnegative likelihood weights, broadcastable with the observations.
             Multiplies the per-observation loss, rather than the residual.

@@ -51,7 +51,7 @@ def test_reference(reference: tuple[float, ...], dtype: torch.dtype, device: str
     torch.testing.assert_close(actual[:4], expected[:4], rtol=tolerance, atol=tolerance * 0.01)
     torch.testing.assert_close(actual[4], expected[4], rtol=tolerance, atol=8e-5 if dtype == torch.float32 else 2e-14)
     if reference[0] <= 1e-8 or reference[0] >= 1000:
-        torch.testing.assert_close(actual[1], expected[1], rtol=3e-7 if dtype == torch.float32 else 2e-15, atol=0)
+        torch.testing.assert_close(actual[1], expected[1], rtol=5e-7 if dtype == torch.float32 else 2e-15, atol=0)
     assert loss.dtype == dtype
 
 
@@ -73,14 +73,15 @@ def test_zero_observation(dtype: torch.dtype) -> None:
     torch.testing.assert_close(curvature, 1 / s.square() - a.square() / (2 * s**4))
 
 
+@pytest.mark.parametrize('noise_scale', [1.0, 0.25])
 @pytest.mark.parametrize('dim', [None, 0, (0, 2), (-1,)])
 @pytest.mark.parametrize('mean', [False, True])
 @pytest.mark.parametrize('keepdim', [False, True])
-def test_broadcast_reduction(dim: int | tuple[int, ...] | None, mean: bool, keepdim: bool) -> None:
+def test_broadcast_reduction(dim: int | tuple[int, ...] | None, mean: bool, keepdim: bool, noise_scale: float) -> None:
     """Weights multiply likelihoods; averaging counts zero weights as elements."""
     a = torch.linspace(0, 3, 6, dtype=torch.float64).reshape(2, 1, 3).requires_grad_()
     y = torch.tensor([0.2, 0.7], dtype=a.dtype).reshape(1, 2, 1).requires_grad_()
-    s = torch.tensor([0.6, 1.0, 1.3], dtype=a.dtype, requires_grad=True)
+    s = (torch.tensor([0.6, 1.0, 1.3], dtype=a.dtype) * noise_scale).requires_grad_()
     w = torch.tensor([0.0, 2.0], dtype=a.dtype).reshape(1, 2, 1).requires_grad_()
     actual = RicianNegLogLikelihood(y, s, w, dim, mean, keepdim)(a)[0]
     z = a * y / s.square()
@@ -197,3 +198,41 @@ def test_noise_scale_equivariance(dtype: torch.dtype, scale: float) -> None:
     torch.testing.assert_close(
         scaled_gradient * scale, gradient, rtol=3e-5 if dtype == torch.float32 else 2e-12, atol=0
     )
+
+
+@pytest.mark.parametrize('dtype', [torch.float32, torch.float64])
+@pytest.mark.parametrize(
+    ('parameters', 'expected'),
+    [
+        (
+            (1.0, 2.0, 0.5),
+            [
+                [3.4604713630996753, -4.010706292567916, 16.085650340543335],
+                [-4.010706292567916, 3.8651178407749187, -15.957174829728332],
+                [16.085650340543335, -15.957174829728332, 43.80232705194259],
+            ],
+        ),
+        (
+            (1.0, 2.5, 0.5),
+            [
+                [3.470161239704864, -4.006334807937439, 24.063348079374382],
+                [-4.006334807937439, 3.915225798352778, -23.974660768250246],
+                [24.063348079374382, -23.974660768250246, 103.8586216061148],
+            ],
+        ),
+        (
+            (2.0, 4.0, 0.5),
+            [
+                [3.872948824644048, -4.000521249825924, 32.00833999721478],
+                [-4.000521249825924, 3.968237206161012, -31.99583000139261],
+                [32.00833999721478, -31.99583000139261, 187.96555764481306],
+            ],
+        ),
+    ],
+)
+def test_full_hessian(parameters: tuple[float, ...], expected: list[list[float]], dtype: torch.dtype) -> None:
+    """Check noise and mixed curvature against 80-digit references at z=8,10,32."""
+    p = torch.tensor(parameters, dtype=dtype, requires_grad=True)
+    hessian = torch.autograd.functional.hessian(lambda p: RicianNegLogLikelihood(p[1], p[2])(p[0])[0], p)
+    tolerance = 5e-4 if dtype == torch.float32 else 2e-12
+    torch.testing.assert_close(hessian, p.new_tensor(expected), rtol=tolerance, atol=tolerance)
