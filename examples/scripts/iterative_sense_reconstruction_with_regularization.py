@@ -93,7 +93,7 @@ csm_op = direct_reconstruction.csm_op
 assert csm_op is not None
 
 # unregularized iterative SENSE reconstruction of the fully sampled data
-iterative_sense_reconstruction = mr2.algorithms.reconstruction.IterativeSENSEReconstruction(
+iterative_sense_reconstruction = mr2.algorithms.reconstruction.RegularizedIterativeSENSEReconstruction(
     kdata_fullysampled, csm=csm_op, n_iterations=3
 )
 img_iterative_sense = iterative_sense_reconstruction(kdata_fullysampled)
@@ -105,7 +105,7 @@ img_iterative_sense = iterative_sense_reconstruction(kdata_fullysampled)
 
 # %%
 # Unregularized iterative SENSE reconstruction of the undersampled data
-iterative_sense_reconstruction = mr2.algorithms.reconstruction.IterativeSENSEReconstruction(
+iterative_sense_reconstruction = mr2.algorithms.reconstruction.RegularizedIterativeSENSEReconstruction(
     kdata_undersampled, csm=csm_op, n_iterations=6
 )
 img_us_iterative_sense = iterative_sense_reconstruction(kdata_undersampled)

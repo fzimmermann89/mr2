@@ -13,6 +13,13 @@ from mr2.operators import EinsumOp, IdentityOp, LinearOperator, LinearOperatorMa
 from mr2.utils import RandomGenerator
 
 
+def test_cg_exact_convergence() -> None:
+    """CG stops at an exact solution even with zero tolerance."""
+    rhs = torch.ones(2)
+    (result,) = cg(EinsumOp(torch.eye(2)), rhs, max_iterations=2, tolerance=0)
+    torch.testing.assert_close(result, rhs)
+
+
 @pytest.fixture(
     params=[  # (batch-size, vector-size, complex-valued system, separate initial_value)
         ((), 16, False, False),

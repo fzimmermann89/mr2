@@ -6,14 +6,12 @@ from mr2.algorithms.reconstruction.PlugAndPlayReconstruction import PlugAndPlayR
 from mr2.algorithms.reconstruction.RegularizedIterativeSENSEReconstruction import (
     RegularizedIterativeSENSEReconstruction,
 )
-from mr2.algorithms.reconstruction.IterativeSENSEReconstruction import IterativeSENSEReconstruction
 from mr2.algorithms.reconstruction.TotalVariationRegularizedReconstruction import (
     TotalVariationRegularizedReconstruction,
 )
 
 __all__ = [
     'DirectReconstruction',
-    'IterativeSENSEReconstruction',
     'PlugAndPlayReconstruction',
     'Reconstruction',
     'RegularizedIterativeSENSEReconstruction',
