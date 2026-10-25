@@ -89,11 +89,11 @@ def b0map_from_sh_coefficients(
     for degree in range(1, max_degree + 1):
         for order in range(-degree, degree + 1):
             if order > 0:
-                harmonic = (-1) ** order * 2**0.5 * sph_harm_y(degree, order, phi_numpy, theta_numpy).real
+                harmonic = (-1) ** order * 2**0.5 * sph_harm_y(degree, order, theta_numpy, phi_numpy).real
             elif order == 0:
-                harmonic = sph_harm_y(degree, 0, phi_numpy, theta_numpy).real
+                harmonic = sph_harm_y(degree, 0, theta_numpy, phi_numpy).real
             else:
-                harmonic = (-1) ** order * 2**0.5 * sph_harm_y(degree, -order, phi_numpy, theta_numpy).imag
+                harmonic = (-1) ** order * 2**0.5 * sph_harm_y(degree, -order, theta_numpy, phi_numpy).imag
 
             solid_harmonic = (r / r_ref) ** degree * torch.from_numpy(harmonic)
             b0_map += coefficients[index] * solid_harmonic

@@ -6,6 +6,17 @@ from mr2.data import SpatialDimension
 from mr2.phantoms.b0map import b0map_from_sh_coefficients, random_b0_sh_coefficients, random_b0map
 
 
+@pytest.mark.parametrize(('coefficient', 'axis'), [(0, 1), (1, 0), (2, 2)])
+def test_b0map_degree_one(coefficient: int, axis: int) -> None:
+    """Degree-one solid harmonics are proportional to y, z and x."""
+    coordinates = torch.meshgrid(*([torch.linspace(-1, 1, 3)] * 3), indexing='ij')
+    actual = b0map_from_sh_coefficients(
+        SpatialDimension(3, 3, 3), SpatialDimension(2.0, 2.0, 2.0), torch.eye(3)[coefficient]
+    )
+    expected = coordinates[axis].double() * (3 / (4 * torch.pi)) ** 0.5
+    torch.testing.assert_close(actual, expected, atol=1e-7, rtol=1e-6)
+
+
 def test_random_b0map_from_coefficients() -> None:
     """Sampling and evaluating coefficients agrees with the convenience function."""
     shape = SpatialDimension(1, 8, 6)
