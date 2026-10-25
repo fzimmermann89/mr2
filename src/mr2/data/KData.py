@@ -108,14 +108,15 @@ class KData(Dataclass):
             Calibration tensor shaped ``(..., coils, kz, ky, kx)`` in the original
             coil basis and encoding FOV. Cartesian samples are extracted exactly;
             non-Cartesian samples are approximately gridded using one Voronoi
-            density calculation for both sizing and adjoint reconstruction.
+            density calculation for adjoint reconstruction.
 
         Notes
         -----
         ``kdata.acs()`` infers the size, ``kdata.acs(24)`` requests a square or
         cube, and ``kdata.acs(SpatialDimension(1, 24, 32))`` requests a rectangle.
-        Non-Cartesian size selection uses a geometric coverage heuristic, not a
-        guarantee of calibration accuracy. Explicit sizes must also be covered.
+        Non-Cartesian sizing estimates coverage using rounded sample bins and can
+        be conservative. Explicit non-Cartesian sizes skip this estimate; explicit
+        Cartesian sizes still require exactly one sample per grid point.
 
         Raises
         ------

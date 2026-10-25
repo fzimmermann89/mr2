@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from hashlib import sha256
-from math import prod, sqrt
+from math import prod
 from typing import TYPE_CHECKING
 
-import numpy as np
 import torch
-from scipy.spatial import ConvexHull, QhullError, cKDTree
+from scipy.spatial import QhullError
 
 from mr2.data.enums import TrajType
 from mr2.data.SpatialDimension import SpatialDimension
@@ -42,7 +40,6 @@ def _requested_shape(size: int | SpatialDimension[int], encoded: tuple[int, int,
 
 def _select_shape(
     available: torch.Tensor,
-    dense: torch.Tensor,
     encoded: tuple[int, int, int],
     size: int | SpatialDimension[int] | None,
 ) -> tuple[int, int, int]:
@@ -55,56 +52,25 @@ def _select_shape(
     )
     for shape in candidates:
         supported = _center_crop(available, shape)
-        density = _center_crop(dense, shape).flatten(start_dim=-3).float().mean(-1)
-        if supported.all() and (density >= 0.95).all():
+        if supported.all():
             return shape[0], shape[1], shape[2]
     raise ValueError('No adequately covered centered ACS region of the requested size is available.')
 
 
 def _noncartesian_coverage(
     coordinates: torch.Tensor,
-    geometry: torch.Tensor,
-    encoded: tuple[int, int, int],
     window: tuple[int, int, int],
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Check geometric density, distance and convex-hull support on the target grid."""
-    active = [i for i, n in enumerate(encoded) if n > 1]
-    points = coordinates[active].movedim(0, -1).detach().cpu().numpy()
-    volumes = geometry.detach().cpu().numpy()
-    available, dense = [], []
-    seen = set()
-    for batch_points, batch_volumes in zip(points, volumes, strict=True):
-        # Dense copies of a repeated trajectory need only one coverage calculation.
-        fingerprint = sha256(batch_points.tobytes())
-        fingerprint.update(batch_volumes.tobytes())
-        key = fingerprint.digest()
-        if key in seen:
-            continue
-        seen.add(key)
-        tree = cKDTree(batch_points)
-        try:
-            hull = ConvexHull(batch_points) if len(active) > 1 else None
-        except QhullError as error:
-            raise ValueError('Non-Cartesian ACS requires samples spanning the active spatial dimensions.') from error
-        supported_parts, dense_parts = [], []
-        for start in range(0, prod(window), 65536):
-            indices = np.arange(start, min(start + 65536, prod(window)))
-            query = np.stack(np.unravel_index(indices, window), axis=-1)[:, active]
-            query = query - np.asarray(window)[active] // 2
-            distance, nearest = tree.query(query)
-            inside = np.ones(len(query), dtype=bool)
-            if hull is None:
-                inside &= (query[:, 0] >= batch_points[:, 0].min()) & (query[:, 0] <= batch_points[:, 0].max())
-            else:
-                # Bound intermediate storage for trajectories with many hull facets.
-                for equation in hull.equations:
-                    inside &= query @ equation[:-1] + equation[-1] <= 1e-6
-            supported_parts.append(inside & (distance <= sqrt(len(active)) / 2 + 1e-6))
-            local_volume = batch_volumes[nearest]
-            dense_parts.append(np.isfinite(local_volume) & (local_volume > 0) & (local_volume <= 1 + 1e-6))
-        available.append(np.concatenate(supported_parts).reshape(window))
-        dense.append(np.concatenate(dense_parts).reshape(window))
-    return torch.from_numpy(np.stack(available)), torch.from_numpy(np.stack(dense))
+) -> torch.Tensor:
+    """Mark nearest Cartesian bins, ignoring repeated samples and points outside the window."""
+    index = torch.zeros_like(coordinates[0], dtype=torch.int64)
+    inside = torch.ones_like(index, dtype=torch.bool)
+    for coordinate, n in zip(coordinates, window, strict=True):
+        offset = coordinate.round().long() + n // 2
+        inside &= (offset >= 0) & (offset < n)
+        index = index * n + offset
+    occupied = torch.zeros(index.shape[0], prod(window), dtype=torch.bool, device=index.device)
+    occupied.scatter_reduce_(-1, index.clamp(0, prod(window) - 1), inside, reduce='amax')
+    return occupied.reshape(-1, *window)
 
 
 def prepare_acs(kdata: KData, size: int | SpatialDimension[int] | None = None) -> torch.Tensor:
@@ -131,13 +97,13 @@ def prepare_acs(kdata: KData, size: int | SpatialDimension[int] | None = None) -
 
     Notes
     -----
-    Automatic non-Cartesian sizing is a geometric heuristic: all target points
-    must lie within the sampled convex hull and within half a Cartesian cell
-    diagonal of a sample. At least 95% must have nearest-sample Voronoi volume
-    at most one in encoding-grid units. Original volumes are used before boundary
-    corrections or splitting repeated samples. The same density calculation
-    supplies the weights for reconstruction, which uses the full trajectory.
-    This criterion does not guarantee calibration accuracy for every trajectory.
+    Automatic non-Cartesian sizing rounds samples to the nearest encoding-grid
+    bin and chooses the largest centered square or cube with no empty bins in
+    any trajectory batch. Repeated samples do not improve occupancy. This is an
+    alignment-sensitive heuristic and can underestimate useful calibration size;
+    it does not guarantee calibration quality. Explicit non-Cartesian sizes skip
+    this estimate and are only checked against the encoding matrix. A single
+    Voronoi density calculation supplies weights for the full-trajectory adjoint.
 
     Raises
     ------
@@ -172,7 +138,7 @@ def prepare_acs(kdata: KData, size: int | SpatialDimension[int] | None = None) -
         counts = torch.zeros(index.shape[0], prod(encoded), dtype=torch.int64, device=index.device)
         counts.scatter_add_(-1, index.clamp(0, prod(encoded) - 1), inside.long())
         complete = (counts == 1).reshape(-1, *encoded)
-        shape = _select_shape(complete, complete, encoded, size)
+        shape = _select_shape(complete, encoded, size)
         from mr2.data.KTrajectory import KTrajectory
         from mr2.operators.CartesianSamplingOp import CartesianSamplingOp
 
@@ -190,15 +156,17 @@ def prepare_acs(kdata: KData, size: int | SpatialDimension[int] | None = None) -
             batches.append(block.reshape(acquisition_shape[-4], *shape))
         return torch.stack(batches).reshape(*batch_shape, acquisition_shape[-4], *shape)
 
+    if size is None:
+        max_width = min(n for n in encoded if n > 1)
+        window = _requested_shape(max_width, encoded)
+        available = _noncartesian_coverage(coords, window)
+        shape = _select_shape(available, encoded, None)
+    else:
+        shape = _requested_shape(size, encoded)
     try:
-        dcf, geometry = DcfData._from_traj_voronoi_with_geometry(kdata.traj)
+        dcf = DcfData.from_traj_voronoi(kdata.traj)
     except QhullError as error:
         raise ValueError('Non-Cartesian ACS requires a non-degenerate sampling trajectory.') from error
-    geometry = geometry.expand(trajectory_shape).reshape(coords.shape[1:])
-    max_width = min(n for n in encoded if n > 1)
-    window = _requested_shape(max_width if size is None else size, encoded)
-    available, dense = _noncartesian_coverage(coords, geometry, encoded, window)
-    shape = _select_shape(available, dense, encoded, size)
     # The encoded image grid keeps the frequency spacing and FOV consistent with ACS.
     fourier = FourierOp.from_kdata(kdata, recon_shape=kdata.header.encoding_matrix)
     (coil_images,) = fourier.H(*dcf.as_operator()(kdata.data.expand(acquisition_shape)))

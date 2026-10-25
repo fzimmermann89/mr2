@@ -89,14 +89,14 @@ def test_acs_noncartesian_reuses_density(random_kheader: KHeader) -> None:
     shape = SpatialDimension(1, 24, 24)
     traj = radial_trajectory(24, 32)
     kdata = make_kdata(random_kheader, shape, traj, torch.randn(1, 2, 1, 32, 24, dtype=torch.complex64))
-    compute = DcfData._from_traj_voronoi_with_geometry
-    with patch.object(DcfData, '_from_traj_voronoi_with_geometry', wraps=compute) as density:
+    compute = DcfData.from_traj_voronoi
+    with patch.object(DcfData, 'from_traj_voronoi', wraps=compute) as density:
         actual = kdata.acs()
     density.assert_called_once()
     assert actual.shape[-2] == actual.shape[-1]
     assert 4 <= actual.shape[-1] < 24
     assert torch.isfinite(actual).all()
-    dcf, _ = compute(traj)
+    dcf = compute(traj)
     fourier = FourierOp.from_kdata(kdata, recon_shape=shape)
     grid = FastFourierOp(dim=(-3, -2, -1))(*fourier.H(*dcf.as_operator()(kdata.data)))[0]
     width = actual.shape[-1]
@@ -105,8 +105,7 @@ def test_acs_noncartesian_reuses_density(random_kheader: KHeader) -> None:
     torch.testing.assert_close(actual, kdata.acs(width))
     rectangle = kdata.acs(SpatialDimension(1, 4, 6))
     torch.testing.assert_close(rectangle, grid[..., 10:14, 9:15])
-    with pytest.raises(ValueError, match='covered centered ACS'):
-        kdata.acs(24)  # the square corners lie outside the radial support
+    torch.testing.assert_close(kdata.acs(24), grid)  # explicit sizes are trusted overrides
 
 
 def test_acs_repeated_spokes_do_not_improve_coverage(random_kheader: KHeader) -> None:
@@ -124,7 +123,7 @@ def test_acs_repeated_spokes_do_not_improve_coverage(random_kheader: KHeader) ->
     torch.testing.assert_close(single.acs(), repeated.acs(), atol=1e-5, rtol=1e-5)
 
 
-def test_acs_density_limits_size(random_kheader: KHeader) -> None:
+def test_acs_occupancy_limits_size(random_kheader: KHeader) -> None:
     """More distinct radial spokes support a larger central square."""
     shape = SpatialDimension(1, 24, 24)
     widths = []
@@ -148,7 +147,7 @@ def test_acs_mixed_cartesian_noncartesian(random_kheader: KHeader) -> None:
 
 @pytest.mark.parametrize('coupled', [False, True])
 def test_acs_noncartesian_3d(random_kheader: KHeader, coupled: bool) -> None:
-    """Geometric volumes select a cube from an oversampled noninteger 3D lattice."""
+    """Rounded occupancy selects a cube from an oversampled noninteger 3D lattice."""
     shape = SpatialDimension(5, 5, 5)
     axis = torch.arange(-3, 4) * 0.6
     traj = KTrajectory(axis.reshape(1, 1, 7, 1, 1), axis.reshape(1, 1, 1, 7, 1), axis.reshape(1, 1, 1, 1, 7))
@@ -159,21 +158,8 @@ def test_acs_noncartesian_3d(random_kheader: KHeader, coupled: bool) -> None:
         traj = KTrajectory(*xyz)
     kdata = make_kdata(random_kheader, shape, traj, torch.randn(1, 2, 7, 7, 7, dtype=torch.complex64))
     actual = kdata.acs()
-    assert actual.shape == (1, 2, 3, 3, 3)
+    assert actual.shape == (1, 2, 5, 5, 5)
     assert torch.isfinite(actual).all()
-
-
-def test_density_geometry_keeps_unsplit_boundary_volumes() -> None:
-    """Coverage retains large cells and duplicate geometry while reconstruction weights split."""
-    traj = radial_trajectory(24, 16)
-    dcf, geometry = DcfData._from_traj_voronoi_with_geometry(traj)
-    repeated = KTrajectory(traj.kz, traj.ky.repeat_interleave(2, -2), traj.kx.repeat_interleave(2, -2))
-    repeated_dcf, repeated_geometry = DcfData._from_traj_voronoi_with_geometry(repeated)
-    original_weights = dcf.data.expand(traj.shape)
-    repeated_weights = repeated_dcf.data.expand(repeated.shape)
-    torch.testing.assert_close(repeated_weights[..., ::2, :] * 2, original_weights)
-    torch.testing.assert_close(repeated_geometry[..., ::2, :], geometry)
-    assert geometry.max() > original_weights.max() * 10
 
 
 def test_radial_acs_espirit_preserves_relative_coil_phase(random_kheader: KHeader) -> None:
@@ -216,27 +202,21 @@ def test_acs_noncartesian_common_batch_size(random_kheader: KHeader) -> None:
 
 
 @pytest.mark.parametrize('encoded', [(1, 25, 32), (1, 24, 33)])
-def test_noncartesian_coverage_window_and_reuse(encoded: tuple[int, int, int]) -> None:
-    """A parity-safe window matches the full check and repeated trajectories share one tree."""
+def test_noncartesian_coverage_window(encoded: tuple[int, int, int]) -> None:
+    """A parity-safe window matches the full occupancy check, including repeated batches."""
     import importlib
 
     module = importlib.import_module('mr2.algorithms.prepare_acs')
     traj = radial_trajectory(32, 32)
     coords = traj.as_tensor().expand(3, 1, 1, 1, 32, 32).reshape(3, 1, -1)
-    _, geometry = DcfData._from_traj_voronoi_with_geometry(traj)
-    geometry = geometry.reshape(1, -1)
-    full = module._noncartesian_coverage(coords, geometry, encoded, encoded)
+    full = module._noncartesian_coverage(coords, encoded)
     window = (1, 7, 8)
-    with patch.object(module, 'cKDTree', wraps=module.cKDTree) as tree:
-        cropped = module._noncartesian_coverage(coords.expand(-1, 3, -1), geometry.expand(3, -1), encoded, window)
-    tree.assert_called_once()
-    for actual, expected in zip(cropped, full, strict=True):
-        torch.testing.assert_close(actual, module._center_crop(expected, window))
-        assert actual.shape == (1, *window)
+    cropped = module._noncartesian_coverage(coords.expand(-1, 3, -1), window)
+    torch.testing.assert_close(cropped, module._center_crop(full, window).expand(3, *window))
 
 
-def test_acs_noncartesian_broadcast_trajectory_stays_compact(random_kheader: KHeader) -> None:
-    """Coil-image batches do not expand the shared trajectory used for coverage."""
+def test_acs_noncartesian_explicit_size_skips_estimate(random_kheader: KHeader) -> None:
+    """Explicit sizes bypass occupancy and a shared trajectory broadcasts over data batches."""
     import importlib
 
     module = importlib.import_module('mr2.algorithms.prepare_acs')
@@ -246,8 +226,7 @@ def test_acs_noncartesian_broadcast_trajectory_stays_compact(random_kheader: KHe
     with patch.object(module, '_noncartesian_coverage', wraps=module._noncartesian_coverage) as coverage:
         actual = kdata.acs(SpatialDimension(1, 4, 6))
     assert actual.shape == (4, 2, 1, 4, 6)
-    assert coverage.call_args.args[0].shape[1] == 1
-    assert coverage.call_args.args[3] == (1, 4, 6)
+    coverage.assert_not_called()
 
 
 @pytest.mark.parametrize('mixed', [False, True])
