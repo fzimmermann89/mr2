@@ -164,3 +164,7 @@ class FastFourierOp(LinearOperator):
         dimension_210_str = ', '.join(dimension_210)
         out = f'Dimension(s) along which FFT is applied: ({dimension_210_str})'
         return out
+
+    def _pinv(self, *, tolerance: float, max_iterations: int) -> LinearOperator:  # noqa: ARG002
+        """Return the exact pseudoinverse on the declared tensor spaces."""
+        return self.H

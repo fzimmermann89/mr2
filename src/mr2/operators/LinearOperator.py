@@ -123,6 +123,37 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
         """
         return AdjointLinearOperator(self)
 
+    def pinv(self, *, tolerance: float = 1e-6, max_iterations: int = 100) -> LinearOperator:
+        """Return a reusable Moore--Penrose pseudoinverse operator.
+
+        Parameters
+        ----------
+        tolerance
+            Relative normal-equation residual tolerance for iterative actions.
+            This is not a singular-value cutoff. Must be finite and in [0, 1).
+        max_iterations
+            Positive iteration budget for each forward or backward solve.
+
+        Notes
+        -----
+        Exact formulas are used where available. Otherwise zero-start CG targets
+        the minimum-norm least-squares solution and raises on failed convergence.
+        The numerical result approximates a linear operator and its adjoint.
+        Input gradients use the adjoint pseudoinverse; coefficient gradients
+        assume locally constant rank. See `~mr2.operators.PseudoInverseOp` for
+        coefficient-storage, precision and differentiation limitations.
+        """
+        from mr2.operators.PseudoInverseOp import _validate_options
+
+        _validate_options(tolerance, max_iterations)
+        return self._pinv(tolerance=tolerance, max_iterations=max_iterations)
+
+    def _pinv(self, *, tolerance: float, max_iterations: int) -> LinearOperator:
+        """Override point for verified pseudoinverse formulas."""
+        from mr2.operators.PseudoInverseOp import PseudoInverseOp
+
+        return PseudoInverseOp(self, tolerance, max_iterations)
+
     def operator_norm(
         self,
         initial_value: torch.Tensor,
@@ -602,6 +633,16 @@ class LinearOperatorElementwiseProductRight(LinearOperator):
             factor = self._scalar.conjugate() * self._scalar
         return factor * self._operator.gram
 
+    def _pinv(self, *, tolerance: float, max_iterations: int) -> LinearOperator:
+        """Use scalar normalization or a genuine diagonal shortcut."""
+        from mr2.operators.PseudoInverseOp import _DiagonalPseudoInverse, _ScalarPseudoInverse
+
+        if isinstance(self._operator, mr2.operators.IdentityOp):
+            return _DiagonalPseudoInverse(self, '_scalar')
+        if not isinstance(self._scalar, torch.Tensor) or self._scalar.ndim == 0:
+            return _ScalarPseudoInverse(self, tolerance, max_iterations)
+        return super()._pinv(tolerance=tolerance, max_iterations=max_iterations)
+
 
 class LinearOperatorElementwiseProductLeft(LinearOperator):
     """Operator elementwise left multiplication with a tensor.
@@ -663,6 +704,16 @@ class LinearOperatorElementwiseProductLeft(LinearOperator):
         conj = self._scalar.conj() if isinstance(self._scalar, torch.Tensor) else self._scalar.conjugate()
         return conj * self._operator.gram * self._scalar
 
+    def _pinv(self, *, tolerance: float, max_iterations: int) -> LinearOperator:
+        """Use scalar normalization or a genuine diagonal shortcut."""
+        from mr2.operators.PseudoInverseOp import _DiagonalPseudoInverse, _ScalarPseudoInverse
+
+        if isinstance(self._operator, mr2.operators.IdentityOp):
+            return _DiagonalPseudoInverse(self, '_scalar')
+        if not isinstance(self._scalar, torch.Tensor) or self._scalar.ndim == 0:
+            return _ScalarPseudoInverse(self, tolerance, max_iterations)
+        return super()._pinv(tolerance=tolerance, max_iterations=max_iterations)
+
 
 class AdjointLinearOperator(LinearOperator):
     """Adjoint of a LinearOperator."""
@@ -713,3 +764,7 @@ class AdjointLinearOperator(LinearOperator):
     def H(self) -> LinearOperator:  # noqa: N802
         """Adjoint of adjoint operator, i.e. original LinearOperator."""
         return self._operator
+
+    def _pinv(self, *, tolerance: float, max_iterations: int) -> LinearOperator:
+        """Use (A.H)^+ = (A^+).H."""
+        return self._operator.pinv(tolerance=tolerance, max_iterations=max_iterations).H

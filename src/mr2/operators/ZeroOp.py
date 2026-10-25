@@ -92,3 +92,12 @@ class ZeroOp(LinearOperator):
     def H(self) -> LinearOperator:  # noqa: N802
         """Adjoint of the Zero Operator."""
         return self
+
+    def _pinv(self, *, tolerance: float, max_iterations: int) -> LinearOperator:  # noqa: ARG002
+        """Return a pseudoinverse using the verified structure of this operator."""
+        if not self.keep_shape:
+            raise ValueError('Cannot pseudoinvert a shape-free ZeroOp; use keep_shape=True.')
+        from mr2.operators.IdentityOp import IdentityOp
+        from mr2.operators.PseudoInverseOp import _DiagonalPseudoInverse
+
+        return _DiagonalPseudoInverse(IdentityOp() * torch.tensor(0.0), '_scalar')

@@ -103,6 +103,64 @@ For reconstruction with BART, use ``to_bart`` to export k-space, images, coil se
 weights as ``.hdr``/``.cfl`` pairs or ``.ra`` files, and ``from_file`` to import images, maps or weights without installing BART
 (image and map imports require a reference ``header``).
 
+Pseudoinverse operators
+-----------------------
+``P = A.pinv(tolerance=1e-6, max_iterations=100)`` creates a reusable
+``LinearOperator`` approximating the Moore--Penrose pseudoinverse of ``A``.
+Apply it like any other operator::
+
+    P = A.pinv()
+    image, = P(data)
+    another_image, = P(other_data)
+    fitted_data, = (A @ P)(data)
+
+Identity, rearrangement, declared padding/cropping, orthonormal FFT and PCA
+operators use exact formulas. Patches average overlaps, sensitivity inversion
+normalizes coil power, and Cartesian sampling averages repeated observations.
+Uncovered coordinates and exactly zero diagonal weights map to zero. Batched
+Cartesian trajectories with unequal numbers of inside-encoding samples are
+rejected explicitly.
+Coefficients are read again on each application; no solution or warm start is
+retained. Patch inversion requires an explicit or previously established domain
+size. Sensitivity/PCA/diagonal shortcuts require fully expanded independent
+batch domains; broadcasting a shared input into additional unknowns is not
+supported.
+
+Other operators use zero-start CG on the normal equations. ``tolerance`` is
+relative to the normal right-hand side, not a singular-value cutoff or a
+reconstruction-error bound. All tensor entries and tuple components participate
+in one global residual criterion. A fresh normal residual is checked and failed
+convergence raises ``RuntimeError``. Normal equations square the nonzero-spectrum
+condition number, and floating-point nullspace contamination remains possible.
+No damping or implicit spectral threshold is applied. Finite iterative actions
+only approximate linearity and the target adjoint exposed by ``P.H``.
+
+Input gradients apply the adjoint pseudoinverse. Coefficient gradients use the
+constant-rank pseudoinverse derivative, including residual and nullspace terms;
+changing rank is generally not differentiable. Data-only backward needs one
+additional solve, coefficient backward up to three. Coefficients must be tensor
+attributes, registered buffers/parameters, or tensors in ordinary list/dict/tuple
+containers within the module tree. Closure-captured or opaque-object coefficients
+are unsupported. Source operations retain their own differentiation limits:
+input-only custom backward rules do not supply coefficient gradients. Reusing a
+source containing nonleaf coefficients retains its existing graph lifecycle;
+rebuild such coefficients when their construction graph has already been freed.
+The generic fallback supports first-order reverse-mode differentiation, without
+JVP, vmap or higher derivatives. Exact formulas retain the transform support of
+their underlying operations.
+
+The generic method requires a true adjoint on fixed spaces. Biorthogonal wavelet
+reconstruction and averaging groups with repeated or empty indices now reject
+adjoint use because they do not meet this contract. Custom broadcast domains
+must also have a matching adjoint. Keep geometry unchanged through backward;
+source tensor values are protected against in-place changes, and attribute
+replacement is isolated for each numerical invocation.
+
+``LinearOperatorMatrix.pinv()`` provides the corresponding coupled tuple action.
+It returns an operator on tuples, rather than independently evaluable blocks;
+composition works in both orders. Its numerical and gradient conventions match
+those above.
+
 Low-field raw datasets
 ----------------------
 ``mr2.phantoms.IsmrmrdDataset`` loads local HDF5 ISMRMRD collections using

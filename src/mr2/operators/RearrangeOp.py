@@ -82,3 +82,7 @@ class RearrangeOp(LinearOperator):
         """
         x = rearrange(y, self._adjoint_pattern, **self.additional_info)
         return (x,)
+
+    def _pinv(self, *, tolerance: float, max_iterations: int) -> LinearOperator:  # noqa: ARG002
+        """Return the exact pseudoinverse on the declared tensor spaces."""
+        return self.H
