@@ -94,6 +94,43 @@ or a new optimizer using pytorch functions can be created.
 
 See for examples  :doc:`_notebooks/cartesian_reconstruction`, :doc:`_notebooks/direct_reconstruction`, and :doc:`_notebooks/iterative_sense_reconstruction_radial2D`
 
+Low-field raw datasets
+----------------------
+``mr2.phantoms.IsmrmrdDataset`` loads local HDF5 ISMRMRD collections using
+``KData.from_file``. Files are naturally ordered, and the default trajectory
+assumes Cartesian sampling. Pass a trajectory explicitly for other sampling schemes.
+Serialized ISMRMRD streams are not supported by this dataset interface.
+
+``mr2.phantoms.a4im_lowfield`` provides ``OSI2Dataset``, ``IBTDataset``,
+``I3MDataset``, and ``FreeMaxDataset`` with scanner-specific file selectors.
+Construction never downloads data. For example::
+
+    from mr2.phantoms.a4im_lowfield import download_ibt, IBTDataset
+
+    path = download_ibt(subjects=1)  # explicit network access
+    dataset = IBTDataset(path, acquisition='t2w', individual_averages=True)
+    kdata = dataset[0]
+
+Each item is one file, except IBT individual averages, where matching files become
+one scan with an added leading average axis. Filename repetition labels, including
+noncontiguous labels, populate ``header.acq_info.idx.average`` even when the
+in-file indices are zero. With ``individual_averages=True``, only ``averageN``
+files are selected: T1 mapping scans and other files without that suffix are
+excluded. T2 mapping contrasts with individual averages remain separate items.
+Shared geometry, sampling and timing must agree within an average group.
+The known truncated FreeMax Subject9 right PD scan is excluded with a warning;
+other loading failures propagate to the caller.
+
+Use ``torch.utils.data.DataLoader(dataset, batch_size=None)`` for unbatched
+iteration, or supply a custom collation function. Download helpers check Zenodo
+checksums and cache extracted paths and sizes. ``verify=True`` additionally checks
+cached file hashes. Downloader calls require network access for record metadata;
+local dataset selection and loading work offline. Concurrent downloads to the same
+output directory fail explicitly. If a process is forcibly terminated, remove
+``.mr2-downloads/lock`` in that output directory before retrying. Readers should use
+completed downloads; installation of a multi-file archive is not atomic.
+
+
 Image processing
 ----------------
 Further processing of the reconstructed data such as quantitative parameter estimation is available.

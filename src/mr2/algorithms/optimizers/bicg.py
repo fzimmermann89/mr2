@@ -89,7 +89,7 @@ def bicg(
     tolerance
         Tolerance for the L2 norm of the residual :math:`\|r_k\|_2`.
     callback
-        Function called at the end of each iteration. See `BiCGSTABStatus`.
+        Function called at the end of each iteration, including convergence after the alpha step. See `BiCGStatus`.
         If the callback returns `False`, the iteration stops.
 
     Returns
@@ -103,10 +103,10 @@ def bicg(
     .. [WikipediaBiCGSTAB] Wikipedia: Bi-conjugate gradient stabilized method https://en.wikipedia.org/wiki/Bi-conjugate_gradient_stabilized_method
     """
     right_hand_side_ = tuple(right_hand_side)
-    if tolerance < torch.finfo(right_hand_side[0].dtype).eps:
-        warn(f'Tolerance is very small ({tolerance}), this can cause nan values.', stacklevel=2)
     if not right_hand_side_:
         raise ValueError('right_hand_side cannot be empty')
+    if tolerance < torch.finfo(right_hand_side_[0].dtype).eps:
+        warn(f'Tolerance is very small ({tolerance}), roundoff may prevent convergence.', stacklevel=2)
 
     if initial_value is None:
         solution = tuple(torch.zeros_like(r) for r in right_hand_side_)
@@ -121,14 +121,14 @@ def bicg(
     else:
         force_real = False
     residual = tuple(r - op_sol for r, op_sol in zip(right_hand_side_, operator(*solution), strict=True))
-    arbitrary = tuple(r for r in residual)
+    arbitrary = residual
 
     preconditioner = preconditioner_inverse if preconditioner_inverse is not None else MultiIdentityOp()
     alpha = omega = previous_product = operator_search = None
     search_direction = residual
 
     for iteration in range(max_iterations):
-        if vdot(residual, residual, force_real).real < tolerance**2:
+        if vdot(residual, residual, force_real).real <= tolerance**2:
             break
 
         arbitrary_dot_residual = vdot(arbitrary, residual, force_real)
@@ -144,16 +144,22 @@ def bicg(
         alpha = arbitrary_dot_residual / vdot(arbitrary, operator_search, force_real)
 
         interim = tuple(r - alpha * v for r, v in zip(residual, operator_search, strict=True))
-        preconditioned_interim = preconditioner(*interim)
-        operator_interim = operator(*preconditioned_interim)
-        omega = vdot(operator_interim, interim, force_real) / vdot(operator_interim, operator_interim, force_real).real
+        if vdot(interim, interim, force_real).real <= tolerance**2:
+            solution = tuple(x + alpha * p for x, p in zip(solution, preconditioned_search, strict=True))
+            residual = interim
+        else:
+            preconditioned_interim = preconditioner(*interim)
+            operator_interim = operator(*preconditioned_interim)
+            omega = (
+                vdot(operator_interim, interim, force_real) / vdot(operator_interim, operator_interim, force_real).real
+            )
 
-        solution = tuple(
-            x + alpha * p + omega * s
-            for x, p, s in zip(solution, preconditioned_search, preconditioned_interim, strict=True)
-        )
+            solution = tuple(
+                x + alpha * p + omega * s
+                for x, p, s in zip(solution, preconditioned_search, preconditioned_interim, strict=True)
+            )
 
-        residual = tuple(i - omega * t for i, t in zip(interim, operator_interim, strict=True))
+            residual = tuple(i - omega * t for i, t in zip(interim, operator_interim, strict=True))
         previous_product = arbitrary_dot_residual
 
         if callback is not None:
