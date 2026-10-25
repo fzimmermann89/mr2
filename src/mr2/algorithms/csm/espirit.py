@@ -25,6 +25,8 @@ def espirit(
     This function is inspired by
     `sigpy.mri.app.EspiritCalib <https://sigpy.readthedocs.io/en/latest/_modules/sigpy/mri/app.html#EspiritCalib>`_.
 
+    Covariance storage scales with coils squared times output voxels; large 3D inputs can require substantial memory.
+
     Parameters
     ----------
     coil_k_space

@@ -248,3 +248,26 @@ def test_acs_noncartesian_broadcast_trajectory_stays_compact(random_kheader: KHe
     assert actual.shape == (4, 2, 1, 4, 6)
     assert coverage.call_args.args[0].shape[1] == 1
     assert coverage.call_args.args[3] == (1, 4, 6)
+
+
+@pytest.mark.parametrize('mixed', [False, True])
+def test_espirit_crop_matches_fourier_origin(random_kheader: KHeader, mixed: bool) -> None:
+    """Odd-to-even cropping follows NUFFT origins and retains FFT-axis cropping."""
+    shape = SpatialDimension(3 if mixed else 1, 33, 33)
+    radial = radial_trajectory(33, 32)
+    kz = torch.arange(-1, 2).reshape(1, 1, 3, 1, 1) if mixed else radial.kz
+    trajectory = KTrajectory(kz, radial.ky, radial.kx)
+    generator = torch.Generator().manual_seed(4)
+    data = torch.randn(1, 2, shape.z, 32, 33, dtype=torch.complex64, generator=generator)
+    kdata = make_kdata(random_kheader, shape, trajectory, data)
+    full_maps = CsmData.from_kdata_espirit(kdata, kernel_width=2).data
+    full_image = FourierOp.from_kdata(kdata).H(data)[0]
+    kdata.header.recon_matrix = SpatialDimension(2 if mixed else 1, 32, 32)
+    kdata.header.recon_fov = SpatialDimension(2.0 if mixed else 1.0, 32.0, 32.0)
+    actual = CsmData.from_kdata_espirit(kdata, kernel_width=2).data
+    # NUFFT y/x retain index zero; the mixed FFT z axis drops its first voxel.
+    expected = full_maps[..., 1:3, :32, :32] if mixed else full_maps[..., :32, :32]
+    torch.testing.assert_close(actual, expected)
+    cropped_image = FourierOp.from_kdata(kdata).H(data)[0]
+    expected_image = full_image[..., 1:3, :32, :32] if mixed else full_image[..., :32, :32]
+    torch.testing.assert_close(cropped_image, expected_image, atol=2e-5, rtol=2e-5)
