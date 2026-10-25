@@ -36,7 +36,11 @@ class FunctionalTestCase:
 
 
 FUNCTIONALS: list[type[ElementaryFunctional]] = [
-    x[1] for x in inspect.getmembers(functionals, lambda x: inspect.isclass(x) and issubclass(x, ElementaryFunctional))
+    x[1]
+    for x in inspect.getmembers(functionals, lambda x: inspect.isclass(x) and issubclass(x, ElementaryFunctional))
+    # These tests assume arbitrary reduction axes, scalar inputs and entrywise weights.
+    # NuclearNorm has separate matrix-specific tests in test_nuclear_norm.py.
+    if x[1] is not functionals.NuclearNorm
 ]
 PROXIMABLE_FUNCTIONALS: list[type[ElementaryProximableFunctional]] = [
     x for x in FUNCTIONALS if issubclass(x, ElementaryProximableFunctional)
