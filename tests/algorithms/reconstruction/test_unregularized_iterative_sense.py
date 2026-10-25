@@ -1,6 +1,7 @@
 """Tests for RegularizedIterativeSENSEReconstruction."""
 
 import pytest
+import torch
 from mr2.algorithms.reconstruction import RegularizedIterativeSENSEReconstruction
 from mr2.data import CsmData, DcfData, KData
 from mr2.operators import FourierOp
@@ -10,6 +11,11 @@ def test_unregularized_iterative_sense_automatic(cartesian_kdata: KData) -> None
     """Test automatic setup from kdata only."""
     reconstruction = RegularizedIterativeSENSEReconstruction(kdata=cartesian_kdata, n_iterations=2)
     idata = reconstruction(cartesian_kdata)
+    expected = RegularizedIterativeSENSEReconstruction(kdata=cartesian_kdata, n_iterations=2, regularization_weight=0)(
+        cartesian_kdata
+    )
+    assert reconstruction.regularization_weight.item() == 0
+    torch.testing.assert_close(idata.data, expected.data)
     assert idata.data.shape[-3:] == cartesian_kdata.header.recon_matrix.zyx
     assert reconstruction.csm_op is not None
     assert reconstruction.dcf_op is not None
