@@ -12,19 +12,12 @@ from mr2.operators.LinearOperatorMatrix import LinearOperatorMatrix
 
 
 def vdot(a: Sequence[torch.Tensor], b: Sequence[torch.Tensor], force_real: bool = False) -> torch.Tensor:
-    """Vector dot product with double accumulation to avoid single-precision underflow."""
+    """Vector dot product."""
     if force_real:
         a = tuple(torch.view_as_real(a_i) if a_i.is_complex() else a_i for a_i in a)
         b = tuple(torch.view_as_real(b_i) if b_i.is_complex() else b_i for b_i in b)
     return sum(
-        (
-            torch.vdot(
-                a_i.flatten().to(torch.complex128 if a_i.is_complex() else torch.float64),
-                b_i.flatten().to(torch.complex128 if b_i.is_complex() else torch.float64),
-            )
-            for a_i, b_i in zip(a, b, strict=True)
-        ),
-        start=torch.tensor(0.0),
+        (torch.vdot(a_i.flatten(), b_i.flatten()) for a_i, b_i in zip(a, b, strict=True)), start=torch.tensor(0.0)
     )
 
 
@@ -103,13 +96,6 @@ def bicg(
     -------
         An approximate solution :math:`x` of the linear system :math:`Hx=b` as a tuple of tensors.
 
-    Raises
-    ------
-    RuntimeError
-        If a recurrence coefficient is zero or non-finite and the true residual exceeds
-        ``8 * eps * (norm(b) + norm(Hx))``. Here eps is the largest input machine epsilon;
-        this relative roundoff bound permits termination after numerical convergence.
-
     References
     ----------
     .. [VanDerVorst1992] Van der Vorst, H. A. (1992). Bi-CGSTAB: A Fast and Smoothly Converging Variant of Bi-CG for the
@@ -137,32 +123,12 @@ def bicg(
     residual = tuple(r - op_sol for r, op_sol in zip(right_hand_side_, operator(*solution), strict=True))
     arbitrary = residual
 
-    def norm(values: Sequence[torch.Tensor]) -> torch.Tensor:
-        """Combine tuple norms in double precision without squaring tiny float32 values."""
-        return torch.linalg.vector_norm(
-            torch.stack(
-                [torch.linalg.vector_norm(v.to(torch.complex128 if v.is_complex() else torch.float64)) for v in values]
-            )
-        )
-
-    def valid_coefficient(value: torch.Tensor, name: str) -> bool:
-        """Accept roundoff-level true residuals on breakdown, otherwise fail loudly."""
-        if torch.isfinite(value) & (value != 0):
-            return True
-        applied = operator(*solution)
-        true_residual = tuple(b - ax for b, ax in zip(right_hand_side_, applied, strict=True))
-        eps = max(torch.finfo(b.dtype).eps for b in right_hand_side_)
-        bound = 8 * eps * (norm(right_hand_side_) + norm(applied))
-        if norm(true_residual) <= bound:
-            return False
-        raise RuntimeError(f'BiCGStab breakdown: zero or non-finite {name}')
-
     preconditioner = preconditioner_inverse if preconditioner_inverse is not None else MultiIdentityOp()
     alpha = omega = previous_product = operator_search = None
     search_direction = residual
 
     for iteration in range(max_iterations):
-        if norm(residual) <= tolerance:
+        if vdot(residual, residual, force_real).real <= tolerance**2:
             break
 
         arbitrary_dot_residual = vdot(arbitrary, residual, force_real)
@@ -175,22 +141,18 @@ def bicg(
             )
         preconditioned_search = preconditioner(*search_direction)
         operator_search = operator(*preconditioned_search)
-        denominator = vdot(arbitrary, operator_search, force_real)
-        alpha = arbitrary_dot_residual / denominator
-        if not valid_coefficient(alpha, 'alpha'):
-            break
+        alpha = arbitrary_dot_residual / vdot(arbitrary, operator_search, force_real)
 
         interim = tuple(r - alpha * v for r, v in zip(residual, operator_search, strict=True))
-        if norm(interim) <= tolerance:
+        if vdot(interim, interim, force_real).real <= tolerance**2:
             solution = tuple(x + alpha * p for x, p in zip(solution, preconditioned_search, strict=True))
             residual = interim
         else:
             preconditioned_interim = preconditioner(*interim)
             operator_interim = operator(*preconditioned_interim)
-            denominator = vdot(operator_interim, operator_interim, force_real).real
-            omega = vdot(operator_interim, interim, force_real) / denominator
-            if not valid_coefficient(omega, 'omega'):
-                break
+            omega = (
+                vdot(operator_interim, interim, force_real) / vdot(operator_interim, operator_interim, force_real).real
+            )
 
             solution = tuple(
                 x + alpha * p + omega * s
