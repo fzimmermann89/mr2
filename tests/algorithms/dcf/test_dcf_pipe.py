@@ -70,7 +70,7 @@ def test_noncartesian_psf(kind: str) -> None:
     uniform = central_psf(k, torch.full_like(w, 32**2 / w.numel()))
     assert (psf - reference).norm() / reference.norm() < 0.15
     assert (psf - reference).norm() < (uniform - reference).norm() / 2
-    torch.testing.assert_close(psf[144], torch.tensor(1 + 0j))
+    torch.testing.assert_close(psf[psf.numel() // 2], torch.tensor(1 + 0j))
     if kind == 'radial':
         radius = k.square().sum(0).sqrt()
         interior = (radius[0] > 3) & (radius[0] < 12)
