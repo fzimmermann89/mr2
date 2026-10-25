@@ -70,7 +70,7 @@ class DcfData(Dataclass):
         cls,
         traj: KTrajectory,
         encoding_matrix: SpatialDimension[int],
-        n_iterations: int = 30,
+        n_iterations: int = 10,
         oversampling: float = 2.0,
     ) -> Self:
         """Calculate gridding-based Pipe density compensation.

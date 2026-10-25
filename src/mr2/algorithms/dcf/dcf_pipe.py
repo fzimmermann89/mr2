@@ -12,7 +12,7 @@ from pytorch_finufft.functional import finufft_type1, finufft_type2
 def dcf_pipe(
     traj: torch.Tensor,
     encoding_matrix: Sequence[int],
-    n_iterations: int = 30,
+    n_iterations: int = 10,
     oversampling: float = 2.0,
 ) -> torch.Tensor:
     r"""Calculate positive real Pipe density compensation for one trajectory.
