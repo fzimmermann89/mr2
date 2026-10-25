@@ -1,0 +1,136 @@
+"""Tests for Cartesian partial Fourier completion."""
+
+import pytest
+import torch
+from mr2.algorithms import pocs_partial_fourier
+from mr2.algorithms._partial_fourier import _partial_fourier_center, _partial_fourier_phase
+from mr2.operators import FastFourierOp
+
+
+@pytest.mark.parametrize('size', [31, 32])
+@pytest.mark.parametrize('side', ['low', 'high'])
+@pytest.mark.parametrize('axis', [-1, 0])
+@pytest.mark.parametrize('dtype', [torch.complex64, torch.complex128])
+def test_pocs_recovery(size: int, side: str, axis: int, dtype: torch.dtype) -> None:
+    """Both sides of odd/even grids recover smooth complex phase better than zero fill."""
+    coordinate = torch.linspace(-1, 1, size, dtype=torch.float64)
+    y, x = torch.meshgrid(coordinate, coordinate, indexing='ij')
+    magnitude = ((x.square() + 1.4 * y.square()) < 0.55).double()
+    magnitude += 0.4 * (((x - 0.2).square() + (y + 0.1).square()) < 0.08)
+    image = (magnitude * torch.exp(0.3j * (x + y.square()))).to(dtype)
+    fft = FastFourierOp((0, 1))
+    (kspace,) = fft(image)
+    support = torch.arange(size) >= size // 4 if side == 'high' else torch.arange(size) < size - size // 4
+    mask = support[:, None] if axis == 0 else support[None, :]
+    measured = torch.where(mask, kspace, 0)
+
+    completed = pocs_partial_fourier(measured, mask, (0, -1), axis, n_iterations=20)
+    (recovered,) = fft.H(completed)
+    (zero_fill,) = fft.H(measured)
+
+    assert torch.linalg.vector_norm(recovered - image) < 0.5 * torch.linalg.vector_norm(zero_fill - image)
+    assert torch.equal(completed[mask.expand_as(kspace)], kspace[mask.expand_as(kspace)])
+    assert completed.dtype == dtype
+    assert completed.device == kspace.device
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+def test_pocs_preserves_measurements(device: str) -> None:
+    """Acquired outer samples and zeros survive every iteration; missing values are ignored."""
+    if device == 'cuda' and not torch.cuda.is_available():
+        pytest.skip('CUDA unavailable')
+    kspace = torch.ones(2, 3, 16, 12, dtype=torch.complex64, device=device)
+    kspace[..., 4, :] = 0
+    mask = (torch.arange(16, device=device) >= 4)[:, None].expand(16, 12)
+    original = kspace.clone()
+    kspace[..., :4, :] = torch.tensor(complex(float('nan'), 0), device=device)
+    for iterations in (0, 1, 4):
+        completed = pocs_partial_fourier(kspace, mask, (-2, -1), -2, iterations)
+        assert torch.equal(completed[..., mask], original[..., mask])
+        assert completed.isfinite().all()
+        assert completed.device == kspace.device
+        if iterations == 0:
+            assert torch.equal(completed[..., ~mask], torch.zeros_like(completed[..., ~mask]))
+    assert torch.equal(kspace[..., mask], original[..., mask])
+
+
+def test_pocs_full_sampling() -> None:
+    """Full sampling preserves arbitrary complex data exactly, even for singleton axes."""
+    kspace = torch.tensor([[-1 + 2j, 0, 3j]], dtype=torch.complex128)
+    completed = pocs_partial_fourier(kspace, torch.tensor(True), (0, 1), 0)
+    assert torch.equal(completed, kspace)
+
+
+@pytest.mark.parametrize('size', [15, 16])
+@pytest.mark.parametrize('side', ['low', 'high'])
+def test_partial_fourier_center(size: int, side: str) -> None:
+    """The tapered center contains only acquired conjugate pairs, with centered DC."""
+    support = torch.arange(size) >= 3 if side == 'high' else torch.arange(size) < size - 3
+    center = _partial_fourier_center(support, 0)
+    conjugate_indices = (2 * (size // 2) - torch.arange(size)) % size
+    assert torch.equal(center, center[conjugate_indices])
+    assert torch.all(center[~support] == 0)
+    assert center[size // 2] == 1
+    if size % 2 == 0:
+        assert center[0] == 0
+    assert torch.all(center.diff()[: size // 2] >= 0)
+
+
+def test_fixed_phase_signed_projection() -> None:
+    """One POCS step uses the signed real projection, including negative amplitudes."""
+    fft = FastFourierOp((0,))
+    kspace = torch.tensor([0, 0, 1 + 4j, 3, 2 - 1j, -4j, 2, -3j], dtype=torch.complex128)
+    mask = torch.arange(8) >= 2
+    center = _partial_fourier_center(mask, 0)
+    phase = _partial_fourier_phase(kspace, center, fft)
+    (image,) = fft.H(kspace)
+    demodulated = (phase.conj() * image).real
+    assert (demodulated < 0).any()
+    (expected,) = fft(phase * demodulated)
+    completed = pocs_partial_fourier(kspace, mask, (0,), 0, 1)
+    torch.testing.assert_close(completed, torch.where(mask, kspace, expected))
+
+
+@pytest.mark.parametrize(
+    'mask',
+    [
+        [False] * 8,
+        [False, False, False, False, True, True, True, True],
+        [False, True, True, True, True, True, True, False],
+        [True, False, True, True, True, True, True, True],
+    ],
+)
+def test_pocs_unsupported_support(mask: list[bool]) -> None:
+    """Reject missing calibration, interior intervals and holes."""
+    with pytest.raises(ValueError):
+        pocs_partial_fourier(torch.ones(8, dtype=torch.complex64), torch.tensor(mask), (0,), 0)
+
+
+def test_pocs_varying_mask() -> None:
+    """Batch-dependent masks and additional undersampling are unsupported."""
+    mask = torch.ones(2, 8, dtype=torch.bool)
+    mask[0, :2] = False
+    with pytest.raises(ValueError, match='identical'):
+        pocs_partial_fourier(torch.ones(2, 8, dtype=torch.complex64), mask, (1,), 1)
+
+
+@pytest.mark.parametrize(('dim', 'axis'), [((0,), 2), ((-3,), 0), ((0, -2), 0), ((0,), 1), ((), 0)])
+def test_pocs_invalid_axes(dim: tuple[int, ...], axis: int) -> None:
+    """Validate axes before normalization and reject duplicate transform dimensions."""
+    with pytest.raises(ValueError):
+        pocs_partial_fourier(torch.ones(8, 8, dtype=torch.complex64), torch.tensor(True), dim, axis)
+
+
+@pytest.mark.parametrize('size', [15, 16])
+@pytest.mark.parametrize('side', ['low', 'high'])
+def test_partial_fourier_phase(size: int, side: str) -> None:
+    """Symmetric tapering preserves a known constant complex phase on odd/even grids."""
+    coordinate = torch.arange(size, dtype=torch.float64) - size // 2
+    image = (1 + 0.2 * torch.cos(2 * torch.pi * coordinate / size)) * torch.exp(torch.tensor(0.7j))
+    fft = FastFourierOp((0,))
+    (kspace,) = fft(image)
+    mask = torch.arange(size) >= 3 if side == 'high' else torch.arange(size) < size - 3
+    measured = torch.where(mask, kspace, 0)
+    center = _partial_fourier_center(mask, 0)
+    phase = _partial_fourier_phase(measured, center, fft)
+    torch.testing.assert_close(phase, image / image.abs())
