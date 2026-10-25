@@ -5,7 +5,6 @@ from collections.abc import Sequence
 
 import torch
 
-from mr2.operators.Functional import throw_if_negative_or_complex
 from mr2.operators.Operator import Operator
 
 
@@ -59,6 +58,10 @@ class RicianNegLogLikelihood(Operator[torch.Tensor, tuple[torch.Tensor]]):
     support double backward, Hessian-vector products and ``torch.func``.
     """
 
+    target: torch.Tensor
+    weight: torch.Tensor
+    noise_std: torch.Tensor
+
     def __init__(
         self,
         target: torch.Tensor | float,
@@ -73,14 +76,14 @@ class RicianNegLogLikelihood(Operator[torch.Tensor, tuple[torch.Tensor]]):
         Parameters
         ----------
         target
-            Nonnegative observed magnitude, broadcastable with the input.
+            Finite, nonnegative observed magnitude, broadcastable with the input.
         noise_std
-            Standard deviation of EACH real/imaginary Gaussian noise component
+            Finite standard deviation of EACH real/imaginary Gaussian noise component
             (complex noise variance is twice its square). Strictly positive,
             broadcastable with the input; may require gradients. Pass a float64
             tensor for float64 noise precision; Python floats use the default dtype.
         weight
-            Nonnegative likelihood weights, broadcastable with the observations.
+            Finite, nonnegative likelihood weights, broadcastable with the observations.
             Multiplies the per-observation loss, rather than the residual.
         dim
             Dimensions to reduce; ``None`` reduces all dimensions.
@@ -91,21 +94,33 @@ class RicianNegLogLikelihood(Operator[torch.Tensor, tuple[torch.Tensor]]):
             Retain reduced dimensions with size one.
         """
         super().__init__()
-        self.target = torch.as_tensor(target)
-        self.weight = torch.as_tensor(weight)
+        for name, value in (('target', target), ('weight', weight), ('noise_std', noise_std)):
+            tensor = torch.as_tensor(value)
+            # The mixin handles constants; Module handles Parameters. Ordinary
+            # differentiable tensors also need registration to follow .to().
+            if tensor.requires_grad and not isinstance(tensor, torch.nn.Parameter):
+                self.register_buffer(name, tensor)
+            else:
+                setattr(self, name, tensor)
         self.dim = (dim,) if isinstance(dim, int) else tuple(dim) if dim is not None else None
         self.divide_by_n = divide_by_n
         self.keepdim = keepdim
-        self.noise_std = torch.as_tensor(noise_std)
-        throw_if_negative_or_complex(self.target, 'target must be real and nonnegative')
-        throw_if_negative_or_complex(self.weight, 'weight must be real and nonnegative')
-        if self.noise_std.is_complex() or not (self.noise_std > 0).all():
-            raise ValueError('noise_std must be real and strictly positive')
+        self._validate_parameters()
+
+    def _validate_parameters(self) -> None:
+        """Check current values, including tensors changed by an optimizer."""
+        for name in ('target', 'weight', 'noise_std'):
+            value = getattr(self, name)
+            positive = name == 'noise_std'
+            if value.is_complex() or not (torch.isfinite(value) & (value > 0 if positive else value >= 0)).all():
+                domain = 'strictly positive' if positive else 'nonnegative'
+                raise ValueError(f'{name} must be finite, real and {domain}')
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor]:
         """Return the weighted reduced likelihood for physical amplitude ``x``."""
         if x.dtype not in (torch.float32, torch.float64):
             raise TypeError('RicianNegLogLikelihood supports float32 and float64 amplitudes')
+        self._validate_parameters()
         value = self.weight * _rician_nll(x, self.target, self.noise_std)
         reduction = torch.mean if self.divide_by_n else torch.sum
         return (reduction(value, dim=self.dim, keepdim=self.keepdim),)

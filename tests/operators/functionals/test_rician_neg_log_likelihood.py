@@ -108,6 +108,9 @@ def test_higher_derivatives_and_func() -> None:
     direction = torch.ones_like(parameters)
     _, hvp, *_ = torch.func.jvp(torch.func.grad(loss), (parameters,), (direction,))
     torch.testing.assert_close(hvp, torch.autograd.functional.hvp(loss, parameters, direction)[1])
+    torch.testing.assert_close(
+        torch.func.hessian(loss)(parameters), torch.autograd.functional.hessian(loss, parameters)
+    )
 
     a, y, s = parameters.detach().unbind()
     functional = RicianNegLogLikelihood(y, s)
@@ -236,3 +239,43 @@ def test_full_hessian(parameters: tuple[float, ...], expected: list[list[float]]
     hessian = torch.autograd.functional.hessian(lambda p: RicianNegLogLikelihood(p[1], p[2])(p[0])[0], p)
     tolerance = 5e-4 if dtype == torch.float32 else 2e-12
     torch.testing.assert_close(hessian, p.new_tensor(expected), rtol=tolerance, atol=tolerance)
+
+
+@pytest.mark.parametrize(
+    ('name', 'invalid'),
+    [(name, value) for name in ('target', 'weight', 'noise_std') for value in (float('nan'), float('inf'), -1.0)]
+    + [('noise_std', 0.0)],
+)
+def test_updated_parameters(name: str, invalid: float) -> None:
+    """Reject invalid constructor values and later in-place optimizer updates."""
+    parameters = {key: torch.tensor([1.0, 2.0], requires_grad=True) for key in ('target', 'weight', 'noise_std')}
+    functional = RicianNegLogLikelihood(parameters['target'], parameters['noise_std'], parameters['weight'])
+    with torch.no_grad():
+        parameters[name][1] = invalid
+    with pytest.raises(ValueError, match=name):
+        functional(torch.ones(2))
+    with pytest.raises(ValueError, match=name):
+        RicianNegLogLikelihood(parameters['target'], parameters['noise_std'], parameters['weight'])
+
+
+@pytest.mark.parametrize('kind', ['constant', 'tensor', 'parameter'])
+@pytest.mark.parametrize(
+    'device',
+    ['cpu', pytest.param('cuda', marks=pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable'))],
+)
+def test_tensor_moves(kind: str, device: str) -> None:
+    """Constants, differentiable tensors and Parameters all follow dtype/device moves."""
+    values = [torch.tensor([1.0, 2.0]) for _ in range(3)]
+    if kind == 'tensor':
+        values = [value.requires_grad_() for value in values]
+    elif kind == 'parameter':
+        values = [torch.nn.Parameter(value) for value in values]
+    target, noise, weight = values
+    functional = RicianNegLogLikelihood(target, noise, weight).to(device=device, dtype=torch.float64)
+    moved = [getattr(functional, name) for name in ('target', 'noise_std', 'weight')]
+    assert all(value.device.type == device and value.dtype == torch.float64 for value in moved)
+    assert all(isinstance(value, torch.nn.Parameter) == (kind == 'parameter') for value in moved)
+    loss = functional(torch.ones(2, device=device, dtype=torch.float64))[0]
+    if kind != 'constant':
+        gradients = torch.autograd.grad(loss, values)
+        assert all(torch.isfinite(gradient).all() for gradient in gradients)
