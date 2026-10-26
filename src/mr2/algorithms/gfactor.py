@@ -110,7 +110,7 @@ def gfactor(
     if covariance.shape[-2:] != (n_coils, n_coils):
         raise ValueError('noise_covariance must have shape (..., coils, coils).')
     covariance = torch.broadcast_to(covariance, (*data.shape[:-4], n_coils, n_coils))
-    if not torch.isfinite(covariance).all() or not torch.allclose(covariance, covariance.mH):
+    if not torch.isfinite(covariance).all() or not torch.allclose(covariance, covariance.mH, atol=0):
         raise ValueError('noise_covariance must be finite and Hermitian.')
     # Match prewhiten_kspace: E[n n^H] = L L^H, without spectral flooring.
     cholesky = torch.linalg.cholesky(covariance)
@@ -125,6 +125,7 @@ def gfactor(
             noise = (cholesky @ white.flatten(start_dim=-3)).reshape(measurements.shape)
             result = reconstruct(measurements.detach() + noise)
             image = (result[0] if isinstance(result, tuple) else result).detach()
+            del result  # Release saved autograd activations before the next reconstruction.
             if mean is None:
                 mean = image.clone()
                 squared_deviations = torch.zeros_like(image.real)

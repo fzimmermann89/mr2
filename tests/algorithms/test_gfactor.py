@@ -1,5 +1,7 @@
 """Tests for measurement-domain g-factor estimation."""
 
+import weakref
+
 import pytest
 import torch
 from mr2.algorithms import gfactor
@@ -172,4 +174,64 @@ def test_invalid_arguments(kwargs, message):
             acceleration=kwargs.get('acceleration', 1),
             noise_covariance=kwargs.get('noise_covariance', torch.eye(1)),
             n_replicas=kwargs.get('n_replicas', 2),
+        )
+
+
+@pytest.mark.parametrize('as_tuple', [False, True])
+def test_reconstruction_graph_released(as_tuple):
+    """Release saved activations before constructing the next replica graph."""
+    data = torch.zeros(1, 1, 1, 4, dtype=torch.complex64)
+    scale = torch.tensor(2.0, requires_grad=True)
+    saved: list[weakref.ReferenceType[torch.Tensor]] = []
+
+    def reconstruct(x):
+        assert all(reference() is None for reference in saved)
+        intermediate = x * scale
+        saved.append(weakref.ref(intermediate))
+        image = intermediate.square()
+        # Reconstructions may need to differentiate through their own operations.
+        torch.autograd.grad(image.real.sum(), scale, retain_graph=True)
+        return (image,) if as_tuple else image
+
+    gfactor(
+        data,
+        reconstruct,
+        data,
+        reconstruct,
+        acceleration=1,
+        noise_covariance=torch.eye(1),
+        n_replicas=2,
+    )
+    assert all(reference() is None for reference in saved)
+
+
+@pytest.mark.parametrize('scale', [1.0, 1e-10])
+def test_reject_nonhermitian_covariance(scale):
+    """Covariance validation must not depend on scanner noise amplitude."""
+    data = torch.zeros(2, 1, 1, 4, dtype=torch.complex64)
+    covariance = scale * torch.tensor([[1.0, 5.0], [0.0, 1.0]])
+    with pytest.raises(ValueError, match='Hermitian'):
+        gfactor(
+            data,
+            IdentityOp(),
+            data,
+            IdentityOp(),
+            acceleration=1,
+            noise_covariance=covariance,
+            n_replicas=2,
+        )
+
+
+def test_reject_mismatched_image_shapes():
+    """Accelerated and reference outputs must describe the same image grid."""
+    data = torch.zeros(1, 1, 1, 4, dtype=torch.complex64)
+    with pytest.raises(ValueError, match='same shape'):
+        gfactor(
+            data,
+            IdentityOp(),
+            data,
+            lambda x: x[..., :2],
+            acceleration=1,
+            noise_covariance=torch.eye(1),
+            n_replicas=2,
         )
