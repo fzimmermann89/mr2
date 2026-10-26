@@ -37,8 +37,8 @@ def grappa(
         Fully sampled rectangular calibration region with the same coil basis,
         frequency spacing, dtype and device as ``kspace``. Its batch dimensions
         must broadcast to those of ``kspace``. Each batch is calibrated separately.
-        For 2D interpolation of mr2 data, move the coil axis immediately before
-        ky, kx (treating kz as a batch axis).
+        For 2D interpolation of KData tensors, move kz before the coil axis.
+        A 3D kernel uses the standard KData axis order directly.
     acquired
         Boolean mask with exactly the spatial shape of ``kspace``, shared by
         all coils and batches. True denotes an acquired sample, including real
@@ -71,15 +71,15 @@ def grappa(
     Boundaries do not wrap: out-of-grid neighbors are excluded and the reduced
     pattern is calibrated separately. Calibration uses only complete ACS
     windows, without padding. Synthesized values are never reused as sources.
-    Neighborhoods are lifted in memory, so large grids or kernels can be costly.
+    Calibration neighborhoods are lifted in memory. Interpolation gathers only
+    acquired sources in bounded chunks to avoid lifting the full input grid.
 
     Raises
     ------
     ValueError
         If shapes, dtype, device or parameters are incompatible, a hole has no
         acquired neighbors, a calibration matrix has fewer rows than columns,
-        or a batch has no calibration source energy. Adequate equation counts
-        alone do not establish calibration quality or matrix rank.
+        or a batch has no calibration source energy.
 
     References
     ----------
@@ -107,7 +107,8 @@ def grappa(
         raise ValueError('kspace and acs must have the same number of coils.')
     batch_shape = kspace.shape[: -n_spatial - 1]
     try:
-        acs = torch.broadcast_to(acs, (*batch_shape, n_coils, *acs.shape[-n_spatial:]))
+        if torch.broadcast_shapes(acs.shape[: -n_spatial - 1], batch_shape) != batch_shape:
+            raise ValueError('acs batch dimensions must broadcast to the kspace batch dimensions.')
     except RuntimeError as error:
         raise ValueError('acs batch dimensions must broadcast to the kspace batch dimensions.') from error
     if not torch.isfinite(acs).all() or not torch.isfinite(kspace[..., acquired]).all():
@@ -123,10 +124,16 @@ def grappa(
     patterns, assignments = torch.unique(mask_patches[missing], dim=0, return_inverse=True)
     calibration = _patches(acs, kernel_size)
     targets = calibration[..., prod(kernel_size) // 2]
-    # Explicitly mask values: NaNs or other placeholders at holes must not enter a fit.
-    data = torch.where(acquired, kspace, 0)
-    neighborhoods = _patches(pad(data, padding), kernel_size)[..., missing, :, :]
-    result = kspace.flatten(start_dim=-n_spatial).transpose(-1, -2).clone()
+    data = kspace.flatten(start_dim=-n_spatial).transpose(-1, -2)
+    result = data.clone()
+    # Offsets use the original grid strides; the mask excludes out-of-grid sources.
+    coordinates = torch.unravel_index(torch.arange(prod(kernel_size), device=kspace.device), kernel_size)
+    offsets = torch.stack(
+        [
+            (coordinate - width // 2) * prod(acquired.shape[axis + 1 :])
+            for axis, (coordinate, width) in enumerate(zip(coordinates, kernel_size, strict=True))
+        ]
+    ).sum(0)
     missing_indices = missing.nonzero().flatten()
     for index, pattern in enumerate(patterns):
         if not pattern.any():
@@ -145,7 +152,8 @@ def grappa(
             weights = torch.linalg.solve(
                 gram + (regularization * energy)[..., None, None] * identity, sources.mH @ targets
             )
-        locations = assignments == index
-        values = neighborhoods[..., locations, :, :][..., pattern].flatten(start_dim=-2) @ weights
-        result[..., missing_indices[locations], :] = values
+        for locations in missing_indices[assignments == index].split(1024):
+            source_indices = locations[:, None] + offsets[pattern]
+            sources = data[..., source_indices, :].transpose(-1, -2).flatten(start_dim=-2)
+            result[..., locations, :] = sources @ weights
     return result.transpose(-1, -2).reshape(kspace.shape)

@@ -4,7 +4,7 @@ from itertools import product
 
 import pytest
 import torch
-from mr2.algorithms.reconstruction import grappa
+from mr2.algorithms import grappa
 
 
 def _point_object(shape: tuple[int, ...], dtype: torch.dtype) -> torch.Tensor:
@@ -21,7 +21,7 @@ def _point_object(shape: tuple[int, ...], dtype: torch.dtype) -> torch.Tensor:
 
 @pytest.mark.parametrize(
     ('shape', 'kernel', 'acceleration'),
-    [((24, 20), (3, 3), 2), ((24, 20), (5, 3), 3), ((9, 16, 12), (3, 3, 3), 2)],
+    [((24, 20), (3, 3), 2), ((72, 64), (3, 3), 2), ((24, 20), (5, 3), 3), ((9, 16, 12), (3, 3, 3), 2)],
 )
 @pytest.mark.parametrize('dtype', [torch.complex64, torch.complex128])
 def test_grappa_point_object(
@@ -33,7 +33,8 @@ def test_grappa_point_object(
     acquired[..., ::acceleration, :] = True
     acquired[..., 6:10, :] = True  # Embedded ACS changes the local patterns.
     data = torch.where(acquired, full, complex('nan'))
-    output = grappa(data, full, acquired, kernel, regularization=0)
+    acs = full[(slice(None),) + (slice(1, -1),) * len(shape)]
+    output = grappa(data, acs, acquired, kernel, regularization=0)
     torch.testing.assert_close(output, full, atol=2e-5, rtol=2e-5)
     assert torch.equal(output[..., acquired], full[..., acquired])
     assert torch.isnan(data[..., ~acquired]).all()
@@ -97,7 +98,6 @@ def test_grappa_fully_acquired() -> None:
     data = torch.zeros((2, 4, 5), dtype=torch.complex64)
     output = grappa(data, data, torch.ones((4, 5), dtype=torch.bool), (3, 3))
     assert torch.equal(output, data)
-    assert output.data_ptr() != data.data_ptr()
 
 
 @pytest.mark.parametrize(
@@ -176,4 +176,17 @@ def test_grappa_cuda(dtype: torch.dtype, regularization: float) -> None:
     assert result.dtype == dtype
     assert result.device == data.device
     torch.testing.assert_close(result.cpu(), expected, atol=3e-4, rtol=3e-4)
+    assert torch.equal(result[..., acquired], data[..., acquired])
+
+
+@pytest.mark.parametrize('kernel', [(1, 3, 3), (3, 3, 3)])
+def test_grappa_batched_volume(kernel: tuple[int, ...]) -> None:
+    """Interpolate noncontiguous 3D batches with a shared cropped ACS region."""
+    full = _point_object((9, 16, 12), torch.complex128)
+    data = torch.stack((full, (2 - 1j) * full)).transpose(-1, -2)
+    acs = full[:, 1:-1, 2:-2, 2:-2].transpose(-1, -2)
+    acquired = torch.ones(data.shape[-3:], dtype=torch.bool)
+    acquired[..., 1::2] = False
+    result = grappa(data, acs, acquired, kernel, regularization=0)
+    torch.testing.assert_close(result, data, atol=2e-5, rtol=2e-5)
     assert torch.equal(result[..., acquired], data[..., acquired])

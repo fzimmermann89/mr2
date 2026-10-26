@@ -8,12 +8,10 @@ from mr2.algorithms.reconstruction.RegularizedIterativeSENSEReconstruction impor
 from mr2.algorithms.reconstruction.TotalVariationRegularizedReconstruction import (
     TotalVariationRegularizedReconstruction,
 )
-from mr2.algorithms.reconstruction.grappa import grappa
 
 __all__ = [
     'DirectReconstruction',
     'Reconstruction',
     'RegularizedIterativeSENSEReconstruction',
     'TotalVariationRegularizedReconstruction',
-    'grappa',
 ]
