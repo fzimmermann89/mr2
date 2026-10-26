@@ -394,10 +394,10 @@ show_images(idat_us.rss().squeeze(), idat_us_csm.rss().squeeze(), titles=['Autoc
 # we try can a more sophisticated reconstruction method, such as the *iterative SENSE algorithm*.
 # As you might have guessed, these are also included in MRtwo:
 # Instead of the `~mr2.algorithms.reconstruction.DirectReconstruction`,
-# we can use `~mr2.algorithms.reconstruction.IterativeSENSEReconstruction`:
+# we can use `~mr2.algorithms.reconstruction.RegularizedIterativeSENSEReconstruction`:
 
 # %%
-sense_recon_us = mr2.algorithms.reconstruction.IterativeSENSEReconstruction(
+sense_recon_us = mr2.algorithms.reconstruction.RegularizedIterativeSENSEReconstruction(
     kdata_us,
     csm=direct_recon_calib_lines.csm_op,
     n_iterations=8,

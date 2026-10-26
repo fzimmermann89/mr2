@@ -1,5 +1,6 @@
 """Functions for tensor shaping, unit conversion, typing, etc."""
 
+from mr2.utils import filters
 from mr2.utils import slice_profiles
 from mr2.utils import typing
 from mr2.utils import unit_conversion
@@ -47,6 +48,7 @@ __all__ = [
     'broadcasted_concatenate',
     'broadcasted_rearrange',
     'fill_range_',
+    'filters',
     'interp',
     'interpolate',
     'normalize_index',

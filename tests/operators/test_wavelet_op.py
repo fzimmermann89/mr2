@@ -232,3 +232,32 @@ def test_wavelet_op_cuda() -> None:
     operator.cuda()
     (coeff,) = operator(img_tensor.cuda())
     assert coeff.is_cuda
+
+
+@pytest.mark.parametrize('dim', [(-1,), (-2, -1), (-3, -2, -1), (1, 0)])
+@pytest.mark.parametrize('batch_shape', [(), (1,), (2, 1, 3)])
+@pytest.mark.parametrize('dtype', [torch.float64, torch.complex128])
+@pytest.mark.parametrize('level', [0, 1])
+def test_batch_shape_preserved(dim: tuple, batch_shape: tuple, dtype: torch.dtype, level: int) -> None:
+    """Batch axes are independent and restored, including absent and singleton axes."""
+    generator = torch.Generator().manual_seed(0)
+    spatial_shape = (8,) * len(dim)
+    image = torch.randn((*batch_shape, *spatial_shape), dtype=dtype, generator=generator)
+    axes = normalize_indices(image.ndim, dim)
+    image = image.moveaxis(tuple(range(-len(dim), 0)), axes)
+    operator = WaveletOp(spatial_shape, dim, wavelet_name='haar', level=level)
+    (coefficients,) = operator(image)
+    torch.testing.assert_close(operator.H(coefficients)[0], image)
+
+    # Compare with independent transforms, so flattening cannot mix batch entries.
+    reference_dim = (-1,) if len(dim) == 1 else (-2, -1) if len(dim) == 2 else (-3, -2, -1)
+    reference_operator = WaveletOp(spatial_shape, reference_dim, wavelet_name='haar', level=level)
+    samples = image.moveaxis(axes, tuple(range(-len(dim), 0))).reshape(-1, *spatial_shape)
+    expected = torch.stack([reference_operator(sample)[0] for sample in samples])
+    expected = expected.reshape(*batch_shape, expected.shape[-1]).moveaxis(-1, min(axes))
+    torch.testing.assert_close(coefficients, expected)
+    dual = torch.randn(coefficients.shape, dtype=dtype, generator=generator)
+    torch.testing.assert_close(
+        (coefficients.conj() * dual).sum(),
+        (image.conj() * operator.H(dual)[0]).sum(),
+    )
