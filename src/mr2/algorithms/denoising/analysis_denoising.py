@@ -66,7 +66,11 @@ def analysis_denoising(
     if not (image.is_floating_point() or image.is_complex()) or image.numel() == 0:
         raise ValueError('image must be a nonempty floating point or complex tensor')
     coefficients = analysis_operator(image)[0]
-    weight = torch.as_tensor(regularization_weight, device=coefficients.device)
+    weight = torch.as_tensor(
+        regularization_weight,
+        device=coefficients.device,
+        dtype=torch.float64 if isinstance(regularization_weight, int | float) else None,
+    )
     if weight.is_complex() or not torch.isfinite(weight).all() or (weight < 0).any():
         raise ValueError('regularization_weight must be real, finite and nonnegative')
     try:

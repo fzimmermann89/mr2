@@ -88,6 +88,19 @@ def test_analysis_real_image_complex_dictionary(warm_start: bool) -> None:
     torch.testing.assert_close(result, expected.to(kernel.dtype), atol=1e-7, rtol=1e-7)
 
 
+@pytest.mark.parametrize('denoise', [analysis_denoising, synthesis_denoising])
+@pytest.mark.parametrize('weight', [0.1, 1e40])
+def test_python_weight_precision(denoise, weight: float) -> None:
+    """Python weights match explicit float64 weights without rounding or range loss."""
+    image = torch.tensor([[2.0, -4.0]], dtype=torch.float64)
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(0)
+        result = denoise(image, IdentityOp(), weight, max_iterations=150)
+        torch.manual_seed(0)
+        expected = denoise(image, IdentityOp(), torch.tensor(weight, dtype=image.dtype), max_iterations=150)
+    torch.testing.assert_close(result, expected, atol=1e-12, rtol=1e-12)
+
+
 def test_analysis_difference_reference() -> None:
     """A two-pixel difference penalty has an independent fused-pair solution."""
     image = torch.tensor([[0.0, 4.0]], dtype=torch.float64)
