@@ -25,6 +25,12 @@ from mr2.utils.sliding_window import sliding_window
 class GrappaReconstruction(Reconstruction):
     """Calibrate GRAPPA, interpolate Cartesian k-space and reconstruct coil images."""
 
+    acs: torch.Tensor
+    """Calibration data in the acquisition coil basis."""
+
+    kernels: torch.Tensor
+    """Fitted kernels indexed by source pattern."""
+
     def __init__(
         self,
         kdata: KData,
@@ -57,7 +63,7 @@ class GrappaReconstruction(Reconstruction):
             Set to None to return separate coil images.
         """
         super().__init__()
-        self.acs = acs
+        self.register_buffer('acs', acs)
         self.kernel_size = kernel_size
         self.regularization = regularization
         self.noise = None
@@ -113,7 +119,7 @@ class GrappaReconstruction(Reconstruction):
         self.image_fourier_op = image_fourier_op
         self.missing_indices = missing_indices
         self.assignments = assignments
-        self.kernels = fitted_kernels
+        self.register_buffer('kernels', fitted_kernels)
         return self
 
     def interpolate(self, kdata: KData) -> torch.Tensor:

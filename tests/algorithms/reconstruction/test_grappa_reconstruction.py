@@ -220,3 +220,24 @@ def test_grappa_recalculate_csm() -> None:
     with pytest.raises(ValueError, match='Prewhiten acquisition and ACS together'):
         reconstruction.recalculate_csm(data, noise=noise)
     assert reconstruction.csm_op is previous
+
+
+@pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA is unavailable')
+def test_grappa_gradient_calibration_cuda() -> None:
+    """Move gradient-bearing calibration buffers and preserve gradients through a refit."""
+    full = _point_object((1, 16, 18), torch.complex128)[None]
+    mask = torch.ones(full.shape[-3:], dtype=torch.bool)
+    mask[..., 1::2, :] = False
+    data = _kdata(full, mask).cuda()
+    acs = full.clone().requires_grad_()
+    reconstruction = GrappaReconstruction(data.cpu(), acs, (1, 3, 3), csm=None).cuda()
+    assert reconstruction.acs.is_cuda
+    assert reconstruction.kernels.is_cuda
+    assert reconstruction.acs.requires_grad
+    assert reconstruction.kernels.requires_grad
+    reconstruction.recalculate_fourierop(data)
+    loss = reconstruction(data).data.abs().square().sum()
+    (gradient,) = torch.autograd.grad(loss, acs)
+    assert torch.isfinite(gradient).all()
+    assert gradient.abs().sum() > 0
