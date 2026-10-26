@@ -34,6 +34,8 @@ class _ConvDecoder(nn.Module):
             for level in range(1, n_levels + 1)
         ]
         self.sizes[-1] = shape
+        if math.prod(self.sizes[0]) <= 1:
+            raise ValueError('The first decoder stage must contain more than one pixel for InstanceNorm.')
         # Meta construction avoids consuming the process RNG in module constructors.
         with torch.device('meta'):
             self.blocks = nn.ModuleList(
@@ -75,7 +77,8 @@ class ConvDecoderReconstruction(DirectReconstruction):
     random latent :math:`z` stays fixed. Each call starts fresh generators and
     Adam states; each 2D slice (including leading batch dimensions) has its own
     weights. No fitted network is retained and this reconstruction is not
-    differentiable through the optimization.
+    differentiable through the optimization. Calls inside ``torch.no_grad()``
+    are supported; ``torch.inference_mode()`` must be disabled while fitting.
 
     This ConvDecoder variant uses nearest upsampling, 3x3
     convolution, ReLU, stateless affine InstanceNorm, an additional block at
@@ -85,7 +88,7 @@ class ConvDecoderReconstruction(DirectReconstruction):
     The paper describes both output formulations. This is not a reproduction
     of all of its fitting and postprocessing choices.
 
-    Data are scaled by the RMS magnitude of the adjoint image during fitting,
+    Each acquisition batch entry is scaled by its adjoint image RMS during fitting,
     and the returned image is restored to the input units. The adjoint is not
     used as the network input.
 
@@ -128,9 +131,13 @@ class ConvDecoderReconstruction(DirectReconstruction):
         csm
             Sensitivity maps, operator or estimation callable, as in
             `DirectReconstruction`. Required for multicoil object reconstruction;
-            `None` is supported for single-coil data.
+            `None` is supported for single-coil data. When `noise` is supplied,
+            explicit maps must already be in the whitened coil basis. Estimation
+            callables receive coil images reconstructed from whitened data.
         noise
-            Noise measurement used for prewhitening, if provided.
+            Noise measurement used to prewhiten the k-space data, if provided.
+            Explicit sensitivity maps are not transformed; supply maps calibrated
+            from equivalently whitened data, as for `DirectReconstruction`.
         dcf
             Density compensation used only for sensitivity estimation, not for
             weighting the fitting loss. If omitted, estimate from `kdata`.
@@ -144,7 +151,8 @@ class ConvDecoderReconstruction(DirectReconstruction):
             Number of nearest-neighbor upsampling stages.
         latent_shape
             Spatial shape of the fixed uniform random input. Must fit inside each
-            output slice and contain more than one pixel.
+            output slice. The first upsampling stage must contain more than one
+            pixel for InstanceNorm.
         seed
             Seed for a local generator, reset on each call without changing global
             RNG state. Reproducible on the same device with deterministic kernels.
@@ -159,8 +167,8 @@ class ConvDecoderReconstruction(DirectReconstruction):
             raise ValueError('learning_rate must be finite and positive.')
         if n_features < 1 or n_levels < 1:
             raise ValueError('n_features and n_levels must be positive.')
-        if len(latent_shape) != 2 or min(latent_shape) < 1 or math.prod(latent_shape) <= 1:
-            raise ValueError('latent_shape must contain two positive sizes and more than one pixel.')
+        if len(latent_shape) != 2 or min(latent_shape) < 1:
+            raise ValueError('latent_shape must contain two positive sizes.')
         super().__init__(kdata, fourier_op, csm, noise, dcf)
         self.max_iterations = max_iterations
         self.learning_rate = learning_rate
@@ -184,7 +192,8 @@ class ConvDecoderReconstruction(DirectReconstruction):
         with torch.no_grad():
             (adjoint,) = acquisition.H(data)
             shape = adjoint.shape
-            scale = adjoint.abs().square().mean().sqrt().clamp_min(torch.finfo(data.real.dtype).eps)
+            scale = adjoint.abs().square().mean(dim=(-3, -2, -1), keepdim=True).sqrt()
+            scale = scale.clamp_min(torch.finfo(data.real.dtype).eps)
         if shape[-4] != 1:
             raise ValueError('The acquisition model must map a single complex object to k-space.')
         image_shape = (shape[-2], shape[-1])
@@ -205,14 +214,15 @@ class ConvDecoderReconstruction(DirectReconstruction):
         def image() -> torch.Tensor:
             return torch.cat([model(z) for model, z in zip(models, latents, strict=True)]).reshape(shape)
 
-        optimizer = torch.optim.Adam(models.parameters(), lr=self.learning_rate)
+        parameters = tuple(models.parameters())
+        optimizer = torch.optim.Adam(parameters, lr=self.learning_rate)
         for iteration in range(self.max_iterations):
             optimizer.zero_grad(set_to_none=True)
             (prediction,) = acquisition(image())
             loss = (prediction - data / scale).abs().square().mean()
             if not torch.isfinite(loss):
                 raise RuntimeError('Non-finite ConvDecoder fitting loss.')
-            loss.backward()
+            loss.backward(inputs=parameters)
             optimizer.step()
             if self.callback is not None:
                 with torch.no_grad():

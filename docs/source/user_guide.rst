@@ -111,13 +111,15 @@ Each call fits fresh independent generators for the 2D slices and returns comple
 ``IData`` with a header derived from the input. The random latent stays fixed while
 Adam updates the weights. The seed controls initialization without changing global
 random state. The default latent shape is ``(8, 4)``; smaller images need a smaller
-``latent_shape`` with at least two pixels. Memory use grows with the number of slices.
+``latent_shape``. The first upsampling stage needs at least two pixels. Memory use grows with the number of slices.
 
 This variant uses nearest-neighbor upsampling, convolution, ReLU and stateless affine
 InstanceNorm, followed by a linear complex object output. The authors' ConvDecoder
 uses BatchNorm; their paper describes both object-output and coil-output formulations:
 `Darestani and Heckel (2021) <https://doi.org/10.1109/TCI.2021.3097596>`_.
-Sensitivity maps are required for multicoil object reconstruction.
+Sensitivity maps are required for multicoil object reconstruction. With ``noise``
+prewhitening enabled, supplied maps must already match the whitened coil basis;
+automatic estimation uses whitened data.
 
 ``max_iterations`` sets the fitting budget. An optional ``callback`` receives
 ``iteration_number`` (zero-based) and ``solution=(image_tensor,)`` after each update;
