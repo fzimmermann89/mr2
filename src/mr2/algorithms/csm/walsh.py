@@ -113,10 +113,10 @@ def walsh(
         csm = csm * torch.exp(-1j * phase_map).unsqueeze(-4)
 
     if extrapolate:
-        confidence = coil_images.abs().square().sum(dim=-4).sqrt()
+        energy = coil_images.abs().square().sum(dim=-4)
         if pool_dim is not None:
-            confidence = confidence.square().sum(dim=pool_dim, keepdim=True).sqrt()
-        csm = extrapolate_csm(csm, confidence, smoothing_width)
+            energy = energy.sum(dim=pool_dim, keepdim=True)
+        csm = extrapolate_csm(csm, energy.sqrt(), smoothing_width)
 
     norm = csm.norm(dim=-4, keepdim=True)
     fallback = torch.zeros_like(csm)
