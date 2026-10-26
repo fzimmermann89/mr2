@@ -18,16 +18,6 @@ class NuclearNorm(ElementaryProximableFunctional):
     expanding the input batch shape. For input ``(B, m, n)``, use ``(B, 1, 1)``
     for per-matrix parameters. Entrywise weights or steps are unsupported.
     Complex and negative weights use their magnitude, as in `L1Norm`.
-
-    Notes
-    -----
-    SVD operands must have dtype float32, float64, complex64 or complex128;
-    float16 and bfloat16 are unsupported.
-    Proximal maps use a reduced SVD. Their gradients inherit PyTorch SVD
-    limitations at repeated or zero singular values; finite gradients there
-    are not guaranteed, even for zero steps or weights. Forward uses
-    ``torch.linalg.svdvals``; the nuclear norm itself is not differentiable
-    at rank-deficient matrices.
     """
 
     def __init__(
@@ -52,14 +42,6 @@ class NuclearNorm(ElementaryProximableFunctional):
         """
         super().__init__(target, weight, dim=(-2, -1), divide_by_n=divide_by_n, keepdim=keepdim)
 
-    @staticmethod
-    def _matrix_parameter(value: torch.Tensor | float, x: torch.Tensor) -> torch.Tensor:
-        """Broadcast a matrix-constant parameter without expanding the input."""
-        if x.ndim < 2:
-            raise ValueError('NuclearNorm requires at least two input dimensions')
-        value = value.to(device=x.device) if isinstance(value, torch.Tensor) else x.real.new_tensor(value)
-        return torch.broadcast_to(value, (*x.shape[:-2], 1, 1))
-
     def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor]:
         """Return one weighted sum of singular values per matrix.
 
@@ -81,7 +63,10 @@ class NuclearNorm(ElementaryProximableFunctional):
             Prefer calling the instance of the NuclearNorm as ``operator(x)`` over directly calling this method.
             See this PyTorch `discussion <https://discuss.pytorch.org/t/is-model-forward-x-the-same-as-model-call-x/33460/3>`_.
         """
-        weight = self._divide_by_n(self._matrix_parameter(self.weight.abs(), x), x.shape)
+        if x.ndim < 2:
+            raise ValueError('NuclearNorm requires at least two input dimensions')
+        weight = torch.broadcast_to(self.weight.abs().to(device=x.device), (*x.shape[:-2], 1, 1))
+        weight = self._divide_by_n(weight, x.shape)
         target = torch.broadcast_to(self.target.to(device=x.device), x.shape)
         value = torch.linalg.svdvals(x - target).sum(-1, keepdim=True).unsqueeze(-1) * weight
         return (value if self.keepdim else value[..., 0, 0],)
@@ -102,8 +87,12 @@ class NuclearNorm(ElementaryProximableFunctional):
             Proximal mapping with the same shape as the input.
         """
         throw_if_negative_or_complex(sigma)
-        weight = self._matrix_parameter(self.weight.abs(), x)
-        step = self._matrix_parameter(sigma, x)
+        if x.ndim < 2:
+            raise ValueError('NuclearNorm requires at least two input dimensions')
+        shape = (*x.shape[:-2], 1, 1)
+        weight = torch.broadcast_to(self.weight.abs().to(device=x.device), shape)
+        sigma = sigma.to(device=x.device) if isinstance(sigma, torch.Tensor) else x.real.new_tensor(sigma)
+        step = torch.broadcast_to(sigma, shape)
         threshold = self._divide_by_n(weight * step, x.shape)
         target = torch.broadcast_to(self.target.to(device=x.device), x.shape)
         diff = x - target
@@ -130,8 +119,13 @@ class NuclearNorm(ElementaryProximableFunctional):
             Proximal mapping of the convex conjugate, with the input shape.
         """
         throw_if_negative_or_complex(sigma)
-        radius = self._divide_by_n(self._matrix_parameter(self.weight.abs(), x), x.shape)
-        step = self._matrix_parameter(sigma, x)
+        if x.ndim < 2:
+            raise ValueError('NuclearNorm requires at least two input dimensions')
+        shape = (*x.shape[:-2], 1, 1)
+        weight = torch.broadcast_to(self.weight.abs().to(device=x.device), shape)
+        radius = self._divide_by_n(weight, x.shape)
+        sigma = sigma.to(device=x.device) if isinstance(sigma, torch.Tensor) else x.real.new_tensor(sigma)
+        step = torch.broadcast_to(sigma, shape)
         target = torch.broadcast_to(self.target.to(device=x.device), x.shape)
         diff = x - step * target
         u, s, vh = torch.linalg.svd(diff.to(torch.result_type(diff, radius)), full_matrices=False)
