@@ -34,7 +34,7 @@ class FunctionalTestCase:
     def result_dtype(self):
         """Expected result dtype"""
         weight = self.functional.weight
-        if isinstance(self.functional, functionals.L21Norm):
+        if isinstance(self.functional, functionals.L21Norm | functionals.NuclearNorm):
             # Radial mappings use the magnitude; a complex weight does not make a real input complex.
             weight = weight.abs()
         return torch.promote_types(self.x_dtype, torch.result_type(self.functional.target, weight))
@@ -62,9 +62,13 @@ class FunctionalArguments(TypedDict, total=False):
 
 
 def make_functional(functional: type[Functional], **kwargs: Unpack[FunctionalArguments]) -> Functional:
-    """Construct a shared test functional, grouping the last axis for L21Norm."""
+    """Construct a shared test functional with its supported reduction axes."""
     if functional is functionals.L21Norm:
         return cast(Functional, functionals.L21Norm(group_dim=-1, **kwargs))
+    if functional is functionals.NuclearNorm:
+        # Matrix axes are fixed; the shared dim parameter applies to the other norms.
+        kwargs.pop('dim', None)
+        return functional(**kwargs)
     return functional(**kwargs)
 
 
@@ -87,10 +91,14 @@ def functional_test_cases(func: Callable[[FunctionalTestCase], None]) -> Callabl
         dim: Sequence[int] | None,
         divide_by_n: bool,
     ):
+        if functional is functionals.NuclearNorm:
+            shape = torch.Size((2, 3, 4))
         dtype = getattr(torch, dtype_name)
         rng = RandomGenerator(13)
         sigma = rng.rand_tensor((1,), low=0.0, high=1.0, dtype=dtype.to_real())
         weight_shape = (*shape[:-1], 1) if functional is functionals.L21Norm else shape
+        if functional is functionals.NuclearNorm:
+            weight_shape = (*shape[:-2], 1, 1)
         match weight:
             case 'scalar_weight':
                 weight_value: float | torch.Tensor = rng.float64(low=-2, high=2)

@@ -4,7 +4,7 @@ from typing import Literal
 import pytest
 import torch
 from mr2.operators.Functional import ElementaryFunctional, ElementaryProximableFunctional
-from mr2.operators.functionals import MSE, L1Norm, L1NormViewAsReal, L2NormSquared, L21Norm, ZeroFunctional
+from mr2.operators.functionals import MSE, L1Norm, L1NormViewAsReal, L2NormSquared, L21Norm, NuclearNorm, ZeroFunctional
 from mr2.utils import RandomGenerator
 from mr2.utils.reshape import normalize_indices
 from typing_extensions import TypedDict
@@ -26,6 +26,10 @@ def test_functional_shape(functional: type[ElementaryFunctional], shape: torch.S
     """Test the shape returned by the forward of the functional."""
     f = make_functional(functional, dim=dim, keepdim=keepdim)
     x = torch.ones(shape)
+    if functional is NuclearNorm and len(shape) < 2:
+        with pytest.raises(ValueError, match='at least two'):
+            f(x)
+        return
 
     if (functional is L21Norm and not shape) or (dim is not None and (dim >= len(shape) or dim < -len(shape))):
         # dim is out of bounds
@@ -39,6 +43,8 @@ def test_functional_shape(functional: type[ElementaryFunctional], shape: torch.S
     reduced = set(range(len(shape))) if dim is None else set(normalize_indices(len(shape), dim))
     if functional is L21Norm:
         reduced.add(len(shape) - 1)
+    elif functional is NuclearNorm:
+        reduced = {len(shape) - 2, len(shape) - 1}
     expected_shape = (
         tuple(1 if i in reduced else size for i, size in enumerate(shape))
         if keepdim
@@ -59,6 +65,12 @@ def test_functional_divide_by_n(
     f_mean = make_functional(functional, divide_by_n=True, dim=dim, keepdim=keepdim)
     f_sum = make_functional(functional, divide_by_n=False, dim=dim, keepdim=keepdim)
     x = RandomGenerator(13).float32_tensor(shape)
+    if functional is NuclearNorm and len(shape) < 2:
+        with pytest.raises(ValueError, match='at least two'):
+            f_mean(x)
+        with pytest.raises(ValueError, match='at least two'):
+            f_sum(x)
+        return
 
     if (functional is L21Norm and not shape) or (
         dim is not None and any(d >= len(shape) or d < -len(shape) for d in dim)
@@ -74,6 +86,8 @@ def test_functional_divide_by_n(
     outer = tuple(range(len(shape))) if dim is None else normalize_indices(len(shape), dim)
     if functional is L21Norm:
         outer = tuple(d for d in outer if d != len(shape) - 1)
+    elif functional is NuclearNorm:
+        outer = (len(shape) - 2, len(shape) - 1)
     n = 1
     for d in outer:
         n *= shape[d]
@@ -189,6 +203,8 @@ def test_functional_prox_zero_sigma(
     """Test prox with sigma=0"""
     p = getattr(make_functional(functional), function)
     x = torch.tensor([-1.0, 0.0, 1.0])
+    if functional is NuclearNorm:
+        x = torch.diag(x)
     (prox,) = p(x, sigma=0.0)
     assert not torch.any(torch.isnan(prox))
     assert not torch.any(torch.isinf(prox))
@@ -203,9 +219,9 @@ def test_functional_negative_sigma(
     """Test if error is raised for negative or complex sigma"""
 
     def case(sigma):
-        x = torch.zeros(2)
+        x = torch.zeros(1, 2)
         f = getattr(make_functional(functional, keepdim=True), function)
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match='sigma must be real'):
             f(x, sigma)
 
     # all these cases should throw an exception:
@@ -316,6 +332,16 @@ NUMERICCASES: dict[str, NumericCase] = {  # Name: Case
         'prox_convex_conj_expected': torch.tensor([[0.5 + 3j, 4 + 1j], [6.5 + 0.5j, 1 + 8j]])
         * (2 / torch.tensor([[26.25], [107.5]]).sqrt()),
     },
+    'NuclearNorm diagonal': {
+        'functional': NuclearNorm,
+        'x': torch.diag(torch.tensor([5.0, -2.0])),
+        'weight': 2j,
+        'target': torch.diag(torch.tensor([1.0, -1.0])),
+        'sigma': 0.5,
+        'fx_expected': torch.tensor(10.0),
+        'prox_expected': torch.diag(torch.tensor([4.0, -1.0])),
+        'prox_convex_conj_expected': torch.diag(torch.tensor([2.0, -1.5])),
+    },
     'MSE': {
         # Generated with ODL
         'functional': MSE,
@@ -378,7 +404,9 @@ def test_functional_cuda_forward(
             f = make_functional(functional)
         case 'tensor':
             f = make_functional(functional, weight=torch.tensor(1.0), target=torch.tensor(0.0))
-    x = (torch.ones(1) if functional is L21Norm else torch.tensor(1.0)).cuda()
+    x = (
+        torch.ones(1, 1) if functional is NuclearNorm else torch.ones(1) if functional is L21Norm else torch.tensor(1.0)
+    ).cuda()
     f.cuda()
     (fx,) = f(x)
     assert fx.is_cuda
@@ -391,7 +419,9 @@ def test_functional_cuda_prox(
     functional: type[ElementaryProximableFunctional], parameters: Literal['scalar', 'none', 'tensor']
 ):
     """Test if prox and prox_convex_conj work on the GPU."""
-    x = (torch.ones(1) if functional is L21Norm else torch.tensor(1.0)).cuda()
+    x = (
+        torch.ones(1, 1) if functional is NuclearNorm else torch.ones(1) if functional is L21Norm else torch.tensor(1.0)
+    ).cuda()
     match parameters:
         case 'scalar':
             f = make_functional(functional, weight=1.0, target=0.0).cuda()
@@ -414,7 +444,7 @@ def test_functional_cuda_prox(
 @pytest.mark.parametrize('functional', FUNCTIONALS)
 def test_functional_scalar_arguments_forward(functional: type[ElementaryFunctional]):
     """Test if the forward pass works with scalar weight and target."""
-    x = torch.ones(1) if functional is L21Norm else torch.tensor(1.0)
+    x = torch.ones(1, 1) if functional is NuclearNorm else torch.ones(1) if functional is L21Norm else torch.tensor(1.0)
     f_scalar = make_functional(functional, weight=1.0, target=0.0)
     f_tensor = make_functional(functional, weight=torch.tensor(1.0), target=torch.tensor(0.0))
     (fx_scalar,) = f_scalar(x)
@@ -428,7 +458,7 @@ def test_functional_scalar_arguments_prox(
     functional: type[ElementaryProximableFunctional], function: Literal['prox', 'prox_convex_conj']
 ):
     """Test if prox and prox_convex_conj work with scalar weight and target."""
-    x = torch.ones(1) if functional is L21Norm else torch.tensor(1.0)
+    x = torch.ones(1, 1) if functional is NuclearNorm else torch.ones(1) if functional is L21Norm else torch.tensor(1.0)
     p_scalar = getattr(make_functional(functional, weight=1.0, target=0.0), function)
     p_tensor = getattr(make_functional(functional, weight=torch.tensor(1.0), target=torch.tensor(0.0)), function)
     (px_scalar,) = p_scalar(x, sigma=1.0)
@@ -439,7 +469,7 @@ def test_functional_scalar_arguments_prox(
 @pytest.mark.parametrize('functional', FUNCTIONALS)
 def test_functional_default_arguments_forward(functional: type[ElementaryFunctional]):
     """Test if the forward pass works with default weight and target."""
-    x = torch.ones(1) if functional is L21Norm else torch.tensor(1.0)
+    x = torch.ones(1, 1) if functional is NuclearNorm else torch.ones(1) if functional is L21Norm else torch.tensor(1.0)
     f_default = make_functional(functional)
     f_tensor = make_functional(functional, weight=torch.tensor(1.0), target=torch.tensor(0.0))
     (fx_default,) = f_default(x)
@@ -453,7 +483,7 @@ def test_functional_default_arguments_prox(
     functional: type[ElementaryProximableFunctional], function: Literal['prox', 'prox_convex_conj']
 ):
     """Test if prox and prox_convex_conj work with default weight and target."""
-    x = torch.ones(1) if functional is L21Norm else torch.tensor(1.0)
+    x = torch.ones(1, 1) if functional is NuclearNorm else torch.ones(1) if functional is L21Norm else torch.tensor(1.0)
     p_default = getattr(make_functional(functional), function)
     p_tensor = getattr(make_functional(functional, weight=torch.tensor(1.0), target=torch.tensor(0.0)), function)
     (px_default,) = p_default(x)
