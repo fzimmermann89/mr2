@@ -2,6 +2,7 @@
 
 import copy
 import datetime
+import math
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from importlib.metadata import version
@@ -35,6 +36,7 @@ from mr2.data.KHeader import KHeader
 from mr2.data.KNoise import KNoise
 from mr2.data.KTrajectory import KTrajectory
 from mr2.data.Rotation import Rotation
+from mr2.data.SpatialDimension import SpatialDimension
 from mr2.data.traj_calculators.KTrajectoryCalculator import KTrajectoryCalculator
 from mr2.data.traj_calculators.KTrajectoryIsmrmrd import KTrajectoryIsmrmrd
 from mr2.utils.reshape import normalize_index, normalize_indices
@@ -602,6 +604,74 @@ class KData(Dataclass):
 
         whitened = prewhiten_kspace(self, knoise, scale_factor)
         return type(self)(whitened.header, whitened.data, whitened.traj)
+
+    def apodize(
+        self,
+        width: float | SpatialDimension[float] | None = None,
+        *,
+        window: Literal['hann', 'gaussian'] = 'hann',
+        radial: bool = False,
+    ) -> Self:
+        """Return a copy with a centered k-space window applied at trajectory coordinates.
+
+        Suppressing high spatial frequencies smooths the reconstructed image and
+        reduces ringing at the cost of spatial resolution. Weights are shared
+        across coils, with unit gain at DC and no energy/noise normalization.
+        Trajectory, header and acquisition metadata are copied unchanged.
+
+        Parameters
+        ----------
+        width
+            Full window width in trajectory units: one unit normally corresponds
+            to one Cartesian encoding step, or ``1 / encoding_fov`` in spatial
+            frequency. A scalar applies to all spatial directions; a
+            `SpatialDimension` specifies z, y and x separately. Defaults to the
+            header's encoding matrix sizes, independent of acquired sample count.
+            All widths must be finite and positive.
+        window
+            ``'hann'`` uses ``(1 + cos(2*pi*k/width)) / 2`` within
+            ``abs(k) < width/2`` and zero outside. Thus width is the full support.
+            ``'gaussian'`` uses ``exp(-4*log(2)*(k/width)**2)``: width is its
+            full width at half maximum, with no hard cutoff.
+        radial
+            If False, multiply the windows along kz, ky and kx (separable).
+            If True, evaluate one window at the radius formed from coordinates
+            scaled by their respective widths (ellipsoidal support for Hann).
+            Gaussian weights coincide for both choices. Neither choice depends
+            on storage order. The origin, including for even matrix sizes, has
+            weight one even when DC was not acquired.
+
+        Returns
+        -------
+            Apodized copy with the same data shape, dtype and device. Acquired
+            zeros remain zero. Density compensation is not applied or modified.
+        """
+        if window not in ('hann', 'gaussian'):
+            raise ValueError("window must be 'hann' or 'gaussian'.")
+        widths: tuple[float, float, float]
+        if width is None:
+            widths = self.header.encoding_matrix.zyx
+        elif isinstance(width, SpatialDimension):
+            widths = width.zyx
+        else:
+            widths = (width, width, width)
+        if any(not math.isfinite(value) or value <= 0 for value in widths):
+            raise ValueError('width must be finite and positive in every direction.')
+
+        weight = torch.ones((), dtype=self.data.real.dtype, device=self.data.device)
+        radius_squared = torch.zeros_like(weight)
+        for coordinate, axis_width in zip((self.traj.kz, self.traj.ky, self.traj.kx), widths, strict=True):
+            normalized = coordinate.to(device=self.data.device, dtype=self.data.real.dtype) / (axis_width / 2)
+            if radial or window == 'gaussian':
+                radius_squared = radius_squared + normalized.square()
+            else:
+                weight = weight * torch.where(normalized.abs() < 1, (1 + torch.cos(torch.pi * normalized)) / 2, 0)
+        if window == 'gaussian':
+            weight = torch.exp(-math.log(2) * radius_squared)
+        elif radial:
+            radius = radius_squared.sqrt()
+            weight = torch.where(radius < 1, (1 + torch.cos(torch.pi * radius)) / 2, 0)
+        return type(self)(self.header.clone(), self.data * weight, self.traj.clone())
 
     def remove_readout_os(self: Self) -> Self:
         """Remove any oversampling along the readout direction.
