@@ -13,8 +13,7 @@ def test_cartesian(dtype: torch.dtype, ndim: int, size: int) -> None:
     k = torch.stack(torch.meshgrid(*[torch.arange(size, dtype=dtype) - size // 2] * ndim, indexing='ij'))
     w = dcf_pipe(k, (size,) * ndim, n_iterations=5)
     assert w.dtype == dtype
-    # The minimum 32-point grid is not commensurate with a seven-point
-    # lattice; fractional kernel phases cause a small sampling ripple.
+    # The 32-point grid introduces a small ripple for seven-point lattices.
     tolerance = 0.002 if size == 7 else 1e-4
     torch.testing.assert_close(w, torch.ones_like(w), rtol=0, atol=tolerance)
 
@@ -121,3 +120,18 @@ def test_periodic_coordinates(device: str) -> None:
     k = torch.tensor([[-16.0, -5.25, 0.0, 3.5, 15.0]], dtype=torch.float64, device=device)
     shifts = k.new_tensor([[-4, 3, 0, 5, -3]]) * 32
     torch.testing.assert_close(dcf_pipe(k + shifts, (32,)), dcf_pipe(k, (32,)))
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+def test_multiple_batch_dimensions(device: str) -> None:
+    """Leading batch axes preserve independent weights and their normalization."""
+    radial = make_trajectory('radial').to(device).unsqueeze(-3)
+    spiral = make_trajectory('spiral').to(device).reshape(2, 1, 32, 64)
+    geometries = torch.stack((radial, spiral))
+    batch = torch.stack((geometries, geometries * 0.8)).transpose(0, 1)
+    result = dcf_pipe(batch, (32, 32))
+    assert result.shape == (2, 2, 1, 32, 64)
+    for i in range(2):
+        for j in range(2):
+            torch.testing.assert_close(result[i, j], dcf_pipe(batch[i, j], (32, 32)))
+    torch.testing.assert_close(result.sum((-3, -2, -1)), torch.full((2, 2), 32**2, device=device).float())

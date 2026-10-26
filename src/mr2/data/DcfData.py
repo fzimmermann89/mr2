@@ -1,12 +1,14 @@
 """Density compensation data (DcfData) class."""
 
-from functools import partial, reduce
+from functools import reduce
+from itertools import product
 from math import isfinite
 from typing import TYPE_CHECKING
 
 import torch
 from typing_extensions import Self
 
+from mr2.algorithms.dcf._trajectory import _trajectory_groups
 from mr2.algorithms.dcf.dcf_pipe import dcf_pipe
 from mr2.algorithms.dcf.dcf_voronoi import dcf_1d, dcf_2d3d_voronoi
 from mr2.data.Dataclass import Dataclass
@@ -106,36 +108,16 @@ class DcfData(Dataclass):
         if any(not k.isfinite().all() for k in (traj.kz, traj.ky, traj.kx)):
             raise ValueError('traj must contain finite coordinates.')
 
-        def calculate(k: torch.Tensor, sizes: list[int]) -> torch.Tensor:
-            return dcf_pipe(k, sizes, n_iterations, oversampling).unsqueeze(0)
-
-        def calculate_geometry(coordinates: torch.Tensor) -> torch.Tensor:
-            ks = [reduce_repeat(k, tol=0, dim=(-3, -2, -1)) for k in coordinates.unsqueeze(0).unbind(-4)]
-            # As in the Voronoi constructor, group coordinates by the sample axes
-            # they share. Merge transitively to keep coupled coordinates together.
-            groups: list[set[int]] = []
-            for axis, k in enumerate(ks):
-                if all(size == 1 for size in k.shape[-3:]):
-                    continue
-                group = {axis}
-                for previous in groups.copy():
-                    if any(ks[i].shape[d] > 1 and k.shape[d] > 1 for i in previous for d in (-3, -2, -1)):
-                        group |= previous
-                        groups.remove(previous)
-                groups.append(group)
-
-            dcf = coordinates.new_ones(1, 1, 1, 1, 1)
-            for group in groups:
-                axes = sorted(group)
-                group_coordinates = torch.cat(torch.broadcast_tensors(*(ks[i] for i in axes)), dim=-4)
-                dimensions = (-4, *(d for d in (-3, -2, -1) if group_coordinates.shape[d] > 1))
-                dcf = dcf * smap(
-                    partial(calculate, sizes=[encoding_matrix.zyx[i] for i in axes]), group_coordinates, dimensions
-                )
-            return dcf.squeeze(0).expand(1, *coordinates.shape[-3:])
-
-        coordinates = torch.cat(torch.broadcast_tensors(traj.kz, traj.ky, traj.kx), dim=-4).detach()
-        return cls(data=smap(calculate_geometry, coordinates, 4))
+        coordinates = torch.broadcast_tensors(traj.kz.detach(), traj.ky.detach(), traj.kx.detach())
+        results = []
+        for index in product(*(range(size) for size in traj.shape[:-4])):
+            ks = [reduce_repeat(k[index], tol=0, dim=(-3, -2, -1)) for k in coordinates]
+            dcf = traj.kx.new_ones(1, 1, 1, 1)
+            for axes in _trajectory_groups(ks):
+                group = torch.cat(torch.broadcast_tensors(*(ks[i] for i in axes)), dim=-4)
+                dcf = dcf * dcf_pipe(group, [encoding_matrix.zyx[i] for i in axes], n_iterations, oversampling)
+            results.append(dcf.expand(1, *traj.shape[-3:]))
+        return cls(data=torch.stack(results).reshape(traj.shape))
 
     def as_operator(self) -> 'DensityCompensationOp':
         """Create a density compensation operator using a copy of the DCF."""
