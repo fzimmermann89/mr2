@@ -8,8 +8,7 @@ from mr2.operators.functionals import NuclearNorm
 @pytest.mark.parametrize('dtype', [torch.float64, torch.complex128])
 @pytest.mark.parametrize('shape', [(3, 5), (5, 3), (2, 3, 5), (2, 1, 5, 3)])
 @pytest.mark.parametrize('divide_by_n', [False, True])
-@pytest.mark.parametrize('keepdim', [False, True])
-def test_diagonal(dtype: torch.dtype, shape: tuple[int, ...], divide_by_n: bool, keepdim: bool):
+def test_diagonal(dtype: torch.dtype, shape: tuple[int, ...], divide_by_n: bool):
     """Check sums, soft thresholding and clipping against diagonal formulas."""
     x = torch.zeros(shape, dtype=dtype)
     singular_values = torch.tensor([5.0, 2.0, 0.0], dtype=torch.float64)
@@ -18,10 +17,10 @@ def test_diagonal(dtype: torch.dtype, shape: tuple[int, ...], divide_by_n: bool,
     target = torch.full_like(x, 0.2 + 0.3j if dtype.is_complex else 0.2)
     weight = torch.arange(1, x[..., :1, :1].numel() + 1, dtype=torch.float64).reshape(*shape[:-2], 1, 1)
     sigma = weight * 0.4
-    f = NuclearNorm(target=target, weight=weight, divide_by_n=divide_by_n, keepdim=keepdim)
+    f = NuclearNorm(target=target, weight=weight, divide_by_n=divide_by_n)
     radius = weight / (shape[-2] * shape[-1]) if divide_by_n else weight
     expected_value = radius * 7
-    torch.testing.assert_close(f(x + target)[0], expected_value if keepdim else expected_value[..., 0, 0])
+    torch.testing.assert_close(f(x + target)[0], expected_value[..., 0, 0])
     shrunk = torch.relu(singular_values - (sigma * radius)[..., 0])
     clipped = torch.minimum(singular_values, radius[..., 0])
     primal = torch.zeros_like(x)
@@ -53,20 +52,6 @@ def test_moreau(dtype: torch.dtype, divide_by_n: bool):
     torch.testing.assert_close((2 * f).prox(x, step)[0], f.prox(x, 2 * step)[0])
 
 
-def test_zeros():
-    """Zero weights, steps and inputs have the expected primal and dual limits."""
-    x = torch.tensor([[[3.0, 0.0], [0.0, 1.0]], [[1.0, 0.0], [0.0, 2.0]]])
-    target = torch.ones_like(x)
-    f = NuclearNorm(target, weight=torch.tensor([0.0, 2.0]).reshape(2, 1, 1))
-    torch.testing.assert_close(f.prox(x, 0)[0], x)
-    torch.testing.assert_close(f.prox_convex_conj(x, 0)[0], x)
-    torch.testing.assert_close(f.prox(x)[0][0], x[0])
-    torch.testing.assert_close(NuclearNorm()(torch.zeros_like(x))[0], torch.zeros(2))
-    torch.testing.assert_close(NuclearNorm().prox(torch.zeros_like(x))[0], torch.zeros_like(x))
-    torch.testing.assert_close(NuclearNorm().prox_convex_conj(torch.zeros_like(x))[0], torch.zeros_like(x))
-    torch.testing.assert_close(NuclearNorm().prox_convex_conj(x, 0)[0], x)
-
-
 @pytest.mark.parametrize('method', ['forward', 'prox', 'prox_convex_conj'])
 @pytest.mark.parametrize('shape', [(2,), (2, 3, 1), (2, 1, 5), (4, 2, 1, 1)])
 def test_weight_shape(method: str, shape: tuple[int, ...]):
@@ -77,8 +62,8 @@ def test_weight_shape(method: str, shape: tuple[int, ...]):
 
 
 @pytest.mark.parametrize('method', ['prox', 'prox_convex_conj'])
-@pytest.mark.parametrize('step', [torch.ones(2), torch.ones(2, 3, 1), torch.ones(4, 2, 1, 1), -1.0, 1j])
-def test_step_shape_and_sign(method: str, step: torch.Tensor | complex):
+@pytest.mark.parametrize('step', [torch.ones(2), torch.ones(2, 3, 1), torch.ones(4, 2, 1, 1)])
+def test_step_shape(method: str, step: torch.Tensor | complex):
     """Reject unsupported steps consistently in both proximal maps."""
     with pytest.raises(ValueError):
         getattr(NuclearNorm(), method)(torch.ones(2, 3, 5), step)

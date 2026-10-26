@@ -1,13 +1,14 @@
 import inspect
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, TypeVar, cast
 
 import pytest
 import torch
 from mr2.operators import functionals
 from mr2.operators.Functional import ElementaryFunctional, ElementaryProximableFunctional
 from mr2.utils import RandomGenerator
+from typing_extensions import TypedDict, Unpack
 
 
 @dataclass
@@ -33,21 +34,42 @@ class FunctionalTestCase:
     def result_dtype(self):
         """Expected result dtype"""
         weight = self.functional.weight
-        if isinstance(self.functional, functionals.NuclearNorm):
+        if isinstance(self.functional, functionals.L21Norm | functionals.NuclearNorm):
+            # Radial mappings use the magnitude; a complex weight does not make a real input complex.
             weight = weight.abs()
         return torch.promote_types(self.x_dtype, torch.result_type(self.functional.target, weight))
 
 
 FUNCTIONALS: list[type[ElementaryFunctional]] = [
-    x[1]
-    for x in inspect.getmembers(functionals, lambda x: inspect.isclass(x) and issubclass(x, ElementaryFunctional))
-    # These tests assume arbitrary reduction axes, scalar inputs and entrywise weights.
-    # NuclearNorm joins the shared proximal cases below and has separate matrix-specific tests.
-    if x[1] is not functionals.NuclearNorm
+    x[1] for x in inspect.getmembers(functionals, lambda x: inspect.isclass(x) and issubclass(x, ElementaryFunctional))
 ]
 PROXIMABLE_FUNCTIONALS: list[type[ElementaryProximableFunctional]] = [
     x for x in FUNCTIONALS if issubclass(x, ElementaryProximableFunctional)
 ]
+
+
+Functional = TypeVar('Functional', bound=ElementaryFunctional)
+
+
+class FunctionalArguments(TypedDict, total=False):
+    """Common functional constructor arguments used by the shared tests."""
+
+    target: torch.Tensor | complex | None
+    weight: torch.Tensor | complex
+    dim: int | Sequence[int] | None
+    divide_by_n: bool
+    keepdim: bool
+
+
+def make_functional(functional: type[Functional], **kwargs: Unpack[FunctionalArguments]) -> Functional:
+    """Construct a shared test functional with its supported reduction axes."""
+    if functional is functionals.L21Norm:
+        return cast(Functional, functionals.L21Norm(group_dim=-1, **kwargs))
+    if functional is functionals.NuclearNorm:
+        # Matrix axes are fixed; the shared dim parameter applies to the other norms.
+        kwargs.pop('dim', None)
+        return functional(**kwargs)
+    return functional(**kwargs)
 
 
 def functional_test_cases(func: Callable[[FunctionalTestCase], None]) -> Callable[..., None]:
@@ -59,7 +81,7 @@ def functional_test_cases(func: Callable[[FunctionalTestCase], None]) -> Callabl
     @pytest.mark.parametrize('target', ['no_target', 'random_target'])
     @pytest.mark.parametrize('dim', [None], ids=['dim=None'])
     @pytest.mark.parametrize('divide_by_n', [True, False], ids=['mean', 'sum'])
-    @pytest.mark.parametrize('functional', [*PROXIMABLE_FUNCTIONALS, functionals.NuclearNorm])
+    @pytest.mark.parametrize('functional', PROXIMABLE_FUNCTIONALS)
     def wrapper(
         functional: type[ElementaryProximableFunctional],
         shape: torch.Size,
@@ -71,10 +93,12 @@ def functional_test_cases(func: Callable[[FunctionalTestCase], None]) -> Callabl
     ):
         if functional is functionals.NuclearNorm:
             shape = torch.Size((2, 3, 4))
-        weight_shape = (*shape[:-2], 1, 1) if functional is functionals.NuclearNorm else shape
         dtype = getattr(torch, dtype_name)
         rng = RandomGenerator(13)
         sigma = rng.rand_tensor((1,), low=0.0, high=1.0, dtype=dtype.to_real())
+        weight_shape = (*shape[:-1], 1) if functional is functionals.L21Norm else shape
+        if functional is functionals.NuclearNorm:
+            weight_shape = (*shape[:-2], 1, 1)
         match weight:
             case 'scalar_weight':
                 weight_value: float | torch.Tensor = rng.float64(low=-2, high=2)
@@ -91,11 +115,7 @@ def functional_test_cases(func: Callable[[FunctionalTestCase], None]) -> Callabl
                 target_value = None
             case 'random_target':
                 target_value = rng.rand_tensor(shape, low=0 if dtype.is_complex else -1, high=1.0, dtype=dtype)
-        f: ElementaryProximableFunctional
-        if functional is functionals.NuclearNorm:
-            f = functional(divide_by_n=divide_by_n, weight=weight_value, target=target_value)
-        else:
-            f = functional(divide_by_n=divide_by_n, weight=weight_value, target=target_value, dim=dim)
+        f = make_functional(functional, divide_by_n=divide_by_n, weight=weight_value, target=target_value, dim=dim)
         case = FunctionalTestCase(functional=f, x_shape=shape, x_dtype=dtype, rng=rng, sigma=sigma)
         func(case)
 
