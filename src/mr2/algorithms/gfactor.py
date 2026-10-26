@@ -50,8 +50,9 @@ def gfactor(
 
     Returns
     -------
-        ``sqrt(var_acc / (acceleration * var_full))``, using unbiased total complex
-        variance accumulated online. Zero reference variance gives NaN.
+        Real g-factor map with the reconstructed image shape:
+        ``sqrt(var_acc / (acceleration * var_full))``. Variances are unbiased total
+        complex variances accumulated online. Zero reference variance gives NaN.
 
     Notes
     -----
@@ -90,7 +91,6 @@ def gfactor(
     def variance(
         measurements: torch.Tensor, reconstruct: Callable[[torch.Tensor], torch.Tensor | tuple[torch.Tensor]]
     ) -> torch.Tensor:
-        mean = squared_deviations = None
         for count in range(1, n_replicas + 1):
             # Complex torch.randn already has unit TOTAL variance, not two.
             white = torch.randn(measurements.shape, dtype=data.dtype, device=data.device, generator=generator)
@@ -98,20 +98,14 @@ def gfactor(
             result = reconstruct(measurements.detach() + noise)
             image = (result[0] if isinstance(result, tuple) else result).detach()
             del result  # Release saved autograd activations before the next reconstruction.
-            if mean is None:
+            if count == 1:
                 mean = image.clone()
                 squared_deviations = torch.zeros_like(image.real)
             else:
-                if image.shape != mean.shape or image.dtype != mean.dtype or image.device != mean.device:
-                    raise ValueError(
-                        'Reconstruction output shape, dtype and device must be consistent across replicas.'
-                    )
                 delta = image - mean
                 mean = mean + delta / count
-                assert squared_deviations is not None
-                squared_deviations += (delta.conj() * (image - mean)).real
-        assert squared_deviations is not None
-        return squared_deviations.clamp_min(0) / (n_replicas - 1)
+                squared_deviations += delta.abs().square() * ((count - 1) / count)
+        return squared_deviations / (n_replicas - 1)
 
     accelerated_variance = variance(data, reconstruction)
     reference_variance = variance(reference_data, reference_reconstruction)
