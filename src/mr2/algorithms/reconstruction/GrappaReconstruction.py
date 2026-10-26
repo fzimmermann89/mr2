@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from math import prod
+from typing import Literal
 
 import torch
 from torch.nn.functional import pad
@@ -13,6 +14,7 @@ from mr2.data.CsmData import CsmData
 from mr2.data.enums import TrajType
 from mr2.data.IData import IData
 from mr2.data.KData import KData
+from mr2.data.KNoise import KNoise
 from mr2.operators.CartesianSamplingOp import CartesianSamplingOp
 from mr2.operators.FastFourierOp import FastFourierOp
 from mr2.operators.FourierOp import FourierOp
@@ -65,7 +67,7 @@ class GrappaReconstruction(Reconstruction):
         if csm is None or isinstance(csm, CsmData | SensitivityOp):
             self.csm_op = csm.as_operator() if isinstance(csm, CsmData) else csm
         else:
-            self.csm_op = csm(self(kdata)).as_operator()
+            self.recalculate_csm(kdata, csm)
 
     def recalculate_fourierop(self, kdata: KData) -> Self:
         """Update the Cartesian sampling operators and recalibrate from stored ACS.
@@ -132,6 +134,34 @@ class GrappaReconstruction(Reconstruction):
             grid = grappa_interpolation(grid, kernel, locations)
         return grid
 
+    def _coil_images(self, kdata: KData) -> IData:
+        """Reconstruct completed coil images before sensitivity combination."""
+        (images,) = self.image_fourier_op.H(self.interpolate(kdata))
+        return IData.from_tensor_and_kheader(images, kdata.header)
+
+    def recalculate_csm(
+        self,
+        kdata: KData,
+        csm_calculation: Callable[[IData], CsmData] = CsmData.from_idata_walsh,
+        noise: KNoise | Literal[False] | None = None,
+    ) -> Self:
+        """Update coil sensitivities from GRAPPA-completed images.
+
+        Parameters
+        ----------
+        kdata
+            Acquisition with the trajectory and coil basis used for calibration.
+        csm_calculation
+            Sensitivity calculation receiving the completed coil images.
+        noise
+            Must be None or False. For prewhitening, transform acquisition and
+            ACS together before calibrating GRAPPA kernels.
+        """
+        if noise is not False and (noise is not None or self.noise is not None):
+            raise ValueError('Prewhiten acquisition and ACS together before calibrating GRAPPA.')
+        self.csm_op = csm_calculation(self._coil_images(kdata)).as_operator()
+        return self
+
     def forward(self, kdata: KData) -> IData:
         """Interpolate and reconstruct data with the calibrated sampling pattern.
 
@@ -144,7 +174,7 @@ class GrappaReconstruction(Reconstruction):
         -------
             Reconstructed image data, optionally combined using coil sensitivities.
         """
-        (images,) = self.image_fourier_op.H(self.interpolate(kdata))
+        image = self._coil_images(kdata)
         if self.csm_op is not None:
-            (images,) = self.csm_op.H(images)
-        return IData.from_tensor_and_kheader(images, kdata.header)
+            (image.data,) = self.csm_op.H(image.data)
+        return image

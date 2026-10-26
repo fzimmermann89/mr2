@@ -3,7 +3,7 @@
 import pytest
 import torch
 from mr2.algorithms.reconstruction import GrappaReconstruction
-from mr2.data import AcqInfo, CsmData, KData, KHeader, KTrajectory, SpatialDimension
+from mr2.data import AcqInfo, CsmData, IData, KData, KHeader, KNoise, KTrajectory, SpatialDimension
 from mr2.operators import FastFourierOp
 
 
@@ -189,3 +189,34 @@ def test_grappa_failed_recalibration(failure: str) -> None:
         reconstruction.recalculate_fourierop(invalid)
     torch.testing.assert_close(reconstruction(original).data, expected)
     torch.testing.assert_close(reconstruction.direct_reconstruction(original).data, expected_direct)
+
+
+def test_grappa_recalculate_csm() -> None:
+    """Estimate sensitivities from completed coil images even when CSMs already exist."""
+    full = _point_object((1, 16, 18), torch.complex128)[None]
+    mask = torch.ones(full.shape[-3:], dtype=torch.bool)
+    mask[..., 1::2, :] = False
+    data = _kdata(full, mask)
+    reconstruction = GrappaReconstruction(data, full, (1, 3, 3), regularization=0)
+    (expected,) = FastFourierOp().H(full)
+
+    def calculate(image: IData) -> CsmData:
+        torch.testing.assert_close(image.data, expected, atol=2e-5, rtol=2e-5)
+        return CsmData.from_idata_walsh(image)
+
+    reference = reconstruction(data).data
+    reconstruction.recalculate_csm(data, calculate, noise=False)
+    torch.testing.assert_close(reconstruction(data).data, reference)
+    previous = reconstruction.csm_op
+
+    def fail(image: IData) -> CsmData:
+        assert image.data.shape[-4] == 3
+        raise ValueError('CSM calculation failed')
+
+    with pytest.raises(ValueError, match='CSM calculation failed'):
+        reconstruction.recalculate_csm(data, fail)
+    assert reconstruction.csm_op is previous
+    noise = KNoise(torch.randn(1, 3, 1, 1, 100, dtype=full.dtype))
+    with pytest.raises(ValueError, match='Prewhiten acquisition and ACS together'):
+        reconstruction.recalculate_csm(data, noise=noise)
+    assert reconstruction.csm_op is previous
