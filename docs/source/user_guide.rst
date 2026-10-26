@@ -94,6 +94,36 @@ or a new optimizer using pytorch functions can be created.
 
 See for examples  :doc:`_notebooks/cartesian_reconstruction`, :doc:`_notebooks/direct_reconstruction`, and :doc:`_notebooks/iterative_sense_reconstruction_radial2D`
 
+Untrained ConvDecoder reconstruction
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+`~mr2.algorithms.reconstruction.ConvDecoderReconstruction` fits a randomly initialized
+convolutional generator directly to acquired complex k-space, using the existing Fourier
+and sensitivity operators. For example, with ``kdata`` and estimated ``csm``:
+
+.. code-block:: python
+
+    reconstruction = mr2.algorithms.reconstruction.ConvDecoderReconstruction(
+        kdata, csm=csm, max_iterations=1000, seed=0
+    )
+    image = reconstruction(kdata)
+
+Each call fits fresh independent generators for the 2D slices and returns complex
+``IData`` with a header derived from the input. The random latent stays fixed while
+Adam updates the weights. The seed controls initialization without changing global
+random state. The default latent shape is ``(8, 4)``; smaller images need a smaller
+``latent_shape`` with at least two pixels. Memory use grows with the number of slices.
+
+This variant uses nearest-neighbor upsampling, convolution, ReLU and stateless affine
+InstanceNorm, followed by a linear complex object output. The authors' ConvDecoder
+uses BatchNorm; their paper describes both object-output and coil-output formulations:
+`Darestani and Heckel (2021) <https://doi.org/10.1109/TCI.2021.3097596>`_.
+Sensitivity maps are required for multicoil object reconstruction.
+
+``max_iterations`` sets the fitting budget. An optional ``callback`` receives
+``iteration_number`` (zero-based) and ``solution=(image_tensor,)`` after each update;
+returning ``False`` stops fitting. Fitting loss alone does not protect against noise
+overfitting, so the stopping rule must be chosen for the acquisition and noise level.
+
 Low-field raw datasets
 ----------------------
 ``mr2.phantoms.IsmrmrdDataset`` loads local HDF5 ISMRMRD collections using
