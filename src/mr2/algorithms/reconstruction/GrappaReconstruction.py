@@ -83,28 +83,35 @@ class GrappaReconstruction(Reconstruction):
             raise ValueError('ACS and acquisition must have the same number of coils.')
         if torch.broadcast_shapes(self.acs.shape[:-4], kdata.shape[:-4]) != kdata.shape[:-4]:
             raise ValueError('ACS batch dimensions must broadcast to the acquisition batches.')
-        self.sampling_op = CartesianSamplingOp(kdata.header.encoding_matrix, kdata.traj)
-        self.fourier_op = FourierOp.from_kdata(kdata)
-        self.image_fourier_op = FastFourierOp(
+        sampling_op = CartesianSamplingOp(kdata.header.encoding_matrix, kdata.traj)
+        fourier_op = FourierOp.from_kdata(kdata)
+        image_fourier_op = FastFourierOp(
             recon_matrix=kdata.header.recon_matrix, encoding_matrix=kdata.header.encoding_matrix
         )
         ones = kdata.data.new_ones(*kdata.shape[:-4], 1, *kdata.shape[-3:])
-        (support,) = self.sampling_op.H(ones)
+        (support,) = sampling_op.H(ones)
         support = support.real.bool().reshape(-1, *support.shape[-3:])
         if (support.flatten(start_dim=-3).sum(-1) != prod(kdata.shape[-3:])).any():
             raise ValueError('GRAPPA reconstruction requires distinct samples inside the encoding grid.')
         if not (support == support[0]).all():
             raise ValueError('GRAPPA reconstruction requires a shared sampling pattern across batches.')
         acquired = support[0]
-        self.missing_indices = (~acquired).flatten().nonzero().flatten()
+        missing_indices = (~acquired).flatten().nonzero().flatten()
         padding = tuple(p for k in reversed(self.kernel_size) for p in (k // 2, k // 2))
         neighborhoods = sliding_window(pad(acquired, padding), self.kernel_size).reshape(-1, prod(self.kernel_size))
-        patterns, self.assignments = torch.unique(neighborhoods[self.missing_indices], dim=0, return_inverse=True)
+        patterns, assignments = torch.unique(neighborhoods[missing_indices], dim=0, return_inverse=True)
         kernels = [
             grappa_calibration(self.acs, pattern.reshape(self.kernel_size), regularization=self.regularization)
             for pattern in patterns
         ]
-        self.kernels = torch.stack(kernels) if kernels else self.acs.new_empty(0)
+        fitted_kernels = torch.stack(kernels) if kernels else self.acs.new_empty(0)
+        # Keep the previous reconstruction usable if validation or calibration fails.
+        self.sampling_op = sampling_op
+        self.fourier_op = fourier_op
+        self.image_fourier_op = image_fourier_op
+        self.missing_indices = missing_indices
+        self.assignments = assignments
+        self.kernels = fitted_kernels
         return self
 
     def interpolate(self, kdata: KData) -> torch.Tensor:

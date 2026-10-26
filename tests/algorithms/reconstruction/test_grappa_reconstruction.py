@@ -160,3 +160,32 @@ def test_grappa_reject_varying_batch_masks() -> None:
     first.traj = KTrajectory(kz, ky, kx)
     with pytest.raises(ValueError, match='shared sampling pattern'):
         GrappaReconstruction(first, full, (1, 3, 3), csm=None)
+
+
+@pytest.mark.parametrize('failure', ['repeated_samples', 'insufficient_acs'])
+def test_grappa_failed_recalibration(failure: str) -> None:
+    """A failed sampling update or kernel fit leaves the original reconstruction usable."""
+    full = _point_object((1, 16, 18), torch.complex128)[None]
+    mask = torch.ones(full.shape[-3:], dtype=torch.bool)
+    mask[..., 1::2, :] = False
+    original = _kdata(full, mask)
+    # Twenty calibration rows suffice for R2 patterns, but not an isolated hole.
+    acs = full[..., 3:9, 3:10]
+    reconstruction = GrappaReconstruction(original, acs, (1, 3, 3), regularization=0, csm=None)
+    expected = reconstruction(original).data
+    expected_direct = reconstruction.direct_reconstruction(original).data
+    if failure == 'repeated_samples':
+        invalid = original.clone()
+        invalid.data = torch.cat((invalid.data, invalid.data), dim=-1)
+        kz, ky, kx = (torch.cat((k, k), dim=-1) for k in (invalid.traj.kz, invalid.traj.ky, invalid.traj.kx))
+        invalid.traj = KTrajectory(kz, ky, kx)
+        message = 'distinct samples'
+    else:
+        mask[:] = True
+        mask[..., 8, 9] = False
+        invalid = _kdata(full, mask)
+        message = 'Insufficient ACS'
+    with pytest.raises(ValueError, match=message):
+        reconstruction.recalculate_fourierop(invalid)
+    torch.testing.assert_close(reconstruction(original).data, expected)
+    torch.testing.assert_close(reconstruction.direct_reconstruction(original).data, expected_direct)
