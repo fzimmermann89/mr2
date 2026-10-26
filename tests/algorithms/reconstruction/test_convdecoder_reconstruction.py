@@ -217,3 +217,44 @@ def test_prewhitening_with_matching_maps(acquisition: tuple[KData, FourierOp, Se
     explicit = make_reconstruction(fourier, whitened_csm, max_iterations=3)
     torch.testing.assert_close(recon(kdata).data, explicit(prewhiten_kspace(kdata, noise)).data)
     torch.testing.assert_close(whitened_csm.csm_tensor, maps.reshape(csm.csm_tensor.shape))
+
+
+@pytest.mark.parametrize('latent_shape', [(2,), (1, 2, 2)])
+def test_nd_reconstruction(acquisition: tuple[KData, FourierOp, SensitivityOp], latent_shape: tuple[int, ...]) -> None:
+    """Line and volume generators fit through the same MRI acquisition interface."""
+    kdata, fourier, csm = acquisition
+    recon = ConvDecoderReconstruction(
+        fourier_op=fourier, csm=csm, n_features=4, n_levels=2, latent_shape=latent_shape, max_iterations=2
+    )
+    result = recon(kdata)
+    assert result.data.shape == (1, 1, 1, 8, 10)
+    assert result.data.dtype == torch.complex64
+    assert torch.isfinite(result.data).all()
+
+
+def test_volume_reconstruction() -> None:
+    """A 3D generator improves consistency through a Fourier transform coupling z planes."""
+    size = SpatialDimension(3, 5, 7)
+    header = KHeader(
+        recon_matrix=size,
+        encoding_matrix=size,
+        recon_fov=SpatialDimension(0.03, 0.05, 0.07),
+        encoding_fov=SpatialDimension(0.03, 0.05, 0.07),
+    )
+    traj = KTrajectory(
+        torch.arange(-1, 2).reshape(1, 1, 3, 1, 1),
+        torch.arange(-2, 3).reshape(1, 1, 1, 5, 1),
+        torch.arange(-3, 4).reshape(1, 1, 1, 1, 7),
+    )
+    fourier = FourierOp(size, size, traj)
+    image = torch.rand((1, 1, 3, 5, 7), generator=torch.Generator().manual_seed(9)).to(torch.complex64)
+    (data,) = fourier(image)
+    kdata = KData(header=header, data=data, traj=traj)
+    recon = ConvDecoderReconstruction(
+        fourier_op=fourier, csm=None, n_features=4, n_levels=2, latent_shape=(2, 2, 2), max_iterations=0
+    )
+    initial = recon(kdata).data
+    recon.max_iterations = 20
+    result = recon(kdata).data
+    assert result.shape == image.shape
+    assert (fourier(result)[0] - data).abs().square().mean() < (fourier(initial)[0] - data).abs().square().mean()

@@ -10,63 +10,9 @@ from mr2.algorithms.optimizers.OptimizerStatus import OptimizerStatus
 from mr2.algorithms.prewhiten_kspace import prewhiten_kspace
 from mr2.algorithms.reconstruction.DirectReconstruction import DirectReconstruction
 from mr2.data import CsmData, DcfData, IData, KData, KNoise
-from mr2.nn.ndmodules import convND
-from mr2.nn.Sequential import Sequential
+from mr2.nn.ComplexAsChannel import ComplexAsChannel
+from mr2.nn.nets.ConvDecoder import ConvDecoder
 from mr2.operators import DensityCompensationOp, LinearOperator, SensitivityOp
-from mr2.utils.interpolate import interpolate
-
-
-class _ConvDecoder(nn.Module):
-    """Decoder with explicit spatial sizes and locally initialized parameters."""
-
-    def __init__(
-        self,
-        shape: tuple[int, int],
-        latent_shape: tuple[int, int],
-        n_features: int,
-        n_levels: int,
-        rng: torch.Generator,
-        dtype: torch.dtype,
-    ) -> None:
-        super().__init__()
-        self.sizes = [
-            tuple(math.ceil(a * (b / a) ** (level / n_levels)) for a, b in zip(latent_shape, shape, strict=True))
-            for level in range(1, n_levels + 1)
-        ]
-        self.sizes[-1] = shape
-        if math.prod(self.sizes[0]) <= 1:
-            raise ValueError('The first decoder stage must contain more than one pixel for InstanceNorm.')
-        # Meta construction avoids consuming the process RNG in module constructors.
-        with torch.device('meta'):
-            self.blocks = nn.ModuleList(
-                Sequential(
-                    convND(2)(n_features, n_features, 3, padding=1),
-                    nn.ReLU(),
-                    nn.InstanceNorm2d(n_features, affine=True, track_running_stats=False),
-                )
-                for _ in range(n_levels + 1)
-            )
-            self.output = convND(2)(n_features, 2, 1)
-        self.to(dtype=dtype)
-        self.to_empty(device=rng.device)
-        with torch.no_grad():
-            for module in self.modules():
-                if isinstance(module, nn.Conv2d):
-                    nn.init.kaiming_uniform_(module.weight, a=math.sqrt(5), generator=rng)
-                    if module.bias is not None:
-                        bound = 1 / math.sqrt(module.weight[0].numel())
-                        nn.init.uniform_(module.bias, -bound, bound, generator=rng)
-                elif isinstance(module, nn.InstanceNorm2d):
-                    nn.init.ones_(module.weight)
-                    nn.init.zeros_(module.bias)
-
-    def forward(self, latent: torch.Tensor) -> torch.Tensor:
-        """Generate one complex slice."""
-        x = latent
-        for size, block in zip(self.sizes, self.blocks[:-1], strict=True):
-            x = block(interpolate(x, size, dim=(-2, -1), mode='nearest'))
-        x = self.output(self.blocks[-1](x))
-        return torch.complex(x[:, 0], x[:, 1])
 
 
 class ConvDecoderReconstruction(DirectReconstruction):
@@ -75,14 +21,16 @@ class ConvDecoderReconstruction(DirectReconstruction):
     Minimize :math:`\|A G_\theta(z)-y\|_2^2` over generator weights, with
     :math:`A=FS` the existing Fourier/sampling and sensitivity operators. The
     random latent :math:`z` stays fixed. Each call starts fresh generators and
-    Adam states; each 2D slice (including leading batch dimensions) has its own
-    weights. No fitted network is retained and this reconstruction is not
+    Adam states; each spatial patch has its own weights. The number of entries
+    in `latent_shape` selects 1D, 2D or 3D generators. Remaining image dimensions
+    (including leading batch dimensions) are fitted with separate generators.
+    No fitted network is retained and this reconstruction is not
     differentiable through the optimization. Calls inside ``torch.no_grad()``
     are supported; ``torch.inference_mode()`` must be disabled while fitting.
 
-    This ConvDecoder variant uses nearest upsampling, 3x3
-    convolution, ReLU, stateless affine InstanceNorm, an additional block at
-    full resolution, and a linear 1x1 output. The authors' network uses BatchNorm
+    The `~mr2.nn.nets.ConvDecoder` variant uses nearest upsampling, 3-tap
+    convolutions, ReLU, stateless affine InstanceNorm, an additional block at
+    full resolution, and a linear 1-tap output. The authors' network uses BatchNorm
     [DARESTANI2021]_. Two real channels represent one complex object; sensitivity
     maps enter the forward model rather than generating separate coil images.
     The paper describes both output formulations. This is not a reproduction
@@ -115,7 +63,7 @@ class ConvDecoderReconstruction(DirectReconstruction):
         learning_rate: float = 0.008,
         n_features: int = 256,
         n_levels: int = 6,
-        latent_shape: tuple[int, int] = (8, 4),
+        latent_shape: tuple[int, ...] = (8, 4),
         seed: int = 0,
         callback: Callable[[OptimizerStatus], bool | None] | None = None,
     ) -> None:
@@ -150,9 +98,11 @@ class ConvDecoderReconstruction(DirectReconstruction):
         n_levels
             Number of nearest-neighbor upsampling stages.
         latent_shape
-            Spatial shape of the fixed uniform random input. Must fit inside each
-            output slice. The first upsampling stage must contain more than one
-            pixel for InstanceNorm.
+            Spatial shape of the fixed uniform random input, with 1, 2 or 3
+            entries selecting the generator dimensionality. Two entries fit each
+            2D slice independently; three fit each volume with a 3D generator.
+            Must fit inside the corresponding output dimensions. The first upsampling
+            stage must contain more than one pixel for InstanceNorm.
         seed
             Seed for a local generator, reset on each call without changing global
             RNG state. Reproducible on the same device with deterministic kernels.
@@ -167,8 +117,8 @@ class ConvDecoderReconstruction(DirectReconstruction):
             raise ValueError('learning_rate must be finite and positive.')
         if n_features < 1 or n_levels < 1:
             raise ValueError('n_features and n_levels must be positive.')
-        if len(latent_shape) != 2 or min(latent_shape) < 1:
-            raise ValueError('latent_shape must contain two positive sizes.')
+        if not 1 <= len(latent_shape) <= 3 or min(latent_shape) < 1:
+            raise ValueError('latent_shape must contain 1, 2 or 3 positive sizes.')
         super().__init__(kdata, fourier_op, csm, noise, dcf)
         self.max_iterations = max_iterations
         self.learning_rate = learning_rate
@@ -196,14 +146,18 @@ class ConvDecoderReconstruction(DirectReconstruction):
             scale = scale.clamp_min(torch.finfo(data.real.dtype).eps)
         if shape[-4] != 1:
             raise ValueError('The acquisition model must map a single complex object to k-space.')
-        image_shape = (shape[-2], shape[-1])
-        if any(a > b for a, b in zip(self.latent_shape, image_shape, strict=True)):
-            raise ValueError('latent_shape must fit inside the reconstructed slice.')
+        n_dim = len(self.latent_shape)
+        image_shape = tuple(shape[-n_dim:])
         rng = torch.Generator(device=data.device).manual_seed(self.seed)
-        models = nn.ModuleList(
-            _ConvDecoder(image_shape, self.latent_shape, self.n_features, self.n_levels, rng, data.real.dtype)
-            for _ in range(math.prod(shape[:-2]))
-        )
+        models = nn.ModuleList()
+        for _ in range(math.prod(shape[:-n_dim])):
+            # Avoid consuming global RNG state in the network constructors.
+            with torch.device('meta'):
+                decoder = ConvDecoder(n_dim, self.n_features, 2, image_shape, self.n_features, self.n_levels)
+            decoder.to(dtype=data.real.dtype)
+            decoder.to_empty(device=data.device)
+            decoder.reset_parameters(generator=rng)
+            models.append(ComplexAsChannel(decoder))
         latents = [
             torch.rand(
                 (1, self.n_features, *self.latent_shape), generator=rng, device=data.device, dtype=data.real.dtype

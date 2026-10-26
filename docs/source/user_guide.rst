@@ -107,11 +107,19 @@ and sensitivity operators. For example, with ``kdata`` and estimated ``csm``:
     )
     image = reconstruction(kdata)
 
-Each call fits fresh independent generators for the 2D slices and returns complex
+Each call fits fresh generators and returns complex
 ``IData`` with a header derived from the input. The random latent stays fixed while
 Adam updates the weights. The seed controls initialization without changing global
 random state. The default latent shape is ``(8, 4)``; smaller images need a smaller
-``latent_shape``. The first upsampling stage needs at least two pixels. Memory use grows with the number of slices.
+``latent_shape``. Its length selects the generator dimensionality: one entry for
+1D, two for slice-wise 2D (the default), or three for 3D volumes. The first
+upsampling stage needs at least two pixels. Memory use grows with the number of generators.
+
+The reusable `~mr2.nn.nets.ConvDecoder` network accepts and returns ordinary real
+channels and supports 1D, 2D and 3D. Wrap it with `~mr2.nn.ComplexAsChannel` for
+complex output. To resume custom fitting, restore the network ``state_dict``,
+optimizer ``state_dict`` and fixed latent; reconstruct the network with the same
+configuration. The reconstruction class intentionally starts fresh on each call.
 
 This variant uses nearest-neighbor upsampling, convolution, ReLU and stateless affine
 InstanceNorm, followed by a linear complex object output. The authors' ConvDecoder
