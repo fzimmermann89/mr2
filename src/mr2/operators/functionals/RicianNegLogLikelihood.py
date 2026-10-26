@@ -13,7 +13,7 @@ def _rician_nll(amplitude: torch.Tensor, target: torch.Tensor, noise_std: torch.
     z = (amplitude / noise_std) * (target / noise_std)
     # At these switches, asymptotic truncation errors are < 5e-8 / 3e-17.
     switch, terms = (10, 8) if z.dtype == torch.float32 else (32, 14)
-    large = z >= switch
+    large = z.abs() >= switch
     # I0 is smooth at zero; i0e's absolute-value cusp gives the wrong gradient
     # when combined with the residual form there. Mask before evaluating I0.
     u = torch.where(large, 0, amplitude) / noise_std
@@ -23,14 +23,14 @@ def _rician_nll(amplitude: torch.Tensor, target: torch.Tensor, noise_std: torch.
     # DLMF 10.40.1: i0e(z) ~ P(1/z)/sqrt(2πz). Differentiating this
     # correction preserves the small Bessel deficit without subtracting ratios.
     # Safe inactive inputs keep higher derivatives finite at zero.
-    a = torch.where(large, amplitude, noise_std)
+    a = torch.where(large, amplitude.abs(), noise_std)
     y = torch.where(large, target, noise_std)
     inverse_z = (noise_std / a) * (noise_std / y)
     correction = torch.zeros_like(inverse_z)
     for k in range(terms, 0, -1):
         correction = (1 + correction) * (inverse_z * ((2 * k - 1) ** 2 / (8 * k)))
     log_z = a.log() + y.log() - 2 * noise_std.log()
-    residual = torch.where(large, amplitude - target, 0) / noise_std
+    residual = torch.where(large, amplitude.abs() - target, 0) / noise_std
     large_value = residual.square() / 2 + (math.log(2 * math.pi) + log_z) / 2 - correction.log1p()
     return torch.where(large, large_value, small_value) + 2 * noise_std.log()
 
@@ -53,7 +53,8 @@ class RicianNegLogLikelihood(Operator[torch.Tensor, tuple[torch.Tensor]]):
 
     Inputs must be finite, real, nonnegative amplitudes; ``noise_std`` must be
     strictly positive. Float32 and float64 are supported. The caller must keep
-    amplitudes in their physical domain. Values and derivatives are limited by
+    amplitudes in their physical domain; negative values evaluate the even
+    mathematical extension of the loss. Values and derivatives are limited by
     the representable range of the chosen dtype. Ordinary PyTorch operations
     support double backward, Hessian-vector products and ``torch.func``.
     ``vmap`` supports mapping amplitudes of an initialized operator; mapping
@@ -84,6 +85,10 @@ class RicianNegLogLikelihood(Operator[torch.Tensor, tuple[torch.Tensor]]):
             (complex noise variance is twice its square). Strictly positive,
             broadcastable with the input; may require gradients. Pass a float64
             tensor for float64 noise precision; Python floats use the default dtype.
+            For repeated fitting, use a leaf tensor or a ``torch.nn.Parameter``.
+            To move learnable tensors with this operator, use Parameters and create
+            the optimizer after moving it. Recompute derived noise tensors when
+            rebuilding the likelihood for each fitting iteration.
         weight
             Finite, nonnegative likelihood weights, broadcastable with the observations.
             Multiplies the per-observation loss, rather than the residual.
@@ -96,15 +101,14 @@ class RicianNegLogLikelihood(Operator[torch.Tensor, tuple[torch.Tensor]]):
             Retain reduced dimensions with size one.
         """
         super().__init__()
-        for name, value in (('target', target), ('weight', weight), ('noise_std', noise_std)):
-            tensor = torch.as_tensor(value)
-            # The mixin handles constants; Module handles Parameters. Ordinary
-            # differentiable tensors also need registration to follow .to().
-            if tensor.requires_grad and not isinstance(tensor, torch.nn.Parameter):
-                self.register_buffer(name, tensor)
-            else:
-                setattr(self, name, tensor)
-        self.dim = (dim,) if isinstance(dim, int) else tuple(dim) if dim is not None else None
+        self.target = torch.as_tensor(target)
+        self.weight = torch.as_tensor(weight)
+        self.noise_std = torch.as_tensor(noise_std)
+        if isinstance(dim, int):
+            dim = (dim,)
+        elif dim is not None:
+            dim = tuple(dim)
+        self.dim = dim
         self.divide_by_n = divide_by_n
         self.keepdim = keepdim
         self._validate_parameters()

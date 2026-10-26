@@ -260,17 +260,15 @@ def test_updated_parameters(name: str, invalid: float) -> None:
         RicianNegLogLikelihood(parameters['target'], parameters['noise_std'], parameters['weight'])
 
 
-@pytest.mark.parametrize('kind', ['constant', 'tensor', 'parameter'])
+@pytest.mark.parametrize('kind', ['constant', 'parameter'])
 @pytest.mark.parametrize(
     'device',
     ['cpu', pytest.param('cuda', marks=pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable'))],
 )
 def test_tensor_moves(kind: str, device: str) -> None:
-    """Constants, differentiable tensors and Parameters all follow dtype/device moves."""
+    """Constants move, and learnable Parameters keep receiving optimizer updates."""
     values = [torch.tensor([1.0, 2.0]) for _ in range(3)]
-    if kind == 'tensor':
-        values = [value.requires_grad_() for value in values]
-    elif kind == 'parameter':
+    if kind == 'parameter':
         values = [torch.nn.Parameter(value) for value in values]
     target, noise, weight = values
     functional = RicianNegLogLikelihood(target, noise, weight).to(device=device, dtype=torch.float64)
@@ -278,6 +276,37 @@ def test_tensor_moves(kind: str, device: str) -> None:
     assert all(value.device.type == device and value.dtype == torch.float64 for value in moved)
     assert all(isinstance(value, torch.nn.Parameter) == (kind == 'parameter') for value in moved)
     loss = functional(torch.ones(2, device=device, dtype=torch.float64))[0]
-    if kind != 'constant':
-        gradients = torch.autograd.grad(loss, values)
-        assert all(torch.isfinite(gradient).all() for gradient in gradients)
+    if kind == 'parameter':
+        optimizer = torch.optim.SGD(functional.parameters(), lr=0.01)
+        loss.backward()
+        assert all(value.grad is not None and torch.isfinite(value.grad).all() for value in moved)
+        before = functional.noise_std.detach().clone()
+        optimizer.step()
+        assert not torch.equal(functional.noise_std, before)
+        optimizer.zero_grad()
+        functional(torch.ones(2, device=device, dtype=torch.float64))[0].backward()
+
+
+@pytest.mark.parametrize('dtype', [torch.float32, torch.float64])
+def test_signed_extension(dtype: torch.dtype) -> None:
+    """Negative optimizer overshoots retain the finite, even likelihood extension."""
+    a = torch.tensor([0.0, 1e-8, 5.0, 50.0, 1000.0], dtype=dtype, requires_grad=True)
+    functional = RicianNegLogLikelihood(2.0, 1.0)
+    positive, negative = functional(a)[0], functional(-a)[0]
+    torch.testing.assert_close(positive, negative)
+    gp = torch.autograd.grad(positive, a, create_graph=True)[0]
+    gn = torch.autograd.grad(negative, a, create_graph=True)[0]
+    torch.testing.assert_close(gp, gn)
+    torch.testing.assert_close(torch.autograd.grad(gp.sum(), a)[0], torch.autograd.grad(gn.sum(), a)[0])
+
+
+def test_leaf_noise_updates() -> None:
+    """Ordinary leaf noise retains identity and follows repeated optimizer steps."""
+    noise = torch.tensor(1.0, requires_grad=True)
+    functional = RicianNegLogLikelihood(2.0, noise)
+    optimizer = torch.optim.SGD([noise], lr=0.01)
+    for _ in range(2):
+        optimizer.zero_grad()
+        functional(torch.tensor(1.0))[0].backward()
+        optimizer.step()
+        assert functional.noise_std is noise
