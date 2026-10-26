@@ -246,6 +246,7 @@ def test_cuda() -> None:
         stopping_criterion='residual',
         tau=torch.tensor(0.5),
         max_iterations=64,
+        cg_tolerance=1e-12,
     )
     torch.testing.assert_close(result, data)
     assert result.is_cuda

@@ -62,7 +62,8 @@ class PlugAndPlayReconstruction(DirectReconstruction):
         kdata
             Data used to estimate missing Fourier operator, DCF and callable CSM.
         fourier_op
-            Fourier operator. If None, estimated from kdata.
+            Fourier operator. If None, estimated from kdata. With noise prewhitening,
+            it must apply the same transform independently to each coil.
         csm
             Coil sensitivity maps, operator, or estimation callable. None disables
             coil combination. Explicit maps must be in the original coil basis;
