@@ -12,6 +12,8 @@ def walsh(
     smoothing_width: SpatialDimension[int] | int,
     align_phase: bool = True,
     extrapolate: bool = False,
+    *,
+    pool_dim: int | None = None,
 ) -> torch.Tensor:
     """Calculate a coil sensitivity map (csm) using Walsh's method [WAL2000]_.
 
@@ -54,11 +56,17 @@ def walsh(
         If True, resolve the phase ambiguity of eigenvectors relative to the data [INA2013]_.
     extrapolate
         If `True`, extrapolate the estimated CSMs into low-signal regions.
+    pool_dim
+        Optional leading dimension over which to sum coil covariance matrices,
+        for example an echo axis. Retained as a singleton in the output. Phase
+        alignment uses the first image along this axis, without complex averaging.
+        Negative indices are supported. If `None`, estimate each image independently.
 
     Returns
     -------
     csm
-        Coil sensitivity map, shape `(..., coils, z, y, x)`.
+        Coil sensitivity map, shape `(..., coils, z, y, x)`, with
+        `pool_dim` reduced to size one when specified.
 
     References
     ----------
@@ -69,6 +77,13 @@ def walsh(
     n_power_iterations = 10
     eps = 1e-12
 
+    if pool_dim is not None:
+        if not -coil_images.ndim <= pool_dim < coil_images.ndim:
+            raise ValueError('pool_dim must index a leading dimension.')
+        pool_dim %= coil_images.ndim
+        if pool_dim >= coil_images.ndim - 4:
+            raise ValueError('pool_dim must index a leading dimension, not coils or space.')
+
     if isinstance(smoothing_width, int):
         smoothing_width = SpatialDimension(
             z=smoothing_width if coil_images.shape[-3] > 1 else 1, y=smoothing_width, x=smoothing_width
@@ -76,6 +91,8 @@ def walsh(
 
     # Pointwise covariance
     coil_covariance = torch.einsum('... a z y x, ... b z y x -> ... a b z y x', coil_images, coil_images.conj())
+    if pool_dim is not None:
+        coil_covariance = coil_covariance.sum(dim=pool_dim, keepdim=True)
 
     # Smooth covariance
     coil_covariance = uniform_filter(coil_covariance, width=smoothing_width.zyx, dim=(-3, -2, -1))
@@ -89,13 +106,16 @@ def walsh(
     csm = v / (v.norm(dim=-4, keepdim=True) + eps)
 
     if align_phase:
-        d_sum = torch.sum(coil_images, dim=(-3, -2, -1))
+        phase_reference = coil_images if pool_dim is None else coil_images.narrow(pool_dim, 0, 1)
+        d_sum = torch.sum(phase_reference, dim=(-3, -2, -1))
         d_sum = d_sum / (d_sum.norm(dim=-1, keepdim=True) + eps)
         phase_map = torch.einsum('... c, ... c z y x -> ... z y x', d_sum.conj(), csm).angle()
         csm = csm * torch.exp(-1j * phase_map).unsqueeze(-4)
 
     if extrapolate:
         confidence = coil_images.abs().square().sum(dim=-4).sqrt()
+        if pool_dim is not None:
+            confidence = confidence.square().sum(dim=pool_dim, keepdim=True).sqrt()
         csm = extrapolate_csm(csm, confidence, smoothing_width)
 
     norm = csm.norm(dim=-4, keepdim=True)
