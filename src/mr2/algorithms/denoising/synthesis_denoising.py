@@ -76,11 +76,6 @@ def synthesis_denoising(
     Returns
     -------
         Denoised image of the same container type as the input.
-
-    Notes
-    -----
-    Adapted from PTB-MR/mrpro PR #1018 (https://github.com/PTB-MR/mrpro/pull/1018).
-    mr2's existing CG and PGD implement the baseline and sparse coding stages.
     """
     if max_iterations < 1:
         raise ValueError('max_iterations must be positive')
@@ -101,11 +96,7 @@ def synthesis_denoising(
     )
     if weight.is_complex() or not torch.isfinite(weight).all() or (weight < 0).any():
         raise ValueError('regularization_weight must be real, finite and nonnegative')
-    try:
-        shape = torch.broadcast_shapes(weight.shape, reference.shape)
-    except RuntimeError as error:
-        raise ValueError('regularization_weight must broadcast to the coefficient shape') from error
-    if shape != reference.shape:
+    if torch.broadcast_shapes(weight.shape, reference.shape) != reference.shape:
         raise ValueError('regularization_weight must not expand the coefficient shape')
     weight = weight.to(dtype=reference.real.dtype)
     if not torch.isfinite(weight).all():

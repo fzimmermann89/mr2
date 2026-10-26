@@ -52,11 +52,6 @@ def analysis_denoising(
     Returns
     -------
         Denoised image of the same container type as the input.
-
-    Notes
-    -----
-    Adapted from the convolutional denoising recipe in PTB-MR/mrpro PR #1018
-    (https://github.com/PTB-MR/mrpro/pull/1018), using mr2's existing operators and solvers.
     """
     if max_iterations < 1:
         raise ValueError('max_iterations must be positive')
@@ -73,11 +68,7 @@ def analysis_denoising(
     )
     if weight.is_complex() or not torch.isfinite(weight).all() or (weight < 0).any():
         raise ValueError('regularization_weight must be real, finite and nonnegative')
-    try:
-        shape = torch.broadcast_shapes(weight.shape, coefficients.shape)
-    except RuntimeError as error:
-        raise ValueError('regularization_weight must broadcast to the coefficient shape') from error
-    if shape != coefficients.shape:
+    if torch.broadcast_shapes(weight.shape, coefficients.shape) != coefficients.shape:
         raise ValueError('regularization_weight must not expand the coefficient shape')
     weight = weight.to(dtype=coefficients.real.dtype)
     if not torch.isfinite(weight).all():
