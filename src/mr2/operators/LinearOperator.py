@@ -188,7 +188,9 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
         # operator norm is a strictly positive number. This ensures that the first time the
         # change between the old and the new estimate of the operator norm is non-zero and
         # thus prevents the loop from exiting despite a non-correct estimate.
-        op_norm_old = torch.zeros(*tuple([1 for _ in range(initial_value.ndim)]), device=initial_value.device)
+        op_norm_old = torch.zeros(
+            (1,) * initial_value.ndim, device=initial_value.device, dtype=initial_value.real.dtype
+        )
 
         gram = self.gram  # self.H@self
 
