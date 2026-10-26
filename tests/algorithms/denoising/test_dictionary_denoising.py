@@ -76,6 +76,18 @@ def test_trainable_kernel_gradient(denoise, dtype: torch.dtype) -> None:
     assert convolution.kernel is kernel
 
 
+@pytest.mark.parametrize('warm_start', [False, True])
+def test_analysis_real_image_complex_dictionary(warm_start: bool) -> None:
+    """Complex dictionaries promote real images and allow compatible complex warm starts."""
+    image = torch.tensor([[2.0, -4.0]], dtype=torch.float64)
+    kernel = torch.tensor([[[1 + 1j]]], dtype=torch.complex128)
+    operator = ConvolutionOp(kernel) @ RearrangeOp('... -> 1 ...')
+    initial = image.to(kernel.dtype) if warm_start else None
+    result = analysis_denoising(image, operator, 0.2, initial_image=initial, max_iterations=150)
+    expected = torch.sgn(image) * (image.abs() - 0.2 * kernel.abs().squeeze()).clamp_min(0)
+    torch.testing.assert_close(result, expected.to(kernel.dtype), atol=1e-7, rtol=1e-7)
+
+
 def test_analysis_difference_reference() -> None:
     """A two-pixel difference penalty has an independent fused-pair solution."""
     image = torch.tensor([[0.0, 4.0]], dtype=torch.float64)

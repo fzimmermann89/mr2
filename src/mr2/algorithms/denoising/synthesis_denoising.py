@@ -92,15 +92,6 @@ def synthesis_denoising(
     image = idata if isinstance(idata, torch.Tensor) else idata.data
     if not (image.is_floating_point() or image.is_complex()) or image.numel() == 0:
         raise ValueError('image must be a nonempty floating point or complex tensor')
-    baseline = torch.zeros_like(image)
-    if low_pass_operator is not None:
-        (baseline,) = cg(
-            IdentityOp() + low_pass_operator.gram,
-            image,
-            initial_value=image,
-            max_iterations=max_iterations_low_pass,
-            tolerance=tolerance_low_pass,
-        )
     reference = synthesis_operator.H(image)[0]
     weight = torch.as_tensor(regularization_weight, device=reference.device)
     if weight.is_complex() or not torch.isfinite(weight).all() or (weight < 0).any():
@@ -122,6 +113,15 @@ def synthesis_denoising(
         if initial_codes.is_complex() and not reference.is_complex():
             raise ValueError('initial value must not introduce a complex dtype')
         codes = initial_codes.to(reference)
+    baseline = torch.zeros_like(image)
+    if low_pass_operator is not None:
+        (baseline,) = cg(
+            IdentityOp() + low_pass_operator.gram,
+            image,
+            initial_value=image,
+            max_iterations=max_iterations_low_pass,
+            tolerance=tolerance_low_pass,
+        )
     # A random probe avoids a zero starting vector, including for zero images.
     norm = float(synthesis_operator.operator_norm(torch.randn_like(reference), dim=None).detach())
     stepsize = 0.9 / norm**2 if norm > 0 else 1.0

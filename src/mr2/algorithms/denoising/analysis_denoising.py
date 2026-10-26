@@ -32,7 +32,7 @@ def analysis_denoising(
     This analysis model is generally different from synthesis sparse coding.
 
     Operators are used as supplied and must support the image's device and dtype.
-    No operators or images are copied or converted; dtype promotion follows the underlying operations.
+    The initial image is promoted to the image and coefficient dtypes when necessary.
 
     Parameters
     ----------
@@ -78,14 +78,15 @@ def analysis_denoising(
     weight = weight.to(dtype=coefficients.real.dtype)
     if not torch.isfinite(weight).all():
         raise ValueError('regularization_weight must be finite in the coefficient dtype')
+    dtype = torch.promote_types(image.dtype, coefficients.dtype)
     if initial_image is None:
-        initial_image = image
+        initial_image = image.to(dtype=dtype)
     else:
         if initial_image.shape != image.shape:
             raise ValueError('initial value must have exactly the expected shape')
-        if initial_image.is_complex() and not image.is_complex():
+        if initial_image.is_complex() and not dtype.is_complex:
             raise ValueError('initial value must not introduce a complex dtype')
-        initial_image = initial_image.to(image)
+        initial_image = initial_image.to(device=image.device, dtype=dtype)
     (result,) = pdhg(
         f=ProximableFunctionalSeparableSum(0.5 * L2NormSquared(target=image), L1Norm(weight=weight)),
         g=None,
