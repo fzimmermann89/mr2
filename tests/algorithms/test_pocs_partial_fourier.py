@@ -3,16 +3,16 @@
 import pytest
 import torch
 from mr2.algorithms import pocs_partial_fourier
-from mr2.algorithms._partial_fourier import _partial_fourier_center, _partial_fourier_phase
+from mr2.algorithms.partial_fourier import _partial_fourier_center, _partial_fourier_phase
 from mr2.operators import FastFourierOp
 
 
 @pytest.mark.parametrize(('size', 'side', 'axis'), [(31, 'low', 0), (31, 'high', -1), (32, 'low', -1), (32, 'high', 0)])
 def test_pocs_recovery(size: int, side: str, axis: int) -> None:
     """Both sides of odd/even grids recover smooth complex phase better than zero fill."""
-    coordinate = torch.linspace(-1, 1, size, dtype=torch.float64)
+    coordinate = torch.linspace(-1, 1, size)
     y, x = torch.meshgrid(coordinate, coordinate, indexing='ij')
-    magnitude = ((x.square() + 1.4 * y.square()) < 0.55).double()
+    magnitude = ((x.square() + 1.4 * y.square()) < 0.55).float()
     magnitude += 0.4 * (((x - 0.2).square() + (y + 0.1).square()) < 0.08)
     image = (magnitude * torch.exp(0.3j * (x + y.square()))).to(torch.complex64)
     fft = FastFourierOp((0, 1))
@@ -64,7 +64,7 @@ def test_pocs_full_sampling() -> None:
 def test_partial_fourier_calibration(size: int, side: str) -> None:
     """The symmetric acquired center preserves known phase on odd/even grids and either side."""
     support = torch.arange(size) >= 3 if side == 'high' else torch.arange(size) < size - 3
-    center = _partial_fourier_center(support, 0)
+    center = _partial_fourier_center(support, 0, torch.get_default_dtype())
     conjugate_indices = (2 * (size // 2) - torch.arange(size)) % size
     assert torch.equal(center, center[conjugate_indices])
     assert torch.all(center[~support] == 0)
@@ -72,7 +72,7 @@ def test_partial_fourier_calibration(size: int, side: str) -> None:
     if size % 2 == 0:
         assert center[0] == 0
     assert torch.all(center.diff()[: size // 2] >= 0)
-    coordinate = torch.arange(size, dtype=torch.float64) - size // 2
+    coordinate = torch.arange(size, dtype=center.dtype) - size // 2
     image = (1 + 0.2 * torch.cos(2 * torch.pi * coordinate / size)) * torch.exp(torch.tensor(0.7j))
     fft = FastFourierOp((0,))
     (kspace,) = fft(image)
@@ -86,7 +86,7 @@ def test_fixed_phase_signed_projection() -> None:
     fft = FastFourierOp((0,))
     kspace = torch.tensor([0, 0, 1 + 4j, 3, 2 - 1j, -4j, 2, -3j], dtype=torch.complex128)
     mask = torch.arange(8) >= 2
-    center = _partial_fourier_center(mask, 0)
+    center = _partial_fourier_center(mask, 0, kspace.real.dtype)
     phase = _partial_fourier_phase(kspace, center, fft)
     (image,) = fft.H(kspace)
     demodulated = (phase.conj() * image).real

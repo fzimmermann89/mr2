@@ -9,11 +9,12 @@ from mr2.operators import FastFourierOp
 @pytest.mark.parametrize(('size', 'side'), [(15, 'low'), (15, 'high'), (16, 'low'), (16, 'high')])
 def test_homodyne_ramp(size: int, side: str) -> None:
     """A constant-phase object recovers exact scale, signed detail and acquired Nyquist."""
-    coordinate = torch.arange(size, dtype=torch.float64) - size // 2
+    phase = torch.tensor(0.7j, dtype=torch.complex128).exp()
+    coordinate = torch.arange(size, dtype=phase.real.dtype) - size // 2
     amplitude = 1 + 2.5 * torch.cos(2 * torch.pi * 5 * coordinate / size)
     if size % 2 == 0 and side == 'low':
         amplitude += 0.2 * torch.cos(torch.pi * coordinate)
-    image = amplitude * torch.exp(torch.tensor(0.7j, dtype=torch.complex128))
+    image = amplitude * phase
     fft = FastFourierOp((0,))
     (kspace,) = fft(image)
     mask = torch.arange(size) >= 4 if side == 'high' else torch.arange(size) < size - 4
@@ -23,7 +24,7 @@ def test_homodyne_ramp(size: int, side: str) -> None:
     torch.testing.assert_close(corrected, amplitude)
     torch.testing.assert_close(restored, image)
     assert corrected.min() < 0
-    assert corrected.dtype == torch.float64
+    assert corrected.dtype == kspace.real.dtype
     assert restored.dtype == kspace.dtype
 
 
@@ -69,10 +70,10 @@ def test_homodyne_linear_transition() -> None:
     kspace = torch.tensor([0, 0, 2j, 1, 5, 1j, 2, -1j], dtype=torch.complex128)
     mask = torch.arange(8) >= 2
     fft = FastFourierOp((0,))
-    taper = torch.tensor([0, 0, 0.25, 0.75, 1, 0.75, 0.25, 0], dtype=torch.float64)
+    taper = kspace.real.new_tensor([0, 0, 0.25, 0.75, 1, 0.75, 0.25, 0])
     (low_resolution,) = fft.H(kspace * taper)
     phase = torch.exp(1j * low_resolution.angle())
-    weight = torch.tensor([1, 0, 0, 0.5, 1, 1.5, 2, 2], dtype=torch.float64)
+    weight = kspace.real.new_tensor([1, 0, 0, 0.5, 1, 1.5, 2, 2])
     (weighted,) = fft.H(kspace * weight)
     expected = (phase.conj() * weighted).real
     torch.testing.assert_close(homodyne_partial_fourier(kspace, mask, (0,), 0), expected)
