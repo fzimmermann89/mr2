@@ -144,7 +144,9 @@ def pgd(
 
             (f_x,) = f(*x)
 
-            if f_x <= quadratic_approx:
+            if f_x <= quadratic_approx or torch.isclose(
+                f_x, quadratic_approx, rtol=4 * torch.finfo(f_x.dtype).eps, atol=0
+            ):
                 # stepsize is ok, continue to next iteration
                 break
             stepsize *= backtrack_factor
