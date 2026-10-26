@@ -118,9 +118,9 @@ dimensions span leading acquisition axes. The first
 upsampling stage needs at least two pixels. Memory use grows with the number of generators.
 
 The reusable `~mr2.nn.nets.ConvDecoder` network accepts and returns ordinary real
-channels and supports arbitrary spatial dimensionality. Up to 3D it uses dense
-convolutions; above 3D it uses separable convolutions over groups of at most three
-axes through `~mr2.nn.PermutedBlock`. Normalization spans all spatial axes. Wrap it with `~mr2.nn.ComplexAsChannel` for
+channels and supports arbitrary spatial dimensionality through dense
+``torchnd.ConvNd`` convolutions over all spatial axes. Normalization spans
+all spatial axes. Wrap it with `~mr2.nn.ComplexAsChannel` for
 complex output. To resume custom fitting, restore the network ``state_dict``,
 optimizer ``state_dict`` and fixed latent; reconstruct the network with the same
 configuration. The reconstruction class intentionally starts fresh on each call.

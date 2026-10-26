@@ -102,7 +102,7 @@ class ConvDecoderReconstruction(DirectReconstruction):
             the generator dimensionality. Two entries fit each
             2D slice independently; three fit each volume with a 3D generator.
             Further entries include leading acquisition axes, such as time, in
-            one separable ND generator. The singleton coil axis is excluded.
+            one dense ND generator. The singleton coil axis is excluded.
             Must fit inside the corresponding output dimensions. The first upsampling
             stage must contain more than one pixel for InstanceNorm.
         seed
