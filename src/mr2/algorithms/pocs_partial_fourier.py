@@ -4,9 +4,7 @@ from collections.abc import Sequence
 
 import torch
 
-from mr2.algorithms._partial_fourier import _partial_fourier_center, _partial_fourier_phase
-from mr2.operators.FastFourierOp import FastFourierOp
-from mr2.utils.reshape import normalize_index, normalize_indices
+from mr2.algorithms._partial_fourier import _partial_fourier_center, _partial_fourier_phase, _partial_fourier_setup
 
 
 def pocs_partial_fourier(
@@ -62,24 +60,15 @@ def pocs_partial_fourier(
     direction. Small calibration regions, rapid phase changes and noise can limit
     accuracy. No coil combination, cropping or oversampling removal is performed.
     """
-    if not kspace.is_complex():
-        raise ValueError('kspace must be complex.')
-    if acquired_mask.dtype != torch.bool or acquired_mask.device != kspace.device:
-        raise ValueError('acquired_mask must be boolean and on the same device as kspace.')
     if n_iterations < 0:
         raise ValueError('n_iterations must be non-negative.')
-    dim = normalize_indices(kspace.ndim, dim)
-    axis = normalize_index(kspace.ndim, partial_fourier_dim)
-    if not dim or axis not in dim:
-        raise ValueError('Fourier dimensions must be non-empty and include partial_fourier_dim.')
-    mask = torch.broadcast_to(acquired_mask, kspace.shape)
+    mask, axis, fourier_op = _partial_fourier_setup(kspace, acquired_mask, dim, partial_fourier_dim)
     if mask.all():
         return kspace.clone()
     center = _partial_fourier_center(mask, axis)
     measured = torch.where(mask, kspace, 0)
     if n_iterations == 0:
         return measured
-    fourier_op = FastFourierOp(dim)
     phase = _partial_fourier_phase(measured, center, fourier_op)
     completed = measured
     for _ in range(n_iterations):

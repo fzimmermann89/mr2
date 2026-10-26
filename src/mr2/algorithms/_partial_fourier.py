@@ -1,8 +1,26 @@
 """Support and phase estimation for Cartesian partial Fourier reconstruction."""
 
+from collections.abc import Sequence
+
 import torch
 
 from mr2.operators.FastFourierOp import FastFourierOp
+from mr2.utils.reshape import normalize_index, normalize_indices
+
+
+def _partial_fourier_setup(
+    kspace: torch.Tensor, acquired_mask: torch.Tensor, dim: Sequence[int], partial_fourier_dim: int
+) -> tuple[torch.Tensor, int, FastFourierOp]:
+    """Check tensor inputs and normalize axes for both partial Fourier methods."""
+    if not kspace.is_complex():
+        raise ValueError('kspace must be complex.')
+    if acquired_mask.dtype != torch.bool or acquired_mask.device != kspace.device:
+        raise ValueError('acquired_mask must be boolean and on the same device as kspace.')
+    dim = normalize_indices(kspace.ndim, dim)
+    axis = normalize_index(kspace.ndim, partial_fourier_dim)
+    if not dim or axis not in dim:
+        raise ValueError('Fourier dimensions must be non-empty and include partial_fourier_dim.')
+    return torch.broadcast_to(acquired_mask, kspace.shape), axis, FastFourierOp(dim)
 
 
 def _partial_fourier_center(acquired_mask: torch.Tensor, axis: int) -> torch.Tensor:
