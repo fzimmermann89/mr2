@@ -112,11 +112,15 @@ Each call fits fresh generators and returns complex
 Adam updates the weights. The seed controls initialization without changing global
 random state. The default latent shape is ``(8, 4)``; smaller images need a smaller
 ``latent_shape``. Its length selects the generator dimensionality: one entry for
-1D, two for slice-wise 2D (the default), or three for 3D volumes. The first
+1D, two for slice-wise 2D (the default), three for 3D volumes, or four
+for a joint time/volume prior. The singleton coil axis is excluded; extra latent
+dimensions span leading acquisition axes. The first
 upsampling stage needs at least two pixels. Memory use grows with the number of generators.
 
 The reusable `~mr2.nn.nets.ConvDecoder` network accepts and returns ordinary real
-channels and supports 1D, 2D and 3D. Wrap it with `~mr2.nn.ComplexAsChannel` for
+channels and supports arbitrary spatial dimensionality. Up to 3D it uses dense
+convolutions; above 3D it uses separable convolutions over groups of at most three
+axes through `~mr2.nn.PermutedBlock`. Normalization spans all spatial axes. Wrap it with `~mr2.nn.ComplexAsChannel` for
 complex output. To resume custom fitting, restore the network ``state_dict``,
 optimizer ``state_dict`` and fixed latent; reconstruct the network with the same
 configuration. The reconstruction class intentionally starts fresh on each call.

@@ -258,3 +258,21 @@ def test_volume_reconstruction() -> None:
     result = recon(kdata).data
     assert result.shape == image.shape
     assert (fourier(result)[0] - data).abs().square().mean() < (fourier(initial)[0] - data).abs().square().mean()
+
+
+def test_four_dimensional_reconstruction(acquisition: tuple[KData, FourierOp, SensitivityOp]) -> None:
+    """A 4D generator spans the leading acquisition axis while preserving the coil axis."""
+    kdata, fourier, csm = acquisition
+    data = kdata.data * torch.tensor([1, 2, 3]).reshape(3, 1, 1, 1, 1)
+    dynamic = KData(header=kdata.header, data=data, traj=kdata.traj)
+    recon = ConvDecoderReconstruction(
+        fourier_op=fourier, csm=csm, n_features=4, n_levels=2, latent_shape=(2, 1, 2, 2), max_iterations=0
+    )
+    initial = recon(dynamic).data
+    recon.max_iterations = 20
+    result = recon(dynamic).data
+    assert result.shape == (3, 1, 1, 8, 10)
+    assert result.dtype == torch.complex64
+    operator = fourier @ csm
+    assert (operator(result)[0] - data).abs().square().mean() < (operator(initial)[0] - data).abs().square().mean()
+    torch.testing.assert_close(result, recon(dynamic).data, rtol=0, atol=0)

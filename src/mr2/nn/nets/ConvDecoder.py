@@ -7,6 +7,7 @@ import torch
 from torch import nn
 
 from mr2.nn.ndmodules import convND, instanceNormND
+from mr2.nn.PermutedBlock import PermutedBlock
 from mr2.nn.Sequential import Sequential
 from mr2.utils.interpolate import interpolate
 
@@ -19,6 +20,12 @@ class ConvDecoder(nn.Module):
     convolution/ReLU/normalization block at full resolution precedes a linear
     1-tap output convolution. This variant uses instance normalization instead
     of the BatchNorm in [DARESTANI2021]_.
+
+    For more than three spatial dimensions, each convolution is separable:
+    `~mr2.nn.PermutedBlock` applies convolutions to consecutive groups of at
+    most three axes, with no activation between groups. Instance normalization
+    over all spatial axes is implemented by one group per channel. This is an
+    ND extension of the published 2D architecture, not a dense ND convolution.
 
     Input and output use real channels in ``(batch, channels, *spatial)`` layout.
     Use `~mr2.nn.ComplexAsChannel` for complex output. The caller owns the latent
@@ -45,7 +52,8 @@ class ConvDecoder(nn.Module):
         Parameters
         ----------
         n_dim
-            Number of spatial dimensions, 1, 2 or 3.
+            Positive number of spatial dimensions. Above three, use separable
+            convolutions over groups of at most three axes.
         n_channels_in
             Number of latent channels.
         n_channels_out
@@ -59,8 +67,28 @@ class ConvDecoder(nn.Module):
             Number of upsampling stages, followed by one full-resolution block.
         """
         super().__init__()
-        convolution = convND(n_dim)
-        normalization = instanceNormND(n_dim)
+        if n_dim < 1:
+            raise ValueError('n_dim must be positive.')
+
+        def convolution(channels_in: int, channels_out: int, kernel_size: int, padding: int = 0) -> nn.Module:
+            if n_dim <= 3:
+                return convND(n_dim)(channels_in, channels_out, kernel_size, padding=padding)
+            dims = tuple(range(-n_dim, 0))
+            groups = [dims[start : start + 3] for start in range(0, n_dim, 3)]
+            if kernel_size == 1:
+                groups = [groups[0]]  # Pointwise channel mixing needs only one pass.
+            return Sequential(
+                *(
+                    PermutedBlock(
+                        group,
+                        convND(len(group))(
+                            channels_in if index == 0 else channels_out, channels_out, kernel_size, padding=padding
+                        ),
+                    )
+                    for index, group in enumerate(groups)
+                )
+            )
+
         if len(output_shape) != n_dim or any(size < 1 for size in output_shape):
             raise ValueError('output_shape must contain n_dim positive sizes.')
         if min(n_channels_in, n_channels_out, n_features, n_levels) < 1:
@@ -72,7 +100,9 @@ class ConvDecoder(nn.Module):
             Sequential(
                 convolution(n_channels_in if level == 0 else n_features, n_features, 3, padding=1),
                 nn.ReLU(),
-                normalization(n_features, affine=True, track_running_stats=False),
+                instanceNormND(n_dim)(n_features, affine=True, track_running_stats=False)
+                if n_dim <= 3
+                else nn.GroupNorm(n_features, n_features),
             )
             for level in range(n_levels + 1)
         )
@@ -94,7 +124,7 @@ class ConvDecoder(nn.Module):
                     if module.bias is not None:
                         bound = 1 / math.sqrt(module.weight[0].numel())
                         nn.init.uniform_(module.bias, -bound, bound, generator=generator)
-                elif isinstance(module, nn.InstanceNorm1d | nn.InstanceNorm2d | nn.InstanceNorm3d):
+                elif isinstance(module, nn.InstanceNorm1d | nn.InstanceNorm2d | nn.InstanceNorm3d | nn.GroupNorm):
                     nn.init.ones_(module.weight)
                     nn.init.zeros_(module.bias)
 

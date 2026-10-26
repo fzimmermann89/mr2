@@ -22,7 +22,7 @@ class ConvDecoderReconstruction(DirectReconstruction):
     :math:`A=FS` the existing Fourier/sampling and sensitivity operators. The
     random latent :math:`z` stays fixed. Each call starts fresh generators and
     Adam states; each spatial patch has its own weights. The number of entries
-    in `latent_shape` selects 1D, 2D or 3D generators. Remaining image dimensions
+    in `latent_shape` selects the generator dimensionality. Remaining image dimensions
     (including leading batch dimensions) are fitted with separate generators.
     No fitted network is retained and this reconstruction is not
     differentiable through the optimization. Calls inside ``torch.no_grad()``
@@ -98,9 +98,11 @@ class ConvDecoderReconstruction(DirectReconstruction):
         n_levels
             Number of nearest-neighbor upsampling stages.
         latent_shape
-            Spatial shape of the fixed uniform random input, with 1, 2 or 3
-            entries selecting the generator dimensionality. Two entries fit each
+            Spatial shape of the fixed uniform random input; its length selects
+            the generator dimensionality. Two entries fit each
             2D slice independently; three fit each volume with a 3D generator.
+            Further entries include leading acquisition axes, such as time, in
+            one separable ND generator. The singleton coil axis is excluded.
             Must fit inside the corresponding output dimensions. The first upsampling
             stage must contain more than one pixel for InstanceNorm.
         seed
@@ -117,8 +119,8 @@ class ConvDecoderReconstruction(DirectReconstruction):
             raise ValueError('learning_rate must be finite and positive.')
         if n_features < 1 or n_levels < 1:
             raise ValueError('n_features and n_levels must be positive.')
-        if not 1 <= len(latent_shape) <= 3 or min(latent_shape) < 1:
-            raise ValueError('latent_shape must contain 1, 2 or 3 positive sizes.')
+        if not latent_shape or min(latent_shape) < 1:
+            raise ValueError('latent_shape must contain positive sizes.')
         super().__init__(kdata, fourier_op, csm, noise, dcf)
         self.max_iterations = max_iterations
         self.learning_rate = learning_rate
@@ -142,15 +144,21 @@ class ConvDecoderReconstruction(DirectReconstruction):
         with torch.no_grad():
             (adjoint,) = acquisition.H(data)
             shape = adjoint.shape
-            scale = adjoint.abs().square().mean(dim=(-3, -2, -1), keepdim=True).sqrt()
-            scale = scale.clamp_min(torch.finfo(data.real.dtype).eps)
+
         if shape[-4] != 1:
             raise ValueError('The acquisition model must map a single complex object to k-space.')
         n_dim = len(self.latent_shape)
-        image_shape = tuple(shape[-n_dim:])
+        object_shape = (*shape[:-4], *shape[-3:])
+        if n_dim > len(object_shape):
+            raise ValueError('latent_shape has more dimensions than the coil-combined image.')
+        image_shape = tuple(object_shape[-n_dim:])
+        with torch.no_grad():
+            scale_dims = tuple(range(-max(3, n_dim), 0))
+            scale = adjoint.squeeze(-4).abs().square().mean(dim=scale_dims, keepdim=True).sqrt().unsqueeze(-4)
+            scale = scale.clamp_min(torch.finfo(data.real.dtype).eps)
         rng = torch.Generator(device=data.device).manual_seed(self.seed)
         models = nn.ModuleList()
-        for _ in range(math.prod(shape[:-n_dim])):
+        for _ in range(math.prod(object_shape[:-n_dim])):
             # Avoid consuming global RNG state in the network constructors.
             with torch.device('meta'):
                 decoder = ConvDecoder(n_dim, self.n_features, 2, image_shape, self.n_features, self.n_levels)
@@ -166,7 +174,11 @@ class ConvDecoderReconstruction(DirectReconstruction):
         ]
 
         def image() -> torch.Tensor:
-            return torch.cat([model(z) for model, z in zip(models, latents, strict=True)]).reshape(shape)
+            return (
+                torch.cat([model(z) for model, z in zip(models, latents, strict=True)])
+                .reshape(object_shape)
+                .unsqueeze(-4)
+            )
 
         parameters = tuple(models.parameters())
         optimizer = torch.optim.Adam(parameters, lr=self.learning_rate)
