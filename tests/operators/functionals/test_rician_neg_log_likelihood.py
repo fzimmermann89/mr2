@@ -4,6 +4,8 @@ import pytest
 import torch
 from mr2.operators.functionals import RicianNegLogLikelihood
 
+from tests import autodiff_test
+
 # 80-digit mpmath evaluation of the defining I0/I1 expressions, rounded to double.
 # fmt: off
 # a, y, s, followed by loss, amplitude/data/noise gradients and amplitude curvature.
@@ -118,7 +120,7 @@ def test_higher_derivatives_and_func() -> None:
     torch.testing.assert_close(
         torch.vmap(lambda x: functional(x)[0])(batched), torch.stack([functional(x)[0] for x in batched])
     )
-    torch.testing.assert_close(torch.func.jacfwd(lambda x: functional(x)[0])(a), torch.func.grad(loss)(parameters)[0])
+    autodiff_test(functional, a)
 
 
 @pytest.mark.parametrize(('dtype', 'amplitude'), [(torch.float32, 1e20), (torch.float64, 1e160)])
