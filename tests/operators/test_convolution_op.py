@@ -4,7 +4,7 @@ from typing import Literal
 
 import pytest
 import torch
-from mr2.operators import ConvAnalysisDictionaryOp, ConvolutionOp, ConvSynthesisDictionaryOp, RearrangeOp
+from mr2.operators import ConvolutionOp, RearrangeOp
 from mr2.utils import RandomGenerator
 from torch.nn import functional
 
@@ -124,12 +124,14 @@ def test_dictionary_compositions(pad_mode: Literal['constant', 'circular', 'refl
     insert_channel = RearrangeOp('... -> 1 ...')
     analysis = ConvolutionOp(kernel[:, None], pad_mode=pad_mode) @ insert_channel
     synthesis = insert_channel.H @ ConvolutionOp(kernel[None], pad_mode=pad_mode)
-    old_analysis = ConvAnalysisDictionaryOp(kernel, pad_mode)
-    old_synthesis = ConvSynthesisDictionaryOp(kernel, pad_mode)
-    torch.testing.assert_close(analysis(x)[0], old_analysis(x)[0])
-    torch.testing.assert_close(analysis.H(codes)[0], old_analysis.H(codes)[0])
-    torch.testing.assert_close(synthesis(codes)[0], old_synthesis(codes)[0])
-    torch.testing.assert_close(synthesis.H(x)[0], old_synthesis.H(x)[0])
+    padded_image = functional.pad(x[:, None], (1, 1, 1, 1), mode=pad_mode)
+    expected_analysis = functional.conv2d(padded_image, kernel[:, None]).movedim(1, 0)
+    padded_codes = functional.pad(codes.movedim(0, 1), (1, 1, 1, 1), mode=pad_mode)
+    expected_synthesis = functional.conv2d(padded_codes, kernel[None]).squeeze(1)
+    torch.testing.assert_close(analysis(x)[0], expected_analysis)
+    torch.testing.assert_close(synthesis(codes)[0], expected_synthesis)
+    dotproduct_adjointness_test(analysis, x, codes)
+    dotproduct_adjointness_test(synthesis, codes, x)
 
 
 @pytest.mark.parametrize('parameter', [False, True])
@@ -138,14 +140,32 @@ def test_tensor_registration(parameter: bool) -> None:
     kernel = torch.ones(2, 1, 3)
     if parameter:
         kernel = torch.nn.Parameter(kernel)
+    original = kernel.detach().clone()
     op = ConvolutionOp(kernel)
+    torch.testing.assert_close(kernel, original)
     assert op.kernel is kernel
     registered = dict(op.named_parameters()) if parameter else dict(op.named_buffers())
-    assert registered['kernel'] is kernel
-    torch.testing.assert_close(op.state_dict()['kernel'], kernel)
+    assert registered['_convolution.weight'] is kernel
+    torch.testing.assert_close(op.state_dict()['_convolution.weight'], kernel)
     op = op.double()
     assert op.kernel.dtype == torch.float64
     assert op(torch.ones(1, 5, dtype=torch.float64))[0].dtype == torch.float64
+
+
+def test_parameter_update() -> None:
+    """Forward and adjoint read the current kernel after each optimizer update."""
+    kernel = torch.nn.Parameter(torch.tensor([[[1.0, 2.0, 3.0]]], dtype=torch.float64))
+    op = ConvolutionOp(kernel)
+    optimizer = torch.optim.SGD(op.parameters(), lr=0.01)
+    x = torch.arange(5, dtype=kernel.dtype).reshape(1, 5)
+    for _ in range(2):
+        padded = functional.pad(x[None], (1, 1), mode='circular')
+        expected = functional.conv1d(padded, kernel).squeeze(0)
+        torch.testing.assert_close(op(x)[0], expected)
+        dotproduct_adjointness_test(op, x, x)
+        optimizer.zero_grad()
+        op(x)[0].square().sum().backward()
+        optimizer.step()
 
 
 @pytest.mark.parametrize('shape', [(2, 3), (0, 1, 3), (1, 0, 3), (1, 1, 0), (1, 1, 2), (1, 1, 3, 4)])
