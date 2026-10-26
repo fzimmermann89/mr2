@@ -18,9 +18,7 @@ def test_identity(denoise, dtype: torch.dtype) -> None:
         image = image * (0.6 + 0.8j)
     weight = torch.tensor([[0.0], [0.7]], dtype=image.real.dtype)
     expected = torch.sgn(image) * (image.abs() - weight).clamp_min(0)
-    with torch.random.fork_rng(devices=[]):
-        torch.manual_seed(0)
-        result = denoise(image, IdentityOp(), weight, max_iterations=150, tolerance=1e-7)
+    result = denoise(image, IdentityOp(), weight, max_iterations=150, tolerance=1e-7)
     torch.testing.assert_close(result, expected, atol=2e-6, rtol=2e-6)
     assert result.dtype == dtype
 
@@ -95,12 +93,19 @@ def test_analysis_real_image_complex_dictionary(warm_start: bool) -> None:
 def test_python_weight_precision(denoise, weight: float) -> None:
     """Python weights match explicit float64 weights without rounding or range loss."""
     image = torch.tensor([[2.0, -4.0]], dtype=torch.float64)
-    with torch.random.fork_rng(devices=[]):
-        torch.manual_seed(0)
-        result = denoise(image, IdentityOp(), weight, max_iterations=150)
-        torch.manual_seed(0)
-        expected = denoise(image, IdentityOp(), torch.tensor(weight, dtype=image.dtype), max_iterations=150)
+    result = denoise(image, IdentityOp(), weight, max_iterations=150)
+    expected = denoise(image, IdentityOp(), torch.tensor(weight, dtype=image.dtype), max_iterations=150)
     torch.testing.assert_close(result, expected, atol=1e-12, rtol=1e-12)
+
+
+def test_synthesis_rng_state() -> None:
+    """Synthesis denoising is repeatable and leaves the global random generator unchanged."""
+    image = torch.tensor([[2.0, -4.0]], dtype=torch.float64)
+    state = torch.random.get_rng_state()
+    first = synthesis_denoising(image, IdentityOp(), 0.1, max_iterations=20)
+    torch.testing.assert_close(torch.random.get_rng_state(), state)
+    second = synthesis_denoising(image, IdentityOp(), 0.1, max_iterations=20)
+    torch.testing.assert_close(first, second, atol=0, rtol=0)
 
 
 def test_analysis_difference_reference() -> None:

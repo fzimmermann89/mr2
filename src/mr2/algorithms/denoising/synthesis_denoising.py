@@ -10,6 +10,7 @@ from mr2.algorithms.optimizers.pgd import PGDStatus, pgd
 from mr2.data import IData
 from mr2.operators import IdentityOp, LinearOperator
 from mr2.operators.functionals import L1Norm, L2NormSquared
+from mr2.utils import RandomGenerator
 
 Image = TypeVar('Image', torch.Tensor, IData)
 
@@ -126,9 +127,11 @@ def synthesis_denoising(
             max_iterations=max_iterations_low_pass,
             tolerance=tolerance_low_pass,
         )
-    # A random probe avoids a zero starting vector, including for zero images.
-    norm = float(synthesis_operator.operator_norm(torch.randn_like(reference), dim=None).detach())
-    stepsize = 0.9 / norm**2 if norm > 0 else 1.0
+    operator_norm = synthesis_operator.operator_norm(
+        RandomGenerator(seed=0, device=reference.device).randn_like(reference), dim=None
+    )
+    norm_sq = float(operator_norm.square().detach())
+    stepsize = 0.9 / norm_sq if norm_sq > 0 else 1.0
     previous = codes
 
     def stop(status: PGDStatus) -> bool:
