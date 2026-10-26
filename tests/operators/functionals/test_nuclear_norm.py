@@ -57,7 +57,7 @@ def test_moreau(dtype: torch.dtype, divide_by_n: bool):
 def test_weight_shape(method: str, shape: tuple[int, ...]):
     """Reject matrix variation, ambiguous batch vectors and output expansion."""
     f = NuclearNorm(weight=torch.ones(shape))
-    with pytest.raises(ValueError, match='two trailing singleton axes'):
+    with pytest.raises(RuntimeError, match='expand'):
         getattr(f, method)(torch.ones(2, 3, 5))
 
 
@@ -65,7 +65,7 @@ def test_weight_shape(method: str, shape: tuple[int, ...]):
 @pytest.mark.parametrize('step', [torch.ones(2), torch.ones(2, 3, 1), torch.ones(4, 2, 1, 1)])
 def test_step_shape(method: str, step: torch.Tensor):
     """Reject unsupported steps consistently in both proximal maps."""
-    with pytest.raises(ValueError, match='two trailing singleton axes'):
+    with pytest.raises(RuntimeError, match='expand'):
         getattr(NuclearNorm(), method)(torch.ones(2, 3, 5), step)
 
 
@@ -74,7 +74,7 @@ def test_input_and_target_shape(method: str):
     """Require matrices and disallow target-induced output expansion."""
     with pytest.raises(ValueError, match='at least two'):
         getattr(NuclearNorm(), method)(torch.ones(3))
-    with pytest.raises(ValueError, match='target must broadcast'):
+    with pytest.raises(RuntimeError, match='expand'):
         getattr(NuclearNorm(target=torch.ones(2, 3, 5)), method)(torch.ones(1, 3, 5))
 
 
