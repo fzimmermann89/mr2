@@ -18,7 +18,9 @@ def test_identity(denoise, dtype: torch.dtype) -> None:
         image = image * (0.6 + 0.8j)
     weight = torch.tensor([[0.0], [0.7]], dtype=image.real.dtype)
     expected = torch.sgn(image) * (image.abs() - weight).clamp_min(0)
-    result = denoise(image, IdentityOp(), weight, max_iterations=150, tolerance=1e-7)
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(0)
+        result = denoise(image, IdentityOp(), weight, max_iterations=150, tolerance=1e-7)
     torch.testing.assert_close(result, expected, atol=2e-6, rtol=2e-6)
     assert result.dtype == dtype
 

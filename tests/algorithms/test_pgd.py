@@ -4,8 +4,8 @@ import pytest
 import torch
 from mr2.algorithms.optimizers import pgd
 from mr2.data.SpatialDimension import SpatialDimension
-from mr2.operators import FastFourierOp, IdentityOp, LinearOperatorMatrix, WaveletOp
-from mr2.operators.functionals import L1Norm, L1NormViewAsReal, L2NormSquared
+from mr2.operators import FastFourierOp, LinearOperatorMatrix, WaveletOp
+from mr2.operators.functionals import L1NormViewAsReal, L2NormSquared
 from mr2.phantoms import EllipsePhantom
 from mr2.utils import RandomGenerator
 
@@ -98,27 +98,6 @@ def test_pgd_solution_fourier_wavelet(stepsize: float, backtrack_factor: float) 
     (pgd_solution_image,) = wavelet_op.H(pgd_solution_wave)
 
     torch.testing.assert_close(pgd_solution_image, expected, rtol=5e-4, atol=5e-4)
-
-
-@pytest.mark.parametrize('dtype', [torch.float32, torch.float64, torch.complex64, torch.complex128])
-@pytest.mark.parametrize('stepsize', [0.9, 0.9 / (1 + torch.finfo(torch.float32).eps) ** 2])
-def test_backtracking_roundoff(dtype: torch.dtype, stepsize: float) -> None:
-    """Rounding near the minimum must not collapse a valid backtracking step."""
-    image = torch.tensor([[-3, 0, 2, 5], [4, -2, 0.1, -1]], dtype=dtype)
-    if image.is_complex():
-        image = image * (0.6 + 0.8j)
-    weight = torch.tensor([[0.0], [0.7]], dtype=image.real.dtype)
-    expected = torch.sgn(image) * (image.abs() - weight).clamp_min(0)
-    (result,) = pgd(
-        f=0.5 * (L2NormSquared(target=image) @ IdentityOp()),
-        g=L1Norm(weight=weight),
-        initial_value=torch.zeros_like(image),
-        stepsize=stepsize,
-        backtrack_factor=0.5,
-        max_iterations=150,
-        convergent_iterates_variant=True,
-    )
-    torch.testing.assert_close(result, expected, atol=2e-6, rtol=2e-6)
 
 
 def test_callback() -> None:

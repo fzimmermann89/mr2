@@ -7,7 +7,7 @@ import torch
 
 from mr2.algorithms.optimizers.pdhg import pdhg
 from mr2.data import IData
-from mr2.operators import IdentityOp, LinearOperator, LinearOperatorMatrix, ProximableFunctionalSeparableSum
+from mr2.operators import IdentityOp, LinearOperator
 from mr2.operators.functionals import L1Norm, L2NormSquared
 
 Image = TypeVar('Image', torch.Tensor, IData)
@@ -92,9 +92,9 @@ def analysis_denoising(
             raise ValueError('initial value must not introduce a complex dtype')
         initial_image = initial_image.to(device=image.device, dtype=dtype)
     (result,) = pdhg(
-        f=ProximableFunctionalSeparableSum(0.5 * L2NormSquared(target=image), L1Norm(weight=weight)),
+        f=0.5 * L2NormSquared(target=image) | L1Norm(weight=weight),
         g=None,
-        operator=LinearOperatorMatrix(((IdentityOp(),), (analysis_operator,))),
+        operator=IdentityOp() % analysis_operator,
         initial_values=(initial_image,),
         max_iterations=max_iterations,
         tolerance=tolerance,

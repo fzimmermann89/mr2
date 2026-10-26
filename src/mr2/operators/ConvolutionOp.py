@@ -91,7 +91,6 @@ class ConvolutionOp(LinearOperator):
         kernel
             Filter bank of shape ``(out_channels, in_channels, *kernel_size)``.
             Channel sizes must be positive; spatial sizes must be positive and odd.
-            Gradient-tracking tensors other than Parameters are not moved or saved with the operator.
         dim
             Spatial axes, in the order of the kernel's spatial dimensions.
             Defaults to the last ``kernel.ndim - 2`` axes.
