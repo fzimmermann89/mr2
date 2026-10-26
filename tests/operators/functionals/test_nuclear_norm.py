@@ -1,0 +1,101 @@
+"""Mathematical checks for the nuclear norm and its proximal maps."""
+
+import pytest
+import torch
+from mr2.operators.functionals import NuclearNorm
+
+
+@pytest.mark.parametrize('dtype', [torch.float64, torch.complex128])
+@pytest.mark.parametrize('shape', [(3, 5), (2, 5, 3)])
+@pytest.mark.parametrize('divide_by_n', [False, True])
+def test_diagonal(dtype: torch.dtype, shape: tuple[int, ...], divide_by_n: bool):
+    """Check sums, soft thresholding and clipping against diagonal formulas."""
+    x = torch.zeros(shape, dtype=dtype)
+    singular_values = torch.tensor([5.0, 2.0, 0.0], dtype=torch.float64)
+    phase = 1j if dtype.is_complex else -1
+    x[..., :3, :3] = torch.diag(phase * singular_values)
+    target = torch.full_like(x, 0.2 + 0.3j if dtype.is_complex else 0.2)
+    weight = torch.arange(1, x[..., :1, :1].numel() + 1, dtype=torch.float64).reshape(*shape[:-2], 1, 1)
+    sigma = weight * 0.4
+    f = NuclearNorm(target=target, weight=weight, divide_by_n=divide_by_n)
+    radius = weight / (shape[-2] * shape[-1]) if divide_by_n else weight
+    expected_value = radius * 7
+    torch.testing.assert_close(f(x + target)[0], expected_value[..., 0, 0])
+    shrunk = torch.relu(singular_values - (sigma * radius)[..., 0])
+    clipped = torch.minimum(singular_values, radius[..., 0])
+    primal = torch.zeros_like(x)
+    dual = torch.zeros_like(x)
+    primal[..., :3, :3] = torch.diag_embed(phase * shrunk)
+    dual[..., :3, :3] = torch.diag_embed(phase * clipped)
+    torch.testing.assert_close(f.prox(x + target, sigma)[0], primal + target)
+    torch.testing.assert_close(f.prox_convex_conj(x + sigma * target, sigma)[0], dual)
+
+
+@pytest.mark.parametrize('dtype', [torch.float64, torch.complex128])
+@pytest.mark.parametrize('divide_by_n', [False, True])
+def test_moreau(dtype: torch.dtype, divide_by_n: bool):
+    """Check Moreau for dense rectangular batches, translation and complex weights."""
+    generator = torch.Generator().manual_seed(31)
+    x = torch.randn(2, 3, 5, dtype=dtype, generator=generator)
+    target = torch.randn(3, 5, dtype=dtype, generator=generator)
+    weight = torch.tensor([-2.0, 3j], dtype=torch.complex128).reshape(2, 1, 1)
+    step = torch.tensor([0.3, 1.7], dtype=torch.float64).reshape(2, 1, 1)
+    f = NuclearNorm(target, weight, divide_by_n=divide_by_n)
+    primal = f.prox(x, step)[0]
+    dual = f.prox_convex_conj(x / step, 1 / step)[0]
+    torch.testing.assert_close(primal + step * dual, x)
+    expected = torch.linalg.matrix_norm(x - target, ord='nuc') * weight.abs().flatten()
+    if divide_by_n:
+        expected /= 15
+    torch.testing.assert_close(f(x)[0], expected)
+
+
+def test_matrix_parameters():
+    """SVT requires matrix-constant weights and steps without input expansion."""
+    x = torch.ones(2, 3)
+    with pytest.raises(RuntimeError):
+        NuclearNorm(weight=torch.ones_like(x))(x)
+    with pytest.raises(RuntimeError):
+        NuclearNorm().prox(x, torch.ones_like(x))
+    with pytest.raises(RuntimeError):
+        NuclearNorm(target=torch.ones(2, 2, 3)).prox(x)
+
+
+@pytest.mark.parametrize('dtype', [torch.float64, torch.complex128])
+@pytest.mark.parametrize('method', ['forward', 'prox', 'prox_convex_conj'])
+def test_gradients(dtype: torch.dtype, method: str):
+    """Check gradients away from repeated/zero singular values and thresholds."""
+    x = torch.zeros(3, 5, dtype=dtype)
+    x[:, :3] = torch.diag(torch.tensor([4.0, 2.0, 0.5], dtype=dtype))
+    x.requires_grad_()
+    f = NuclearNorm(weight=1.0)
+    assert torch.autograd.gradcheck(getattr(f, method), (x,))
+
+
+@pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
+def test_cuda():
+    """CPU targets work with CUDA inputs in all three methods."""
+    x = torch.tensor([[3j, 0, 0], [0, 4, 0]], dtype=torch.complex64)
+    f = NuclearNorm(target=x / 2, weight=2.0)
+    for method in ('forward', 'prox', 'prox_convex_conj'):
+        torch.testing.assert_close(getattr(f, method)(x.cuda())[0].cpu(), getattr(f, method)(x)[0])
+
+
+@pytest.mark.parametrize('method', ['prox', 'prox_convex_conj'])
+def test_step_precision(method: str):
+    """Python steps use input precision; tensor steps retain their precision."""
+    x = torch.diag(torch.tensor([3.0, 0.5], dtype=torch.float64))
+    target = torch.diag(torch.tensor([1.0, -0.25], dtype=torch.float64))
+    f = NuclearNorm(target=target)
+    expected = x - torch.eye(2, dtype=x.dtype) / 3 if method == 'prox' else torch.diag(x.new_tensor([1.0, 7 / 12]))
+    torch.testing.assert_close(getattr(f, method)(x, 1 / 3)[0], expected, atol=1e-15, rtol=1e-15)
+    weight = torch.tensor(1.0000000001, dtype=torch.float64)
+    sigma = torch.tensor(0.333333333333, dtype=torch.float64)
+    f = NuclearNorm(target=target, weight=weight)
+    expected = (
+        x - sigma * weight * torch.eye(2, dtype=x.dtype)
+        if method == 'prox'
+        else torch.diag(torch.minimum(x.diag() - sigma * target.diag(), weight))
+    )
+    torch.testing.assert_close(getattr(f, method)(x, sigma)[0], expected, atol=1e-15, rtol=1e-15)

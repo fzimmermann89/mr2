@@ -56,6 +56,8 @@ class RicianNegLogLikelihood(Operator[torch.Tensor, tuple[torch.Tensor]]):
     amplitudes in their physical domain. Values and derivatives are limited by
     the representable range of the chosen dtype. Ordinary PyTorch operations
     support double backward, Hessian-vector products and ``torch.func``.
+    ``vmap`` supports mapping amplitudes of an initialized operator; mapping
+    constructor parameters is unsupported because validation checks tensor values.
     """
 
     target: torch.Tensor
