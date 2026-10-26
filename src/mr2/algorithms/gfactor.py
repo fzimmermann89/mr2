@@ -17,77 +17,49 @@ def gfactor(
     n_replicas: int = 100,
     generator: torch.Generator | None = None,
 ) -> torch.Tensor:
-    r"""Estimate g-factor using pseudo multiple replicas [ROB2008]_.
-
-    Independent measurement-domain noise is added before each reconstruction,
-    including any whitening, coil mixing, Fourier sampling and coil combination.
-    Trajectories are defined entirely by the supplied reconstructions; no
-    Cartesian alias grouping or sampling-density assumption is used.
+    r"""Estimate g-factor from noisy replicas of two reconstructions [ROB2008]_.
 
     Parameters
     ----------
     data
-        Accelerated complex measurements with shape ``(..., coils, k2, k1, k0)``.
-        Supply acquired samples only, or have the callable mask noise at
-        unacquired positions of a padded grid. For a fixed linear reconstruction
-        these may be zeros. For a nonlinear reconstruction use the measured data
-        to probe fluctuations about it.
+        Accelerated complex measurements, shape ``(..., coils, k2, k1, k0)``.
+        Supply acquired samples only, or mask unacquired positions in the callable.
+        Zeros suffice for linear reconstructions; otherwise use measured data.
     reconstruction
-        Callable mapping measurements to an image tensor or a one-tensor tuple
-        (as returned by mr2 operators). Capture fixed calibration, sensitivity
-        maps, weights and solver settings in the callable. Calibration is not
-        estimated by this function; refitting it inside the callable changes the
-        experiment to include calibration uncertainty. Calls must be deterministic
-        apart from the supplied noise, and return a consistent shape and dtype.
+        Deterministic tensor-to-image callable returning a tensor or one-tensor
+        tuple. Keep calibration, sensitivity maps and solver settings fixed.
+        Include whitening and coil combination as needed.
     reference_data
-        Matching fully sampled measurements, with the same batch/coil dimensions,
-        dtype and device as ``data``. Sample dimensions may differ. Zeros suffice
-        for a fixed linear reference reconstruction.
+        Fully sampled measurements with matching batch/coil dimensions, dtype and
+        device. Sample dimensions may differ; zeros suffice for a linear reference.
     reference_reconstruction
-        Fully sampled reconstruction producing the same image shape and signal
-        units as ``reconstruction``. Both must have matching unbiased signal
-        amplitude, spatial resolution and contrast for a classical g-factor.
-        Include any needed signal normalization in these callables; for example,
-        orthonormal transforms with different matrix sizes may need rescaling.
+        Reference callable returning the same image shape, signal scale, resolution
+        and contrast. Apply any signal normalization inside the callables.
     acceleration
-        Explicit acquisition-time reduction ``T_full / T_acc >= 1``, including
-        calibration overhead where applicable. With equal dwell time and no other
-        overhead this is the full/acquired sample-count ratio. It is never inferred
-        from tensor sizes. Both experiments must have equal per-sample noise
-        covariance (including bandwidth, receiver gain and dwell-time corrections).
+        Acquisition-time ratio ``T_full / T_acc >= 1``, including calibration
+        overhead. Both acquisitions must have the same per-sample noise covariance.
     noise_covariance
-        Positive definite Hermitian coil covariance ``E[n n^H]`` with shape
-        ``(..., coils, coils)``, broadcastable over the batch dimensions. Noise is
-        circular complex Gaussian, independent between samples and batches, with
-        this same covariance for both acquisitions. This is the total complex
-        variance convention used by ``prewhiten_kspace``, twice the per-real-part
-        covariance in [ROB2008]_. Use identity for already whitened data and put
-        whitening inside the callable when using unwhitened data/covariance.
+        Positive definite Hermitian ``E[n n^H]``, shape ``(..., coils, coils)``,
+        broadcastable over batches. Noise is circular complex and independent across
+        samples/batches. This uses total complex variance, as in ``prewhiten_kspace``;
+        use identity for whitened data. Robson uses half this covariance.
     n_replicas
-        Number of replicas for each acquisition, at least two. More replicas
-        reduce Monte Carlo uncertainty; no fixed count guarantees accuracy.
+        Replicas per acquisition, at least two. More reduce sampling uncertainty.
     generator
         Optional PyTorch generator on the measurement device, advanced in place.
-        A freshly seeded generator reproduces the estimate.
 
     Returns
     -------
-        Real tensor ``sqrt(var_acc / (acceleration * var_full))`` on the image
-        device. Variance is the unbiased sample estimate of ``E[abs(x-E[x])**2]``;
-        only online means and squared deviations are retained. For circular
-        complex linear outputs this is twice the real-part variance and the
-        factor cancels in the ratio. Zero reference variance yields NaN.
+        ``sqrt(var_acc / (acceleration * var_full))``, using unbiased total complex
+        variance accumulated online. Zero reference variance gives NaN.
 
     Notes
     -----
-    This is a classical geometry factor only for consistently normalized,
-    unbiased linear reconstructions. For nonlinear, magnitude, or regularized
-    outputs the result is a reference-normalized noise ratio, potentially signal
-    dependent, and does not measure bias or resolution loss. Values below one
-    must not be interpreted as improved encoding efficiency in that setting.
-    Added replicas keep the original acquired noise fixed; nonlinear results
-    describe this finite-noise perturbation experiment, not a universal noise law.
-    Reconstruction graphs are detached before variance accumulation.
+    A classical geometry factor requires unbiased linear reconstructions with
+    matching signal normalization. Nonlinear, magnitude or regularized outputs
+    instead yield a possibly signal-dependent noise ratio that does not measure
+    bias or resolution loss. Replicas perturb the supplied data at finite noise
+    amplitude; they do not remove its original noise or guarantee convergence.
 
     References
     ----------
