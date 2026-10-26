@@ -637,14 +637,12 @@ class KData(Dataclass):
             If False, multiply the windows along kz, ky and kx (separable).
             If True, evaluate one window at the radius formed from coordinates
             scaled by their respective widths (ellipsoidal support for Hann).
-            Gaussian weights coincide for both choices. Neither choice depends
-            on storage order. The origin, including for even matrix sizes, has
-            weight one even when DC was not acquired.
+            Gaussian weights coincide for both choices.
 
         Returns
         -------
-            Apodized copy with the same data shape, dtype and device. Acquired
-            zeros remain zero. Density compensation is not applied or modified.
+            Apodized copy with the same data shape, dtype and device.
+            Density compensation is not applied or modified.
         """
         if window not in ('hann', 'gaussian'):
             raise ValueError("window must be 'hann' or 'gaussian'.")
@@ -669,9 +667,16 @@ class KData(Dataclass):
         if window == 'gaussian':
             weight = torch.exp(-math.log(2) * radius_squared)
         elif radial:
-            radius = radius_squared.sqrt()
+            at_dc = radius_squared == 0
+            radius = torch.where(at_dc, 1, radius_squared).sqrt()
             weight = torch.where(radius < 1, (1 + torch.cos(torch.pi * radius)) / 2, 0)
-        return type(self)(self.header.clone(), self.data * weight, self.traj.clone())
+            weight = torch.where(at_dc, 1, weight)
+        # Avoid constructor repeat reduction, which can discard small sample differences.
+        result = copy.copy(self)
+        result.header = self.header.clone()
+        result.traj = self.traj.clone()
+        result.data = self.data * weight
+        return result
 
     def remove_readout_os(self: Self) -> Self:
         """Remove any oversampling along the readout direction.

@@ -73,14 +73,15 @@ def test_apodize_nonuniform_batch_support(kdata: KData, radial: bool) -> None:
     torch.testing.assert_close(result.data, expected.expand_as(result.data).to(result.data.dtype))
     assert result.data[0, ..., 3:].eq(0).all()
     gaussian = kdata.apodize(2, window='gaussian', radial=radial)
-    assert gaussian.data[0, 0, 0, 0, 0] == 0.5
-    assert gaussian.data[1, 0, 0, 0, 0] == 0.25
+    torch.testing.assert_close(gaussian.data[:, 0, 0, 0, 0].real, torch.tensor([0.5, 0.25]))
 
 
 @pytest.mark.parametrize('dtype', [torch.complex64, torch.complex128])
 @pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
 def test_apodize_copy(kdata: KData, dtype: torch.dtype, device: str) -> None:
     """Data dtype/device, acquired zeros, readout metadata and trajectory are preserved."""
+    if device == 'cuda' and not torch.cuda.is_available():
+        pytest.skip('CUDA unavailable')
     kdata = kdata.to(device=device)
     kdata.data = kdata.data.to(dtype=dtype)
     kdata.data[..., 0] = 0
@@ -114,3 +115,37 @@ def test_apodize_invalid_window(kdata: KData) -> None:
     """Unknown window names are rejected."""
     with pytest.raises(ValueError, match='window'):
         kdata.apodize(window='unknown')  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize('scale', [0.0, 1e-8])
+def test_apodize_preserves_small_data(kdata: KData, scale: float) -> None:
+    """Zero and small samples keep their shape and weighted values."""
+    expected = kdata.apodize().data * scale
+    kdata.data = kdata.data * scale
+    result = kdata.apodize()
+    assert result.data.shape == kdata.data.shape
+    torch.testing.assert_close(result.data, expected, rtol=1e-6, atol=0)
+
+
+@pytest.mark.parametrize('radial', [False, True])
+def test_apodize_trajectory_gradient_at_dc(kdata: KData, radial: bool) -> None:
+    """Hann coordinate gradients are zero at DC and finite throughout support."""
+    kx = torch.tensor([0.0, 0.5, 1.0, 2.0], dtype=torch.float64, requires_grad=True)
+    ky = torch.zeros_like(kx, requires_grad=True)
+    kz = torch.zeros_like(kx, requires_grad=True)
+    kdata.traj = KTrajectory(
+        kz.reshape(1, 1, 1, 1, 4),
+        ky.reshape(1, 1, 1, 1, 4),
+        kx.reshape(1, 1, 1, 1, 4),
+        repeat_detection_tolerance=None,
+    )
+    kdata.data = torch.ones(1, 1, 1, 1, 4, dtype=torch.complex128)
+    kdata.apodize(4, radial=radial).data.real.sum().backward()
+    expected = -torch.pi / 4 * torch.sin(torch.pi * kx.detach() / 2)
+    expected[-1] = 0
+    assert kx.grad is not None
+    torch.testing.assert_close(kx.grad, expected)
+    assert ky.grad is not None
+    assert kz.grad is not None
+    torch.testing.assert_close(ky.grad, torch.zeros_like(ky))
+    torch.testing.assert_close(kz.grad, torch.zeros_like(kz))
