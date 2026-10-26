@@ -123,7 +123,12 @@ class RicianNegLogLikelihood(Operator[torch.Tensor, tuple[torch.Tensor]]):
                 raise ValueError(f'{name} must be finite, real and {domain}')
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor]:
-        """Return the weighted reduced likelihood for physical amplitude ``x``."""
+        """Return the weighted reduced likelihood for physical amplitude ``x``.
+
+        .. note::
+            Prefer calling the instance as ``operator(x)`` over directly calling this method.
+            See this PyTorch `discussion <https://discuss.pytorch.org/t/is-model-forward-x-the-same-as-model-call-x/33460/3>`_.
+        """
         if x.dtype not in (torch.float32, torch.float64):
             raise TypeError('RicianNegLogLikelihood supports float32 and float64 amplitudes')
         self._validate_parameters()
