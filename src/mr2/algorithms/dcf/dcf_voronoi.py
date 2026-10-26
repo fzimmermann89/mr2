@@ -69,7 +69,7 @@ def dcf_2d3d_voronoi(traj: torch.Tensor) -> torch.Tensor:
     Points at the edge of k-space are detected as outliers and are assigned the area of the 1% largest DCF values.
 
     The Voronoi tessellation assigns each point in k-space a region based on the proximity to its nearest neighbors. The
-    DCF is then computed from the area of these regions.
+    DCF is then computed based on the inverse of the area of these regions.
 
     This function operates on a single `other` sample.
     See also `~mr2.data.DcfData` and `~mr2.utils.smap`.

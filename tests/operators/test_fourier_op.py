@@ -470,3 +470,16 @@ def test_fourier_op_gram_cuda() -> None:
     operator = gram_op.H @ gram_op
     (result,) = operator(x)
     assert result.is_cpu
+
+
+def test_crop_to_recon_matches_cartesian_adjoint() -> None:
+    """Image cropping reuses FFT padding, including odd-to-even changes in size."""
+    encoded = SpatialDimension(3, 7, 8)
+    reconstructed = SpatialDimension(2, 6, 5)
+    trajectory = KTrajectoryCartesian.fullysampled(encoded)
+    full = FourierOp(encoded, encoded, trajectory)
+    cropped = FourierOp(reconstructed, encoded, trajectory)
+    data = torch.randn(2, 3, *encoded.zyx, dtype=torch.complex64)
+    torch.testing.assert_close(cropped.crop_to_recon(full.H(data)[0]), cropped.H(data)[0])
+    with pytest.raises(ValueError, match='encoding matrix'):
+        cropped.crop_to_recon(data[..., :2, :, :])

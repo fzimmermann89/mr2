@@ -120,18 +120,8 @@ class CsmData(IData, init=False):
             kspace_data,
             passed_dimensions=(-4, -3, -2, -1),  # coils, z, y, x
         )
-        # Match the actual Fourier routing, including mixed trajectories that
-        # fall back to NUFFT on all active axes.
-        nufft_dims = FourierOp.from_kdata(acs)._nufft_dims
-        slices = []
-        for dim, (encoded, reconstructed) in enumerate(
-            zip(acs.header.encoding_matrix.zyx, acs.header.recon_matrix.zyx, strict=True), start=-3
-        ):
-            start = encoded // 2 - reconstructed // 2 if dim in nufft_dims else (encoded - reconstructed + 1) // 2
-            slices.append(slice(start, start + reconstructed))
-        csm_data = csm_data[..., slices[0], slices[1], slices[2]]
-        csm = cls(header=IHeader.from_kheader(acs.header), data=csm_data)
-        return csm
+        csm_data = FourierOp.from_kdata(acs).crop_to_recon(csm_data)
+        return cls(header=IHeader.from_kheader(acs.header), data=csm_data)
 
     @classmethod
     def from_kdata_walsh(

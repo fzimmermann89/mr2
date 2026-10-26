@@ -248,6 +248,8 @@ def test_espirit_crop_matches_fourier_origin(random_kheader: KHeader, mixed: boo
     # NUFFT y/x retain index zero; the mixed FFT z axis drops its first voxel.
     expected = full_maps[..., 1:3, :32, :32] if mixed else full_maps[..., :32, :32]
     torch.testing.assert_close(actual, expected)
-    cropped_image = FourierOp.from_kdata(kdata).H(data)[0]
+    fourier = FourierOp.from_kdata(kdata)
+    cropped_image = fourier.H(data)[0]
+    torch.testing.assert_close(fourier.crop_to_recon(full_image), cropped_image, atol=2e-5, rtol=2e-5)
     expected_image = full_image[..., 1:3, :32, :32] if mixed else full_image[..., :32, :32]
     torch.testing.assert_close(cropped_image, expected_image, atol=2e-5, rtol=2e-5)

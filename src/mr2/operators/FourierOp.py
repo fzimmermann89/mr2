@@ -15,6 +15,7 @@ from mr2.operators.CartesianSamplingOp import CartesianSamplingOp
 from mr2.operators.FastFourierOp import FastFourierOp
 from mr2.operators.LinearOperator import LinearOperator
 from mr2.operators.NonUniformFastFourierOp import NonUniformFastFourierOp
+from mr2.operators.ZeroPadOp import ZeroPadOp
 
 
 class FourierOp(LinearOperator, adjoint_as_backward=True):
@@ -49,6 +50,8 @@ class FourierOp(LinearOperator, adjoint_as_backward=True):
             the k-space trajectories where the frequencies are sampled
         """
         super().__init__()
+        self._encoding_matrix = encoding_matrix.zyx
+        self._recon_matrix = recon_matrix.zyx
 
         def get_spatial_dims(spatial_dims: SpatialDimension, dims: Sequence[int]):
             return [
@@ -126,6 +129,42 @@ class FourierOp(LinearOperator, adjoint_as_backward=True):
             encoding_matrix=kdata.header.encoding_matrix,
             traj=kdata.traj,
         )
+
+    def crop_to_recon(self, image: torch.Tensor) -> torch.Tensor:
+        """Crop an encoding-grid image to this operator's reconstruction grid.
+
+        This preserves the voxel spacing and follows the image origins used by
+        the FFT and NUFFT backends, including mixed trajectories. It can also
+        crop encoding-grid sensitivity maps without Fourier transforming them.
+        Leading batch and coil dimensions are preserved.
+
+        Parameters
+        ----------
+        image
+            Image tensor with trailing shape equal to the encoding matrix.
+
+        Raises
+        ------
+        ValueError
+            If the input shape differs from the encoding matrix or the
+            reconstruction matrix is larger than the encoding matrix.
+        """
+        if image.shape[-3:] != self._encoding_matrix:
+            raise ValueError('The image must have the encoding matrix as its trailing shape.')
+        if any(r > e for r, e in zip(self._recon_matrix, self._encoding_matrix, strict=True)):
+            raise ValueError('Cropping requires the reconstruction matrix to fit inside the encoding matrix.')
+        # Reuse the same padding convention as FastFourierOp on the remaining axes.
+        dims = tuple(d for d in (-3, -2, -1) if d not in self._nufft_dims)
+        (image,) = ZeroPadOp(
+            dim=dims,
+            original_shape=tuple(self._encoding_matrix[d] for d in dims),
+            padded_shape=tuple(self._recon_matrix[d] for d in dims),
+        )(image)
+        slices = [slice(None)] * 3
+        for dim in self._nufft_dims:
+            start = self._encoding_matrix[dim] // 2 - self._recon_matrix[dim] // 2
+            slices[dim] = slice(start, start + self._recon_matrix[dim])
+        return image[..., slices[0], slices[1], slices[2]]
 
     def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor,]:
         """Apply forward Fourier operation (image to k-space).
