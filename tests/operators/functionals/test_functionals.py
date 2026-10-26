@@ -219,9 +219,9 @@ def test_functional_negative_sigma(
     """Test if error is raised for negative or complex sigma"""
 
     def case(sigma):
-        x = torch.zeros(2)
+        x = torch.zeros(1, 2)
         f = getattr(make_functional(functional, keepdim=True), function)
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match='sigma must be real'):
             f(x, sigma)
 
     # all these cases should throw an exception:

@@ -63,9 +63,9 @@ def test_weight_shape(method: str, shape: tuple[int, ...]):
 
 @pytest.mark.parametrize('method', ['prox', 'prox_convex_conj'])
 @pytest.mark.parametrize('step', [torch.ones(2), torch.ones(2, 3, 1), torch.ones(4, 2, 1, 1)])
-def test_step_shape(method: str, step: torch.Tensor | complex):
+def test_step_shape(method: str, step: torch.Tensor):
     """Reject unsupported steps consistently in both proximal maps."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match='two trailing singleton axes'):
         getattr(NuclearNorm(), method)(torch.ones(2, 3, 5), step)
 
 

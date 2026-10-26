@@ -119,7 +119,7 @@ class NuclearNorm(ElementaryProximableFunctional):
         r"""Project ``x - sigma * target`` onto the spectral-norm ball.
 
         The ball radius is :math:`|w|/N`. Zero steps return the input,
-        including outside the conjugate domain, as in the other group norms.
+        including outside the conjugate domain, as in `L21Norm`.
 
         Parameters
         ----------
