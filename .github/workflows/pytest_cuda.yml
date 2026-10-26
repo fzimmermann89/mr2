@@ -26,10 +26,11 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: |
-            pyproject.toml
-            ci/requirements/cuda.txt
+
+      - name: Create virtual environment
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
 
       - name: Install pinned environment
         run: python -m pip install -r ci/requirements/cuda.txt
