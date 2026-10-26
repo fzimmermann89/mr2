@@ -89,18 +89,15 @@ def synthesis_denoising(
     if not (image.is_floating_point() or image.is_complex()) or image.numel() == 0:
         raise ValueError('image must be a nonempty floating point or complex tensor')
     reference = synthesis_operator.H(image)[0]
-    weight = torch.as_tensor(
-        regularization_weight,
-        device=reference.device,
-        dtype=torch.float64 if isinstance(regularization_weight, int | float) else None,
-    )
-    if weight.is_complex() or not torch.isfinite(weight).all() or (weight < 0).any():
-        raise ValueError('regularization_weight must be real, finite and nonnegative')
+    if isinstance(regularization_weight, complex) or (
+        isinstance(regularization_weight, torch.Tensor) and regularization_weight.is_complex()
+    ):
+        raise ValueError('regularization_weight must be real')
+    weight = torch.as_tensor(regularization_weight, device=reference.device, dtype=reference.real.dtype)
+    if not torch.isfinite(weight).all() or (weight < 0).any():
+        raise ValueError('regularization_weight must be finite and nonnegative in the coefficient dtype')
     if torch.broadcast_shapes(weight.shape, reference.shape) != reference.shape:
         raise ValueError('regularization_weight must not expand the coefficient shape')
-    weight = weight.to(dtype=reference.real.dtype)
-    if not torch.isfinite(weight).all():
-        raise ValueError('regularization_weight must be finite in the coefficient dtype')
     if initial_codes is None:
         codes = torch.zeros_like(reference)
     else:

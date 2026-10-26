@@ -171,6 +171,13 @@ def test_gabor_filters_2d(kernel_size: tuple[int, int]) -> None:
     torch.testing.assert_close(torch.linalg.vector_norm(filters, dim=(-2, -1)), torch.ones(4))
 
 
+@pytest.mark.parametrize('sigma', [0.0, -1.0, float('nan'), float('inf')])
+def test_gabor_invalid_sigma(sigma: float) -> None:
+    """Invalid Gaussian widths fail before generating nonfinite filters."""
+    with pytest.raises(ValueError):
+        gabor_filters_2d(4, (7, 7), sigma=sigma)
+
+
 def test_gabor_orientation() -> None:
     """A ninety-degree carrier rotation rotates the corresponding spatial filter."""
     filters = gabor_filters_2d(4, (9, 9))

@@ -214,7 +214,7 @@ def gabor_filters_2d(
     kernel_size
         Spatial shape ``(ky, kx)`` in pixels.
     sigma
-        Standard deviation of the Gaussian envelope, in pixels.
+        Positive finite standard deviation of the Gaussian envelope, in pixels.
     frequency
         Spatial frequency of the sinusoidal carrier, in cycles per pixel.
 
@@ -224,20 +224,20 @@ def gabor_filters_2d(
         default floating dtype. Filters have zero mean; nonzero filters have
         unit L2 norm.
     """
+    if not math.isfinite(sigma) or sigma <= 0:
+        raise ValueError('sigma must be positive and finite')
     ky, kx = kernel_size
     x = torch.linspace(-(kx - 1) / 2, (kx - 1) / 2, kx)
     y = torch.linspace(-(ky - 1) / 2, (ky - 1) / 2, ky)
 
     yy, xx = torch.meshgrid(y, x, indexing='ij')
+    gaussian = torch.exp(-(xx**2 + yy**2) / (2.0 * sigma**2))
 
     filters = torch.zeros(n_filters, ky, kx)
 
     for i in range(n_filters):
         theta = i * math.pi / n_filters
         x_theta = xx * math.cos(theta) + yy * math.sin(theta)
-        y_theta = -xx * math.sin(theta) + yy * math.cos(theta)
-
-        gaussian = torch.exp(-(x_theta**2 + y_theta**2) / (2.0 * sigma**2))
         carrier = torch.cos(2.0 * math.pi * frequency * x_theta)
         gabor = gaussian * carrier
         gabor = gabor - gabor.mean()
