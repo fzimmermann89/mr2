@@ -43,7 +43,7 @@ def test_forward_and_adjoint(
     padded = functional.pad(x.movedim(0, 1), padding, mode=pad_mode)
     conv = (functional.conv1d, functional.conv2d, functional.conv3d)[n_dim - 1]
     dtype = torch.promote_types(input_dtype, kernel_dtype)
-    expected = conv(padded.to(dtype), kernel.to(dtype)).movedim(1, 0)
+    expected = conv(padded.to(dtype), kernel.to(dtype).flip(tuple(range(2, kernel.ndim)))).movedim(1, 0)
     torch.testing.assert_close(op(x)[0], expected)
     # A complex filter bank acts on a complex domain, including real-valued images.
     v = rng.rand_tensor(expected.shape, dtype=expected.dtype)
@@ -72,7 +72,9 @@ def test_kernel_gradient(view: bool, pad_mode: Literal['constant', 'reflect']) -
     x = rng.complex128_tensor((1, 1, 4, 5))
     y = rng.complex128_tensor((2, 1, 4, 5))
     reference_input = x.movedim(0, 1).detach().requires_grad_()
-    reference_forward = functional.conv2d(functional.pad(reference_input, (1, 1, 1, 1), mode=pad_mode), kernel)
+    reference_forward = functional.conv2d(
+        functional.pad(reference_input, (1, 1, 1, 1), mode=pad_mode), kernel.flip((-2, -1))
+    )
     (reference_adjoint,) = torch.autograd.grad(
         reference_forward, reference_input, grad_outputs=y.movedim(0, 1), create_graph=True
     )
@@ -109,14 +111,14 @@ def test_four_spatial_dimensions() -> None:
     x = rng.complex128_tensor((1, 2, 4, 3, 2, 2))
     kernel = torch.tensor([1, 2, -3j], dtype=x.dtype).reshape(1, 1, 3, 1, 1, 1)
     op = ConvolutionOp(kernel)
-    expected = x.roll(1, dims=2) + 2 * x - 3j * x.roll(-1, dims=2)
+    expected = x.roll(-1, dims=2) + 2 * x - 3j * x.roll(1, dims=2)
     torch.testing.assert_close(op(x)[0], expected)
     dotproduct_adjointness_test(op, x, rng.complex128_tensor(x.shape))
 
 
 @pytest.mark.parametrize('pad_mode', ['constant', 'circular', 'reflect', 'replicate'])
 def test_dictionary_compositions(pad_mode: Literal['constant', 'circular', 'reflect', 'replicate']) -> None:
-    """Both old dictionary conventions are reproduced without changing boundary behavior."""
+    """Analysis and synthesis compositions match independent convolution references."""
     rng = RandomGenerator(seed=0)
     kernel = rng.complex128_tensor((3, 3, 3))
     x = rng.complex128_tensor((2, 4, 5))
@@ -125,28 +127,32 @@ def test_dictionary_compositions(pad_mode: Literal['constant', 'circular', 'refl
     analysis = ConvolutionOp(kernel[:, None], pad_mode=pad_mode) @ insert_channel
     synthesis = insert_channel.H @ ConvolutionOp(kernel[None], pad_mode=pad_mode)
     padded_image = functional.pad(x[:, None], (1, 1, 1, 1), mode=pad_mode)
-    expected_analysis = functional.conv2d(padded_image, kernel[:, None]).movedim(1, 0)
+    expected_analysis = functional.conv2d(padded_image, kernel[:, None].flip((-2, -1))).movedim(1, 0)
     padded_codes = functional.pad(codes.movedim(0, 1), (1, 1, 1, 1), mode=pad_mode)
-    expected_synthesis = functional.conv2d(padded_codes, kernel[None]).squeeze(1)
+    expected_synthesis = functional.conv2d(padded_codes, kernel[None].flip((-2, -1))).squeeze(1)
     torch.testing.assert_close(analysis(x)[0], expected_analysis)
     torch.testing.assert_close(synthesis(codes)[0], expected_synthesis)
     dotproduct_adjointness_test(analysis, x, codes)
     dotproduct_adjointness_test(synthesis, codes, x)
 
 
-@pytest.mark.parametrize('parameter', [False, True])
-def test_tensor_registration(parameter: bool) -> None:
+@pytest.mark.parametrize('registration', ['buffer', 'trainable', 'frozen'])
+def test_tensor_registration(registration: str) -> None:
     """Stored tensors retain identity and use mr2's buffer/parameter movement conventions."""
     kernel = torch.ones(2, 1, 3)
-    if parameter:
-        kernel = torch.nn.Parameter(kernel)
+    if registration != 'buffer':
+        kernel = torch.nn.Parameter(kernel, requires_grad=registration == 'trainable')
     original = kernel.detach().clone()
     op = ConvolutionOp(kernel)
     torch.testing.assert_close(kernel, original)
     assert op.kernel is kernel
-    registered = dict(op.named_parameters()) if parameter else dict(op.named_buffers())
+    registered = dict(op.named_buffers()) if registration == 'buffer' else dict(op.named_parameters())
     assert registered['_convolution.weight'] is kernel
     torch.testing.assert_close(op.state_dict()['_convolution.weight'], kernel)
+    if registration == 'frozen':
+        kernel.requires_grad_()
+        op(torch.ones(1, 5))[0].sum().backward()
+        assert kernel.grad is not None
     op = op.double()
     assert op.kernel.dtype == torch.float64
     assert op(torch.ones(1, 5, dtype=torch.float64))[0].dtype == torch.float64
@@ -160,7 +166,7 @@ def test_parameter_update() -> None:
     x = torch.arange(5, dtype=kernel.dtype).reshape(1, 5)
     for _ in range(2):
         padded = functional.pad(x[None], (1, 1), mode='circular')
-        expected = functional.conv1d(padded, kernel).squeeze(0)
+        expected = functional.conv1d(padded, kernel.flip((-1,))).squeeze(0)
         torch.testing.assert_close(op(x)[0], expected)
         dotproduct_adjointness_test(op, x, x)
         optimizer.zero_grad()

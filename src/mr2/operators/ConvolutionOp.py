@@ -11,7 +11,7 @@ from mr2.utils import normalize_index, normalize_indices
 
 
 class ConvolutionOp(LinearOperator):
-    r"""Apply an N-dimensional filter bank, using PyTorch's cross-correlation convention.
+    r"""Apply an N-dimensional convolution filter bank.
 
     Let :math:`k_{oi}[m]` be the kernel, :math:`s` its spatial size,
     :math:`p=(s-1)/2`, and :math:`P` symmetric padding by :math:`p`.
@@ -20,9 +20,9 @@ class ConvolutionOp(LinearOperator):
 
     .. math::
 
-        (Cx)_o[n] &= \sum_i\sum_{0\le m<s} k_{oi}[m]\,(Px)_i[n+m], \\
+        (Cx)_o[n] &= \sum_i\sum_{0\le m<s} k_{oi}[m]\,(Px)_i[n+s-1-m], \\
         (C^H y)_i &= (P^H z)_i, \qquad
-        z_i[t] = \sum_o\sum_{\substack{n\in\Omega,\,0\le m<s\\n+m=t}}
+        z_i[t] = \sum_o\sum_{\substack{n\in\Omega,\,0\le m<s\\n+s-1-m=t}}
                      \overline{k_{oi}[m]}\,y_o[n].
 
     Indices and inequalities are componentwise over the axes in ``dim``;
@@ -76,9 +76,10 @@ class ConvolutionOp(LinearOperator):
             dim=self.dim,
             channel_dim=channel_dim,
             bias=False,
+            convolution=True,
             weight=kernel.detach() if isinstance(kernel, torch.nn.Parameter) else kernel,
         )
-        if kernel.requires_grad:
+        if isinstance(kernel, torch.nn.Parameter) or kernel.requires_grad:
             # ConvNd initializes supplied Parameters; install the original only after construction.
             del self._convolution.weight
             self._convolution.weight = kernel  # type: ignore[assignment]
