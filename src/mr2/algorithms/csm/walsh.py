@@ -5,6 +5,7 @@ import torch
 from mr2.algorithms.csm.extrapolate import extrapolate_csm
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.utils.filters import uniform_filter
+from mr2.utils.reshape import normalize_index
 
 
 def walsh(
@@ -78,9 +79,7 @@ def walsh(
     eps = 1e-12
 
     if pool_dim is not None:
-        if not -coil_images.ndim <= pool_dim < coil_images.ndim:
-            raise ValueError('pool_dim must index a leading dimension.')
-        pool_dim %= coil_images.ndim
+        pool_dim = normalize_index(coil_images.ndim, pool_dim)
         if pool_dim >= coil_images.ndim - 4:
             raise ValueError('pool_dim must index a leading dimension, not coils or space.')
 

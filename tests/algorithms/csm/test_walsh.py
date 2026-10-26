@@ -47,11 +47,11 @@ def test_walsh_pools_echoes_without_phase_cancellation() -> None:
 @pytest.mark.parametrize('pool_dim', [2, 3, 4, 5, 6, -4, -3, -2, -1, -7])
 def test_walsh_rejects_nonleading_pool_dimension(pool_dim: int) -> None:
     """Pooling must not conflate coils or spatial axes with echoes."""
-    with pytest.raises(ValueError, match='leading dimension'):
+    with pytest.raises(ValueError if -6 <= pool_dim < 6 else IndexError):
         walsh(torch.ones(2, 3, 4, 1, 8, 8, dtype=torch.complex64), 3, pool_dim=pool_dim)
 
 
-@pytest.mark.parametrize('pool_dim', [0, 1])
+@pytest.mark.parametrize('pool_dim', [0, 1, -6, -5])
 def test_walsh_pools_extrapolation_confidence(pool_dim: int) -> None:
     """Pooled extrapolation uses signal energy from all echoes in each batch."""
     torch.manual_seed(0)
