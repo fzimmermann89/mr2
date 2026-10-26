@@ -1,5 +1,6 @@
 """Spatial and temporal filters."""
 
+import math
 import warnings
 from collections.abc import Sequence
 from functools import reduce
@@ -20,9 +21,10 @@ def filter_separable(
     pad_mode: Literal['constant', 'reflect', 'replicate', 'circular', 'none'] = 'constant',
     pad_value: float = 0.0,
 ) -> torch.Tensor:
-    """Apply the separable filter kernels to the tensor x along the axes dim.
+    """Apply one-dimensional kernels successively along the selected axes.
 
-    Does padding to keep the output the same size as the input.
+    Each step uses PyTorch-style cross-correlation without conjugating the
+    kernel. Padding preserves the input shape unless ``pad_mode='none'``.
 
     Parameters
     ----------
@@ -39,8 +41,9 @@ def filter_separable(
 
     Returns
     -------
-    The filtered tensor, with the same shape as the input unless pad_mode is 'none' and
-    and promoted dtype of the input and the kernels.
+        Filtered tensor with the promoted dtype of the input and kernels.
+        The shape is unchanged unless ``pad_mode='none'``, which keeps only
+        positions where the kernel fits entirely inside the input.
     """
     if len(dim) != len(kernels):
         raise ValueError('Must provide matching length kernels and dim arguments.')
@@ -90,7 +93,10 @@ def gaussian_filter(
     pad_mode: Literal['constant', 'reflect', 'replicate', 'circular'] = 'constant',
     pad_value: float = 0.0,
 ) -> torch.Tensor:
-    """Apply a and-Gaussian filter.
+    r"""Smooth a tensor with a separable N-dimensional Gaussian filter.
+
+    Each axis uses samples of :math:`\exp(-t^2/(2\sigma^2))`, truncated at
+    ``ceil(truncate * sigma)`` pixels on either side and normalized to sum to one.
 
     Parameters
     ----------
@@ -106,6 +112,10 @@ def gaussian_filter(
         Padding mode
     pad_value
         Padding value for pad_mode = constant
+
+    Returns
+    -------
+        Smoothed tensor with the same shape as the input.
     """
     if dim is None:
         dim = tuple(range(x.ndim))
@@ -136,7 +146,10 @@ def uniform_filter(
     pad_mode: Literal['constant', 'reflect', 'replicate', 'circular'] = 'constant',
     pad_value: float = 0.0,
 ) -> torch.Tensor:
-    """Apply a and-uniform filter.
+    """Smooth a tensor by averaging a rectangular neighborhood.
+
+    Each selected axis uses a constant kernel whose coefficients sum to one.
+    Window widths larger than the corresponding input axis are clipped to its length.
 
     Parameters
     ----------
@@ -150,6 +163,10 @@ def uniform_filter(
         Padding mode
     pad_value
         Padding value for pad_mode = constant
+
+    Returns
+    -------
+        Smoothed tensor with the same shape as the input.
     """
     if dim is None:
         dim = tuple(range(x.ndim))
@@ -167,3 +184,196 @@ def uniform_filter(
     kernels = tuple([torch.ones(width, device=x.device) / width for width in width])
     x_filtered = filter_separable(x, kernels, dim, pad_mode, pad_value)
     return x_filtered
+
+
+def gabor_filters_2d(
+    n_filters: int,
+    kernel_size: tuple[int, int],
+    sigma: float = 2.0,
+    frequency: float = 0.25,
+) -> torch.Tensor:
+    r"""Create oriented cosine filters under an isotropic Gaussian envelope.
+
+    On the pixel grid centered at ``((ky - 1) / 2, (kx - 1) / 2)``, filter
+    :math:`i` samples
+
+    .. math::
+
+        g_i(x,y) = \exp\!\left(-\frac{x^2+y^2}{2\sigma^2}\right)
+                   \cos\!\left(2\pi f(x\cos\theta_i+y\sin\theta_i)\right),
+        \qquad \theta_i = \frac{i\pi}{n_\mathrm{filters}}.
+
+    The orientations cover :math:`[0,\pi)` and specify the direction in which
+    the cosine varies. Each sampled filter has its mean subtracted and is
+    divided by its L2 norm when nonzero.
+
+    Parameters
+    ----------
+    n_filters
+        Number of Gabor filters to generate.
+    kernel_size
+        Spatial shape ``(ky, kx)`` in pixels.
+    sigma
+        Positive finite standard deviation of the Gaussian envelope, in pixels.
+    frequency
+        Spatial frequency of the sinusoidal carrier, in cycles per pixel.
+
+    Returns
+    -------
+        Real Gabor filter bank of shape ``(n_filters, ky, kx)``, using the
+        default floating dtype. Filters have zero mean; nonzero filters have
+        unit L2 norm.
+    """
+    if not math.isfinite(sigma) or sigma <= 0:
+        raise ValueError('sigma must be positive and finite')
+    ky, kx = kernel_size
+    x = torch.linspace(-(kx - 1) / 2, (kx - 1) / 2, kx)
+    y = torch.linspace(-(ky - 1) / 2, (ky - 1) / 2, ky)
+
+    yy, xx = torch.meshgrid(y, x, indexing='ij')
+    gaussian = torch.exp(-(xx**2 + yy**2) / (2.0 * sigma**2))
+
+    filters = torch.zeros(n_filters, ky, kx)
+
+    for i in range(n_filters):
+        theta = i * math.pi / n_filters
+        x_theta = xx * math.cos(theta) + yy * math.sin(theta)
+        carrier = torch.cos(2.0 * math.pi * frequency * x_theta)
+        gabor = gaussian * carrier
+        gabor = gabor - gabor.mean()
+        norm = torch.sqrt(torch.sum(gabor**2))
+
+        if norm > 0:
+            gabor = gabor / norm
+
+        filters[i] = gabor
+
+    return filters
+
+
+def dct_matrix(
+    n: int,
+    dtype: torch.dtype = torch.float32,
+) -> torch.Tensor:
+    r"""Create the orthonormal discrete cosine transform of type II.
+
+    The rows are cosine basis vectors, indexed by increasing frequency.
+    For :math:`k,m=0,\ldots,n-1`,
+
+    .. math::
+
+        C_{k,m} = \alpha_k\cos\!\left(\frac{\pi k(m+1/2)}{n}\right),
+        \qquad \alpha_0 = n^{-1/2},\quad \alpha_{k>0} = (2/n)^{1/2}.
+
+    ``C @ x`` computes the DCT-II of a length-``n`` vector, and ``C.T``
+    applies its inverse. The first row is the constant (DC) basis vector.
+
+    Parameters
+    ----------
+    n
+        Number of samples and basis vectors.
+    dtype
+        Floating dtype of the matrix.
+
+    Returns
+    -------
+        Orthonormal DCT-II matrix of shape ``(n, n)``.
+    """
+    k = torch.arange(n, dtype=dtype)[:, None]
+    x = torch.arange(n, dtype=dtype)[None, :]
+
+    matrix = torch.cos(torch.pi / n * (x + 0.5) * k)
+
+    matrix[0] *= math.sqrt(1.0 / n)
+    matrix[1:] *= math.sqrt(2.0 / n)
+
+    return matrix
+
+
+def dct_filters(
+    kernel_size: tuple[int, ...],
+    dtype: torch.dtype = torch.float32,
+) -> torch.Tensor:
+    r"""Create a separable orthonormal cosine basis for an N-dimensional patch.
+
+    For spatial shape :math:`(s_1,\ldots,s_d)`, the filter indexed by
+    :math:`(k_1,\ldots,k_d)` is the product of one-dimensional DCT-II rows:
+
+    .. math::
+
+        h_{k_1,\ldots,k_d}[m_1,\ldots,m_d]
+            = \prod_{j=1}^d C^{(s_j)}_{k_j,m_j}.
+
+    Frequency indices are flattened with the last axis varying fastest.
+    The first filter is constant. Flattening each filter gives the rows of
+    an orthonormal patch-transform matrix; its transpose is the inverse.
+
+    Parameters
+    ----------
+    kernel_size
+        Positive spatial sizes, for example ``(5, 7)`` or ``(5, 7, 9)``.
+    dtype
+        Floating dtype of the filters.
+
+    Returns
+    -------
+        DCT basis filters of shape ``(prod(kernel_size), *kernel_size)``.
+    """
+    if len(kernel_size) == 0:
+        raise ValueError('kernel_size must contain at least one dimension.')
+
+    if any(n <= 0 for n in kernel_size):
+        raise ValueError('All dimensions in kernel_size must be positive.')
+
+    bases = [dct_matrix(n, dtype=dtype) for n in kernel_size]
+
+    filters = reduce(torch.kron, bases)
+    return filters.reshape(math.prod(kernel_size), *kernel_size)
+
+
+def fft_filters(
+    kernel_size: tuple[int, ...],
+    dtype: torch.dtype = torch.complex64,
+) -> torch.Tensor:
+    r"""Create the complex Fourier modes of an N-dimensional patch.
+
+    For spatial shape :math:`(s_1,\ldots,s_d)` and :math:`N=\prod_j s_j`,
+    the filter indexed by :math:`(k_1,\ldots,k_d)` is
+
+    .. math::
+
+        h_{k_1,\ldots,k_d}[m_1,\ldots,m_d]
+            = N^{-1/2}\exp\!\left(2\pi\mathrm{i}\sum_{j=1}^d
+                                   \frac{k_jm_j}{s_j}\right).
+
+    These are positive-exponent (inverse-DFT) modes. Their Hermitian inner
+    products with a patch give its orthonormal forward-DFT coefficients.
+    Frequency indices use FFT order, with the last axis varying fastest;
+    the first filter is constant. Spatial indices start at zero, without shifting.
+
+    Parameters
+    ----------
+    kernel_size
+        Spatial shape of the Fourier filters, e.g. ``(7, 7)``
+        or ``(5, 7, 9)``.
+    dtype
+        Complex data type of the filters.
+
+    Returns
+    -------
+        Fourier basis filters of shape ``(prod(kernel_size), *kernel_size)``.
+    """
+    n_filters = math.prod(kernel_size)
+
+    basis = torch.eye(
+        n_filters,
+        dtype=dtype,
+    ).reshape(n_filters, *kernel_size)
+
+    filters = torch.fft.ifftn(
+        basis,
+        dim=tuple(range(1, len(kernel_size) + 1)),
+        norm='ortho',
+    )
+
+    return filters
