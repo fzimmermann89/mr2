@@ -79,7 +79,8 @@ def dcf_pipe(
         tuple[int] | tuple[int, int] | tuple[int, int, int],
         tuple(max(32, ceil(oversampling * size)) for size in sizes),
     )
-    points = (traj.flatten(1) * traj.new_tensor([2 * torch.pi / size for size in sizes])[:, None]).contiguous()
+    points = traj.flatten(1) * traj.new_tensor([2 * torch.pi / size for size in sizes])[:, None]
+    points = ((points + torch.pi).remainder(2 * torch.pi) - torch.pi).contiguous()
     options = {'eps': 1e-6, 'upsampfac': 2.0, 'modeord': 0}
     options['gpu_spreadinterponly' if traj.is_cuda else 'spreadinterponly'] = 1
     weight = torch.ones(points.shape[-1], dtype=traj.dtype, device=traj.device)

@@ -113,3 +113,11 @@ def test_invalid_input(k: torch.Tensor, sizes: tuple[int], iterations: int, over
     """Reject unsupported geometry and invalid iteration settings."""
     with pytest.raises(ValueError):
         dcf_pipe(k, sizes, iterations, oversampling)
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+def test_periodic_coordinates(device: str) -> None:
+    """Adding encoded periods preserves DCF even outside older backend bounds."""
+    k = torch.tensor([[-16.0, -5.25, 0.0, 3.5, 15.0]], dtype=torch.float64, device=device)
+    shifts = k.new_tensor([[-4, 3, 0, 5, -3]]) * 32
+    torch.testing.assert_close(dcf_pipe(k + shifts, (32,)), dcf_pipe(k, (32,)))

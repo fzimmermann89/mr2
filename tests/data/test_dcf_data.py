@@ -181,3 +181,33 @@ def test_dcf_pipe_coil_axis() -> None:
     k = torch.arange(8.0).reshape(1, 2, 1, 1, 4)
     with pytest.raises(ValueError, match='coil'):
         DcfData.from_traj_pipe(KTrajectory(k, k, k), SpatialDimension(8, 8, 8))
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+def test_dcf_pipe_batch_constant_directions(device: str) -> None:
+    """Unrelated batch entries must not change active directions or normalization."""
+    kx = torch.arange(-4, 4, dtype=torch.float32, device=device).reshape(1, 1, 1, 1, 8)
+    ky = torch.cat((torch.zeros_like(kx), kx))
+    kz = torch.zeros_like(kx)
+    sizes = SpatialDimension(1, 8, 8)
+    batched = DcfData.from_traj_pipe(KTrajectory(kz, ky, kx), sizes).data
+    for index in range(2):
+        single = DcfData.from_traj_pipe(KTrajectory(kz, ky[index : index + 1], kx), sizes).data
+        torch.testing.assert_close(batched[index : index + 1], single)
+
+
+@pytest.mark.parametrize('varying', [False, True])
+@pytest.mark.parametrize('invalid', ['nan_coordinate', 'iterations', 'oversampling', 'encoding'])
+def test_dcf_pipe_constant_input_validation(varying: bool, invalid: str) -> None:
+    """Constant directions and singleton geometries must not bypass input validation."""
+    zero = torch.zeros(1, 1, 1, 1, 1)
+    kz = torch.full_like(zero, float('nan')) if invalid == 'nan_coordinate' else zero
+    kx = torch.arange(8.0).reshape(1, 1, 1, 1, 8) if varying else zero
+    traj = KTrajectory(kz, zero, kx, repeat_detection_tolerance=None)
+    with pytest.raises(ValueError):
+        DcfData.from_traj_pipe(
+            traj,
+            SpatialDimension(0 if invalid == 'encoding' else 1, 1, 8),
+            n_iterations=0 if invalid == 'iterations' else 10,
+            oversampling=0.5 if invalid == 'oversampling' else 2.0,
+        )
