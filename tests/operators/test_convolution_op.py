@@ -15,6 +15,7 @@ from tests import (
 )
 
 
+@pytest.mark.parametrize('correlation', [False, True])
 @pytest.mark.parametrize('n_dim', [1, 2, 3])
 @pytest.mark.parametrize('pad_mode', ['constant', 'circular', 'reflect', 'replicate'])
 @pytest.mark.parametrize(
@@ -27,6 +28,7 @@ from tests import (
     ],
 )
 def test_forward_and_adjoint(
+    correlation: bool,
     n_dim: int,
     pad_mode: Literal['constant', 'circular', 'reflect', 'replicate'],
     input_dtype: torch.dtype,
@@ -37,43 +39,46 @@ def test_forward_and_adjoint(
     x = rng.rand_tensor((2, 2, *[4, 5, 6][:n_dim]), dtype=input_dtype)
     kernel_size = (3, 1, 3)[:n_dim]
     kernel = rng.rand_tensor((3, 2, *kernel_size), dtype=kernel_dtype)
-    op = ConvolutionOp(kernel, pad_mode=pad_mode)
+    op = ConvolutionOp(kernel, correlation=correlation, pad_mode=pad_mode)
     padding = tuple(p for size in reversed(kernel_size) for p in (size // 2, size // 2))
     # PyTorch has batch then channels, whereas the operator defaults to channels then batch.
     padded = functional.pad(x.movedim(0, 1), padding, mode=pad_mode)
     conv = (functional.conv1d, functional.conv2d, functional.conv3d)[n_dim - 1]
     dtype = torch.promote_types(input_dtype, kernel_dtype)
-    expected = conv(padded.to(dtype), kernel.to(dtype).flip(tuple(range(2, kernel.ndim)))).movedim(1, 0)
+    weight = kernel if correlation else kernel.flip(tuple(range(2, kernel.ndim)))
+    expected = conv(padded.to(dtype), weight.to(dtype)).movedim(1, 0)
     torch.testing.assert_close(op(x)[0], expected)
     # A complex filter bank acts on a complex domain, including real-valued images.
     v = rng.rand_tensor(expected.shape, dtype=expected.dtype)
     dotproduct_adjointness_test(op, x.to(dtype), v, relative_tolerance=1e-12, absolute_tolerance=1e-12)
 
 
+@pytest.mark.parametrize('correlation', [False, True])
 @pytest.mark.parametrize('pad_mode', ['constant', 'reflect'])
-def test_autodiff(pad_mode: Literal['constant', 'reflect']) -> None:
+def test_autodiff(correlation: bool, pad_mode: Literal['constant', 'reflect']) -> None:
     """Forward and reverse differentiation respect the explicit Hermitian adjoint."""
     rng = RandomGenerator(seed=0)
-    op = ConvolutionOp(rng.complex128_tensor((3, 2, 3, 3)), pad_mode=pad_mode)
+    op = ConvolutionOp(rng.complex128_tensor((3, 2, 3, 3)), correlation=correlation, pad_mode=pad_mode)
     x = rng.complex128_tensor((2, 1, 4, 5))
     y = rng.complex128_tensor((3, 1, 4, 5))
     gradient_of_linear_operator_test(op, x, y)
     forward_mode_autodiff_of_linear_operator_test(op, x, y)
 
 
+@pytest.mark.parametrize('correlation', [False, True])
 @pytest.mark.parametrize('view', [False, True])
 @pytest.mark.parametrize('pad_mode', ['constant', 'reflect'])
-def test_kernel_gradient(view: bool, pad_mode: Literal['constant', 'reflect']) -> None:
+def test_kernel_gradient(correlation: bool, view: bool, pad_mode: Literal['constant', 'reflect']) -> None:
     """A Parameter or non-leaf view receives correct gradients through forward and adjoint."""
     rng = RandomGenerator(seed=0)
     parameter = torch.nn.Parameter(rng.complex128_tensor((2, 3, 3) if view else (2, 1, 3, 3)))
     kernel = parameter[:, None] if view else parameter
-    op = ConvolutionOp(kernel, pad_mode=pad_mode)
+    op = ConvolutionOp(kernel, correlation=correlation, pad_mode=pad_mode)
     x = rng.complex128_tensor((1, 1, 4, 5))
     y = rng.complex128_tensor((2, 1, 4, 5))
     reference_input = x.movedim(0, 1).detach().requires_grad_()
     reference_forward = functional.conv2d(
-        functional.pad(reference_input, (1, 1, 1, 1), mode=pad_mode), kernel.flip((-2, -1))
+        functional.pad(reference_input, (1, 1, 1, 1), mode=pad_mode), kernel if correlation else kernel.flip((-2, -1))
     )
     (reference_adjoint,) = torch.autograd.grad(
         reference_forward, reference_input, grad_outputs=y.movedim(0, 1), create_graph=True
@@ -105,12 +110,20 @@ def test_axis_layout(n_dim: int) -> None:
     dotproduct_adjointness_test(op, permuted, y)
 
 
+def test_default_correlation() -> None:
+    """The default matches PyTorch cross-correlation with an asymmetric kernel."""
+    kernel = torch.tensor([[[1.0, 2.0, 3.0]]])
+    x = torch.arange(5.0).reshape(1, 5)
+    expected = functional.conv1d(functional.pad(x[None], (1, 1), mode='circular'), kernel)[0]
+    torch.testing.assert_close(ConvolutionOp(kernel)(x)[0], expected)
+
+
 def test_four_spatial_dimensions() -> None:
     """The backend also supports more than three spatial dimensions."""
     rng = RandomGenerator(seed=0)
     x = rng.complex128_tensor((1, 2, 4, 3, 2, 2))
     kernel = torch.tensor([1, 2, -3j], dtype=x.dtype).reshape(1, 1, 3, 1, 1, 1)
-    op = ConvolutionOp(kernel)
+    op = ConvolutionOp(kernel, correlation=False)
     expected = x.roll(-1, dims=2) + 2 * x - 3j * x.roll(1, dims=2)
     torch.testing.assert_close(op(x)[0], expected)
     dotproduct_adjointness_test(op, x, rng.complex128_tensor(x.shape))
@@ -124,8 +137,8 @@ def test_dictionary_compositions(pad_mode: Literal['constant', 'circular', 'refl
     x = rng.complex128_tensor((2, 4, 5))
     codes = rng.complex128_tensor((3, *x.shape))
     insert_channel = RearrangeOp('... -> 1 ...')
-    analysis = ConvolutionOp(kernel[:, None], pad_mode=pad_mode) @ insert_channel
-    synthesis = insert_channel.H @ ConvolutionOp(kernel[None], pad_mode=pad_mode)
+    analysis = ConvolutionOp(kernel[:, None], correlation=False, pad_mode=pad_mode) @ insert_channel
+    synthesis = insert_channel.H @ ConvolutionOp(kernel[None], correlation=False, pad_mode=pad_mode)
     padded_image = functional.pad(x[:, None], (1, 1, 1, 1), mode=pad_mode)
     expected_analysis = functional.conv2d(padded_image, kernel[:, None].flip((-2, -1))).movedim(1, 0)
     padded_codes = functional.pad(codes.movedim(0, 1), (1, 1, 1, 1), mode=pad_mode)
@@ -158,15 +171,17 @@ def test_tensor_registration(registration: str) -> None:
     assert op(torch.ones(1, 5, dtype=torch.float64))[0].dtype == torch.float64
 
 
-def test_parameter_update() -> None:
+@pytest.mark.parametrize('correlation', [False, True])
+def test_parameter_update(correlation: bool) -> None:
     """Forward and adjoint read the current kernel after each optimizer update."""
     kernel = torch.nn.Parameter(torch.tensor([[[1.0, 2.0, 3.0]]], dtype=torch.float64))
-    op = ConvolutionOp(kernel)
+    op = ConvolutionOp(kernel, correlation=correlation)
     optimizer = torch.optim.SGD(op.parameters(), lr=0.01)
     x = torch.arange(5, dtype=kernel.dtype).reshape(1, 5)
     for _ in range(2):
         padded = functional.pad(x[None], (1, 1), mode='circular')
-        expected = functional.conv1d(padded, kernel.flip((-1,))).squeeze(0)
+        weight = kernel if correlation else kernel.flip((-1,))
+        expected = functional.conv1d(padded, weight).squeeze(0)
         torch.testing.assert_close(op(x)[0], expected)
         dotproduct_adjointness_test(op, x, x)
         optimizer.zero_grad()
