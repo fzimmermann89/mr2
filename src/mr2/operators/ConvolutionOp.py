@@ -13,22 +13,55 @@ from mr2.utils import normalize_index, normalize_indices
 class ConvolutionOp(LinearOperator):
     r"""Apply an N-dimensional convolution filter bank.
 
-    Let :math:`k_{oi}[m]` be the kernel, :math:`s` its spatial size,
-    :math:`p=(s-1)/2`, and :math:`P` symmetric padding by :math:`p`.
-    For output indices :math:`n\in\Omega`, the discrete forward and Hermitian
-    adjoint are
+    For input channels :math:`x_1,\ldots,x_I` and convolutional filters
+    :math:`k_{oi}`, the operator is defined by
 
     .. math::
 
-        (Cx)_o[n] &= \sum_i\sum_{0\le m<s} k_{oi}[m]\,(Px)_i[n+s-1-m], \\
-        (C^H y)_i &= (P^H z)_i, \qquad
-        z_i[t] = \sum_o\sum_{\substack{n\in\Omega,\,0\le m<s\\n+s-1-m=t}}
-                     \overline{k_{oi}[m]}\,y_o[n].
+        Cx = \left[\sum_{i=1}^I k_{1i}\ast x_i,\ldots,
+                    \sum_{i=1}^I k_{Oi}\ast x_i\right]^T.
 
-    Indices and inequalities are componentwise over the axes in ``dim``;
-    other axes are batch axes. Spatial sizes are unchanged. :math:`P^H` crops
-    zero padding or sums contributions from repeated boundary samples for
-    circular, reflect, and replicate padding. The adjoint is not an inverse.
+    One input channel gives an analysis filter bank; one output channel sums
+    filtered coefficient channels as a synthesis filter bank.
+    For complex filters and inputs, convolution is complex-linear:
+
+    .. math::
+
+        k\ast x = \operatorname{Re}(k)\ast\operatorname{Re}(x)
+                  -\operatorname{Im}(k)\ast\operatorname{Im}(x)
+                  +\mathrm{i}\big(\operatorname{Re}(k)\ast\operatorname{Im}(x)
+                  +\operatorname{Im}(k)\ast\operatorname{Re}(x)\big).
+
+    Thus, a real filter acts separately on the real and imaginary parts.
+    The forward operation does not conjugate the kernel.
+
+    More precisely, let :math:`s` be the spatial kernel size,
+    :math:`p=(s-1)/2`, and :math:`E` extend each input channel by :math:`p`
+    samples on both sides according to ``pad_mode``, retaining the original
+    spatial coordinates. For output indices :math:`n\in\Omega`,
+
+    .. math::
+
+        (Cx)_o[n] = \sum_{i=1}^I\sum_{0\le m<s}
+                     k_{oi}[m]\,(Ex_i)[n+p-m].
+
+    This is centered discrete convolution. Indices and inequalities are
+    componentwise over the axes in ``dim``; other nonchannel axes are batch
+    axes. Spatial sizes are unchanged.
+
+    Writing :math:`\widetilde y` for :math:`y` extended by zero outside
+    :math:`\Omega`, the Hermitian adjoint is
+
+    .. math::
+
+        (C^H y)_i &= E^H z_i, \\
+        z_i[t] &= \sum_{o=1}^O\sum_{0\le m<s}
+                    \overline{k_{oi}[m]}\,\widetilde y_o[t-p+m].
+
+    Here :math:`t` ranges over the extended input domain. :math:`E^H` crops
+    constant zero padding or sums contributions from repeated boundary
+    samples for circular, reflect, and replicate padding. The adjoint is
+    generally not an inverse.
     """
 
     def __init__(
