@@ -2,7 +2,6 @@
 
 import copy
 import datetime
-import math
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from importlib.metadata import version
@@ -39,6 +38,7 @@ from mr2.data.Rotation import Rotation
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.data.traj_calculators.KTrajectoryCalculator import KTrajectoryCalculator
 from mr2.data.traj_calculators.KTrajectoryIsmrmrd import KTrajectoryIsmrmrd
+from mr2.utils.filters import apodization_window
 from mr2.utils.reshape import normalize_index, normalize_indices
 from mr2.utils.summarize import summarize_object
 from mr2.utils.typing import FileOrPath
@@ -629,10 +629,10 @@ class KData(Dataclass):
             header's encoding matrix sizes, independent of acquired sample count.
             All widths must be finite and positive.
         window
-            ``'hann'`` uses ``(1 + cos(2*pi*k/width)) / 2`` within
-            ``abs(k) < width/2`` and zero outside. Thus width is the full support.
-            ``'gaussian'`` uses ``exp(-4*log(2)*(k/width)**2)``: width is its
-            full width at half maximum, with no hard cutoff.
+            ``'hann'`` has compact support of the specified width.
+            ``'gaussian'`` uses width as its full width at half maximum,
+            with no hard cutoff. See :func:`mr2.utils.filters.apodization_window`
+            for the window formulas.
         radial
             If False, multiply the windows along kz, ky and kx (separable).
             If True, evaluate one window at the radius formed from coordinates
@@ -644,8 +644,6 @@ class KData(Dataclass):
             Apodized copy with the same data shape, dtype and device.
             Density compensation is not applied or modified.
         """
-        if window not in ('hann', 'gaussian'):
-            raise ValueError("window must be 'hann' or 'gaussian'.")
         widths: tuple[float, float, float]
         if width is None:
             widths = self.header.encoding_matrix.zyx
@@ -653,24 +651,11 @@ class KData(Dataclass):
             widths = width.zyx
         else:
             widths = (width, width, width)
-        if any(not math.isfinite(value) or value <= 0 for value in widths):
-            raise ValueError('width must be finite and positive in every direction.')
-
-        weight = torch.ones((), dtype=self.data.real.dtype, device=self.data.device)
-        radius_squared = torch.zeros_like(weight)
-        for coordinate, axis_width in zip((self.traj.kz, self.traj.ky, self.traj.kx), widths, strict=True):
-            normalized = coordinate.to(device=self.data.device, dtype=self.data.real.dtype) / (axis_width / 2)
-            if radial or window == 'gaussian':
-                radius_squared = radius_squared + normalized.square()
-            else:
-                weight = weight * torch.where(normalized.abs() < 1, (1 + torch.cos(torch.pi * normalized)) / 2, 0)
-        if window == 'gaussian':
-            weight = torch.exp(-math.log(2) * radius_squared)
-        elif radial:
-            at_dc = radius_squared == 0
-            radius = torch.where(at_dc, 1, radius_squared).sqrt()
-            weight = torch.where(radius < 1, (1 + torch.cos(torch.pi * radius)) / 2, 0)
-            weight = torch.where(at_dc, 1, weight)
+        coordinates = tuple(
+            coordinate.to(device=self.data.device, dtype=self.data.real.dtype)
+            for coordinate in (self.traj.kz, self.traj.ky, self.traj.kx)
+        )
+        weight = apodization_window(coordinates, widths, window=window, radial=radial)
         # Avoid constructor repeat reduction, which can discard small sample differences.
         result = copy.copy(self)
         result.header = self.header.clone()

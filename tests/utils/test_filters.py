@@ -3,7 +3,7 @@
 import pytest
 import torch
 from einops import repeat
-from mr2.utils.filters import filter_separable, gaussian_filter, uniform_filter
+from mr2.utils.filters import apodization_window, filter_separable, gaussian_filter, uniform_filter
 
 
 @pytest.fixture
@@ -149,3 +149,17 @@ def test_uniform_invalid_width(data):
         uniform_filter(data, width=2)
     with pytest.raises(ValueError, match='length'):
         uniform_filter(data, width=(3.0, 3.0))  # type: ignore[arg-type]
+
+
+def test_apodization_window_continuous_coordinates() -> None:
+    """A one-dimensional window supports fractional coordinates without a data object."""
+    coordinates = torch.tensor([-2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0], dtype=torch.float64)
+    expected = torch.tensor([0.0, 0.5, (2 + 2**0.5) / 4, 1.0, (2 + 2**0.5) / 4, 0.5, 0.0], dtype=torch.float64)
+    torch.testing.assert_close(apodization_window((coordinates,), (4.0,)), expected)
+
+
+@pytest.mark.parametrize(('coordinates', 'widths'), [((), ()), ((torch.zeros(1),), (1.0, 2.0))])
+def test_apodization_window_invalid_axes(coordinates: tuple[torch.Tensor, ...], widths: tuple[float, ...]) -> None:
+    """Coordinate and width sequences must be nonempty and have matching lengths."""
+    with pytest.raises(ValueError, match='nonempty coordinates and matching length widths'):
+        apodization_window(coordinates, widths)

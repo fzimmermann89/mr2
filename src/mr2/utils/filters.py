@@ -1,5 +1,6 @@
 """Spatial and temporal filters."""
 
+import math
 import warnings
 from collections.abc import Sequence
 from functools import reduce
@@ -167,3 +168,59 @@ def uniform_filter(
     kernels = tuple([torch.ones(width, device=x.device) / width for width in width])
     x_filtered = filter_separable(x, kernels, dim, pad_mode, pad_value)
     return x_filtered
+
+
+def apodization_window(
+    coordinates: Sequence[torch.Tensor],
+    widths: Sequence[float],
+    *,
+    window: Literal['hann', 'gaussian'] = 'hann',
+    radial: bool = False,
+) -> torch.Tensor:
+    """Evaluate a centered window at continuous coordinates.
+
+    Parameters
+    ----------
+    coordinates
+        Nonempty sequence of broadcastable real floating-point coordinate tensors
+        with the same dtype and device, one per spatial direction.
+    widths
+        Finite positive full widths in the same units as the coordinates.
+        Must have the same length as coordinates. For Hann, this is the support
+        width; for Gaussian, the full width at half maximum.
+    window
+        ``'hann'`` evaluates ``(1 + cos(2*pi*k/width)) / 2`` inside
+        ``abs(k) < width/2`` and zero outside. ``'gaussian'`` evaluates
+        ``exp(-4*log(2)*(k/width)**2)`` without a hard cutoff.
+    radial
+        Evaluate one window at the radius of the scaled coordinates instead of
+        multiplying per-axis windows. Gaussian weights coincide for both choices.
+
+    Returns
+    -------
+        Real weights with the broadcast coordinate shape, unit gain at the
+        origin and no energy normalization. Radial Hann has zero gradient at DC.
+    """
+    if not coordinates or len(coordinates) != len(widths):
+        raise ValueError('Must provide nonempty coordinates and matching length widths.')
+    if window not in ('hann', 'gaussian'):
+        raise ValueError("window must be 'hann' or 'gaussian'.")
+    if any(not math.isfinite(value) or value <= 0 for value in widths):
+        raise ValueError('width must be finite and positive in every direction.')
+
+    weight = coordinates[0].new_ones(())
+    radius_squared = torch.zeros_like(weight)
+    for coordinate, axis_width in zip(coordinates, widths, strict=True):
+        normalized = coordinate / (axis_width / 2)
+        if radial or window == 'gaussian':
+            radius_squared = radius_squared + normalized.square()
+        else:
+            weight = weight * torch.where(normalized.abs() < 1, (1 + torch.cos(torch.pi * normalized)) / 2, 0)
+    if window == 'gaussian':
+        weight = torch.exp(-math.log(2) * radius_squared)
+    elif radial:
+        at_dc = radius_squared == 0
+        radius = torch.where(at_dc, 1, radius_squared).sqrt()
+        weight = torch.where(radius < 1, (1 + torch.cos(torch.pi * radius)) / 2, 0)
+        weight = torch.where(at_dc, 1, weight)
+    return weight
