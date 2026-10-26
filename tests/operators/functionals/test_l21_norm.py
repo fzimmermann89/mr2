@@ -51,8 +51,8 @@ def test_l21_batches(keepdim: bool, divide_by_n: bool):
         expected_value = expected_value.reshape(2, 1, 1, 1)
     torch.testing.assert_close(f(x + target)[0], expected_value)
     expected = target + x * (1 - sigma * weight / (5 * count))
-    torch.testing.assert_close(f.prox(x + target, sigma)[0], expected)
     prox = f.prox(x + target, sigma)[0]
+    torch.testing.assert_close(prox, expected)
     dual = f.prox_convex_conj((x + target) / sigma, 1 / sigma)[0]
     torch.testing.assert_close(prox + sigma * dual, x + target)
 
@@ -125,6 +125,17 @@ def test_l21_zero_sigma(method: str):
     sigma = torch.tensor([[0.0, 1.0]])
     torch.testing.assert_close(getattr(f, method)(x, 0)[0], x)
     torch.testing.assert_close(getattr(f, method)(x, sigma)[0][:, 0], x[:, 0])
+
+
+@pytest.mark.parametrize(('weight', 'sigma'), [(1.0, 0.0), (0.0, 1.0)])
+def test_l21_zero_threshold_large_target(weight: float, sigma: float):
+    """Zero thresholds preserve the input without subtracting a large target."""
+    x = torch.tensor([[3.0, 5.0], [4.0, 12.0]], requires_grad=True)
+    f = L21Norm(group_dim=0, target=1e8, weight=torch.tensor([[weight, 1.0]]))
+    result = f.prox(x, torch.tensor([[sigma, 1.0]]))[0]
+    torch.testing.assert_close(result[:, 0], x[:, 0], rtol=0, atol=0)
+    gradient = torch.autograd.grad(result[:, 0].sum(), x)[0]
+    torch.testing.assert_close(gradient, torch.tensor([[1.0, 0.0], [1.0, 0.0]]))
 
 
 def test_l21_zero_weight_and_groups():

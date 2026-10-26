@@ -17,10 +17,10 @@ class L21Norm(ElementaryProximableFunctional):
     and n is the number of outer groups for a mean, or one for a sum.
 
     The inner L2 norm groups components along `group_dim`. The outer sum (or mean)
-    reduces the group norms along `dim`; remaining axes are batch axes. Weights
-    act through their magnitude, just as in `L1Norm`, without a square root.
+    reduces the group norms along `dim`; remaining axes are batch axes. Only
+    ``abs(weight)`` enters the functional.
     Forward evaluation supports broadcasting that expands the input. Proximal
-    mappings require target and weight to broadcast without expanding its shape.
+    mappings require target and weight to broadcast without expanding the input shape.
     """
 
     def __init__(
@@ -131,8 +131,7 @@ class L21Norm(ElementaryProximableFunctional):
         denominator = torch.where(norm > 0, norm, 1)
         factor = torch.where(norm > threshold, 1 - threshold / denominator, 0)
         # Zero steps and zero weights are the identity, including at zero groups.
-        factor = torch.where(threshold == 0, 1, factor)
-        return (self.target + diff * factor,)
+        return (torch.where(threshold == 0, x, self.target + diff * factor),)
 
     def prox_convex_conj(self, x: torch.Tensor, sigma: torch.Tensor | float = 1.0) -> tuple[torch.Tensor]:
         """Project ``x - sigma * target`` onto balls of radius ``abs(weight) / n``.
