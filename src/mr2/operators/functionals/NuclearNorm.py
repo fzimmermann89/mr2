@@ -85,7 +85,12 @@ class NuclearNorm(ElementaryProximableFunctional):
         return super().__call__(x)
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor]:
-        """Apply the nuclear norm; prefer calling the instance directly."""
+        """Apply forward of NuclearNorm.
+
+        .. note::
+            Prefer calling the instance of the NuclearNorm as ``operator(x)`` over directly calling this method.
+            See this PyTorch `discussion <https://discuss.pytorch.org/t/is-model-forward-x-the-same-as-model-call-x/33460/3>`_.
+        """
         weight = self._divide_by_n(self._matrix_parameter(self.weight.abs(), x), x.shape)
         value = torch.linalg.svdvals(x - self._target(x)).sum(-1, keepdim=True).unsqueeze(-1) * weight
         return (value if self.keepdim else value[..., 0, 0],)
