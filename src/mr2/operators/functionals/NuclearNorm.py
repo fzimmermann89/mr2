@@ -21,6 +21,8 @@ class NuclearNorm(ElementaryProximableFunctional):
 
     Notes
     -----
+    SVD operands must have dtype float32, float64, complex64 or complex128;
+    float16 and bfloat16 are unsupported.
     Proximal maps use a reduced SVD. Their gradients inherit PyTorch SVD
     limitations at repeated or zero singular values; finite gradients there
     are not guaranteed, even for zero steps or weights. Forward uses
