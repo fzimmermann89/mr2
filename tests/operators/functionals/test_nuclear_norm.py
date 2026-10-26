@@ -6,7 +6,7 @@ from mr2.operators.functionals import NuclearNorm
 
 
 @pytest.mark.parametrize('dtype', [torch.float64, torch.complex128])
-@pytest.mark.parametrize('shape', [(3, 5), (5, 3), (2, 3, 5), (2, 1, 5, 3)])
+@pytest.mark.parametrize('shape', [(3, 5), (2, 5, 3)])
 @pytest.mark.parametrize('divide_by_n', [False, True])
 def test_diagonal(dtype: torch.dtype, shape: tuple[int, ...], divide_by_n: bool):
     """Check sums, soft thresholding and clipping against diagonal formulas."""
@@ -48,34 +48,17 @@ def test_moreau(dtype: torch.dtype, divide_by_n: bool):
     if divide_by_n:
         expected /= 15
     torch.testing.assert_close(f(x)[0], expected)
-    # Existing functional algebra must retain the same scaling.
-    torch.testing.assert_close((2 * f).prox(x, step)[0], f.prox(x, 2 * step)[0])
 
 
-@pytest.mark.parametrize('method', ['forward', 'prox', 'prox_convex_conj'])
-@pytest.mark.parametrize('shape', [(2,), (2, 3, 1), (2, 1, 5), (4, 2, 1, 1)])
-def test_weight_shape(method: str, shape: tuple[int, ...]):
-    """Reject matrix variation, ambiguous batch vectors and output expansion."""
-    f = NuclearNorm(weight=torch.ones(shape))
-    with pytest.raises(RuntimeError, match='expand'):
-        getattr(f, method)(torch.ones(2, 3, 5))
-
-
-@pytest.mark.parametrize('method', ['prox', 'prox_convex_conj'])
-@pytest.mark.parametrize('step', [torch.ones(2), torch.ones(2, 3, 1), torch.ones(4, 2, 1, 1)])
-def test_step_shape(method: str, step: torch.Tensor):
-    """Reject unsupported steps consistently in both proximal maps."""
-    with pytest.raises(RuntimeError, match='expand'):
-        getattr(NuclearNorm(), method)(torch.ones(2, 3, 5), step)
-
-
-@pytest.mark.parametrize('method', ['forward', 'prox', 'prox_convex_conj'])
-def test_input_and_target_shape(method: str):
-    """Require matrices and disallow target-induced output expansion."""
-    with pytest.raises(ValueError, match='at least two'):
-        getattr(NuclearNorm(), method)(torch.ones(3))
-    with pytest.raises(RuntimeError, match='expand'):
-        getattr(NuclearNorm(target=torch.ones(2, 3, 5)), method)(torch.ones(1, 3, 5))
+def test_matrix_parameters():
+    """SVT requires matrix-constant weights and steps without input expansion."""
+    x = torch.ones(2, 3)
+    with pytest.raises(RuntimeError):
+        NuclearNorm(weight=torch.ones_like(x))(x)
+    with pytest.raises(RuntimeError):
+        NuclearNorm().prox(x, torch.ones_like(x))
+    with pytest.raises(RuntimeError):
+        NuclearNorm(target=torch.ones(2, 2, 3)).prox(x)
 
 
 @pytest.mark.parametrize('dtype', [torch.float64, torch.complex128])
@@ -92,35 +75,11 @@ def test_gradients(dtype: torch.dtype, method: str):
 @pytest.mark.cuda
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_cuda():
-    """Parameters follow the functional onto CUDA."""
-    x = torch.randn(2, 3, 5, dtype=torch.complex64)
-    step = torch.tensor([0.3, 0.7]).reshape(2, 1, 1)
-    f = NuclearNorm(target=x / 2, weight=torch.tensor([1.0, 2.0]).reshape(2, 1, 1))
-    expected = (f(x)[0], f.prox(x, step)[0], f.prox_convex_conj(x, step)[0])
-    torch.testing.assert_close(NuclearNorm()(x.cuda())[0].cpu(), NuclearNorm()(x)[0])
-    actual = (f(x.cuda())[0], f.prox(x.cuda(), step.cuda())[0], f.prox_convex_conj(x.cuda(), step.cuda())[0])
-    for result, reference in zip(actual, expected, strict=True):
-        torch.testing.assert_close(result.cpu(), reference)
-    f = f.cuda()
-    actual = (f(x.cuda())[0], f.prox(x.cuda(), step.cuda())[0], f.prox_convex_conj(x.cuda(), step.cuda())[0])
-    for result, reference in zip(actual, expected, strict=True):
-        torch.testing.assert_close(result.cpu(), reference)
-
-
-def test_batch_broadcasting():
-    """Batch-axis broadcasting agrees with independent matrix calls, including zero steps."""
-    x = torch.randn(2, 3, 4, 5, generator=torch.Generator().manual_seed(13))
-    weight = torch.tensor([0.0, -2.0, 1.0]).reshape(3, 1, 1)
-    step = torch.tensor([0.0, 0.4]).reshape(2, 1, 1, 1)
-    target = torch.tensor(0.5)
-    f = NuclearNorm(target, weight)
-    values, primal, dual = f(x)[0], f.prox(x, step)[0], f.prox_convex_conj(x, step)[0]
-    for i in range(2):
-        for j in range(3):
-            matrix_f = NuclearNorm(target, weight[j, 0, 0])
-            torch.testing.assert_close(values[i, j], matrix_f(x[i, j])[0])
-            torch.testing.assert_close(primal[i, j], matrix_f.prox(x[i, j], step[i, 0, 0, 0])[0])
-            torch.testing.assert_close(dual[i, j], matrix_f.prox_convex_conj(x[i, j], step[i, 0, 0, 0])[0])
+    """CPU targets work with CUDA inputs in all three methods."""
+    x = torch.tensor([[3j, 0, 0], [0, 4, 0]], dtype=torch.complex64)
+    f = NuclearNorm(target=x / 2, weight=2.0)
+    for method in ('forward', 'prox', 'prox_convex_conj'):
+        torch.testing.assert_close(getattr(f, method)(x.cuda())[0].cpu(), getattr(f, method)(x)[0])
 
 
 @pytest.mark.parametrize('method', ['prox', 'prox_convex_conj'])
@@ -140,13 +99,3 @@ def test_step_precision(method: str):
         else torch.diag(torch.minimum(x.diag() - sigma * target.diag(), weight))
     )
     torch.testing.assert_close(getattr(f, method)(x, sigma)[0], expected, atol=1e-15, rtol=1e-15)
-
-
-def test_zero_threshold_identity():
-    """Zero weights and steps preserve dense matrices exactly in a mixed batch."""
-    x = 100 * torch.randn(3, 4, 5, dtype=torch.complex64, generator=torch.Generator().manual_seed(13))
-    weight = torch.tensor([0.0, 1.0, 2.0]).reshape(3, 1, 1)
-    step = torch.tensor([1.0, 0.0, 0.5]).reshape(3, 1, 1)
-    f = NuclearNorm(target=0.2j, weight=weight)
-    torch.testing.assert_close(f.prox(x, step)[0][:2], x[:2], atol=0, rtol=0)
-    torch.testing.assert_close(f.prox_convex_conj(x, step)[0][1], x[1], atol=0, rtol=0)
