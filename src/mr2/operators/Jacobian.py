@@ -18,7 +18,7 @@ class Jacobian(LinearOperator):
     Notes
     -----
     Convert this operator to the desired device and dtype before evaluating it.
-    Its manually cached VJP function and value at :math:`x_0` are not invalidated by conversions.
+    Otherwise, adjoint evaluations and the cached value at :math:`x_0` can still use the original device and dtype.
     """
 
     def __init__(self, operator: Operator[torch.Tensor, tuple[torch.Tensor]], *x0: torch.Tensor):

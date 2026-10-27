@@ -110,7 +110,7 @@ def test_fourier_op_cached_gram_after_to(
     cached_gram = operator.gram
     assert operator.gram is cached_gram
     operator.to(device=device, dtype=dtype)
-    image = image.to(device=device, dtype=torch.complex128 if dtype == torch.float64 else torch.complex64)
+    image = image.to(device=device, dtype=dtype.to_complex())
     inputs = (image, image) if as_matrix else (image,)
 
     actual = operator.gram(*inputs)
@@ -119,6 +119,7 @@ def test_fourier_op_cached_gram_after_to(
     assert operator.gram is not cached_gram
     assert operator.gram is operator.gram
     assert all(buffer.device.type == device for buffer in operator.gram.buffers())
+    # Cartesian masks are always constructed in float32, regardless of the operator's dtype.
     if trajectory_type == 'non-uniform':
         assert all(buffer.dtype == dtype for buffer in operator.gram.buffers() if buffer.is_floating_point())
 
