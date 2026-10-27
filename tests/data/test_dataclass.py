@@ -5,6 +5,7 @@ from dataclasses import field
 from pathlib import Path
 
 import einops
+import h5py
 import pytest
 import torch
 from mr2.data import Dataclass, IData, KData, Rotation, SpatialDimension
@@ -663,3 +664,22 @@ def test_dataclass_from_mr2_wrong_type_raises(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match='does not match requested type'):
         B.from_file(filepath)
+
+
+@pytest.mark.parametrize(('module_name', 'class_name'), [('os', 'system'), ('mr2.utils', 'RandomGenerator')])
+@pytest.mark.parametrize('stored_type', ['group', 'enum'])
+def test_mr2_rejects_arbitrary_callables(tmp_path, module_name, class_name, stored_type):
+    """File metadata cannot select arbitrary callables for nested values."""
+    filename = tmp_path / 'invalid.mr2'
+    A().save_as_mr2(filename)
+    with h5py.File(filename, 'a') as file:
+        del file['rotation']
+        if stored_type == 'group':
+            item = file.create_group('rotation')
+        else:
+            item = file.create_dataset('rotation', data='unused')
+            item.attrs['py_type'] = 'enum'
+        item.attrs['py_module'] = module_name
+        item.attrs['class_name'] = class_name
+    with pytest.raises(ValueError, match='Unsupported MR2'):
+        A.from_file(filename)
