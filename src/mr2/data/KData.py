@@ -190,9 +190,14 @@ class KData(Dataclass):
                 'Please open an issue if you need to handle this kind of data.',
                 stacklevel=1,
             )
-            acquisitions = [
-                acq for acq in acquisitions if acq.number_of_samples - acq.discard_pre - acq.discard_post == n_k0
+            keep = [
+                i
+                for i, acq in enumerate(acquisitions)
+                if acq.number_of_samples - acq.discard_pre - acq.discard_post == n_k0
             ]
+            if isinstance(trajectory, KTrajectory) and trajectory.shape[0] == len(acquisitions):
+                trajectory = trajectory[keep]
+            acquisitions = [acquisitions[i] for i in keep]
 
         acq_info, (k0_center, discard_pre) = AcqInfo.from_ismrmrd_acquisitions(
             acquisitions,

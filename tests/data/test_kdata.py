@@ -49,7 +49,7 @@ def test_KData_from_file_discards(tmp_path, discard_pre: int, discard_post: int,
     torch.testing.assert_close(actual.traj.as_tensor(), reference.traj.as_tensor())
 
 
-@pytest.mark.parametrize('trajectory_type', [KTrajectoryCartesian, KTrajectoryIsmrmrd])
+@pytest.mark.parametrize('trajectory_type', [KTrajectoryCartesian, KTrajectoryIsmrmrd, KTrajectory])
 def test_KData_from_file_drops_short_readouts(tmp_path, trajectory_type) -> None:
     """Dropping a short readout also drops its metadata and trajectory."""
     reference_file = tmp_path / 'reference.h5'
@@ -58,7 +58,12 @@ def test_KData_from_file_drops_short_readouts(tmp_path, trajectory_type) -> None
     with ismrmrd.File(reference_file, 'r') as file:
         header = file['dataset'].header
         acquisitions = [acq for acq in file['dataset'].acquisitions[:] if is_image_acquisition(acq)]
-    reference = KData.from_file(reference_file, trajectory_type())
+    reference = KData.from_file(reference_file, KTrajectoryCartesian())
+    trajectory = (
+        KTrajectoryIsmrmrd()(acquisitions, reference.header.encoding_matrix)
+        if trajectory_type is KTrajectory
+        else trajectory_type()
+    )
     short = acquisitions[2]
     short.resize(short.number_of_samples - 2, short.active_channels, short.trajectory_dimensions)
     with ismrmrd.File(mixed_file, 'w') as file:
@@ -66,7 +71,7 @@ def test_KData_from_file_drops_short_readouts(tmp_path, trajectory_type) -> None
         file['dataset'].acquisitions = acquisitions
 
     with pytest.warns(UserWarning, match='Keeping only acquisitions with 8 data samples'):
-        actual = KData.from_file(mixed_file, trajectory_type())
+        actual = KData.from_file(mixed_file, trajectory)
 
     keep = [0, 1, 3, 4, 5, 6, 7]
     torch.testing.assert_close(actual.data, reference.data[..., keep, :])
