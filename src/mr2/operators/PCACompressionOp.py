@@ -48,8 +48,9 @@ class PCACompressionOp(LinearOperator):
         # different compression matrices along the *other dimensions
         correlation = einops.einsum(data.conj(), data, '... joint comp1, ... joint comp2 -> ... comp1 comp2')
         _eigenvalues, v = torch.linalg.eigh(correlation)  # faster then svd if we only care about V
-        # add joint_dim along which the the compression is the same
-        v = repeat(v.conj(), '... comp1 comp2 -> ... joint_dim  comp2 comp1', joint_dim=1)
+        # Forward applies V^T to column samples, equivalent to data @ V for voxel rows.
+        # Add joint_dim along which the compression is the same.
+        v = repeat(v, '... comp1 comp2 -> ... joint_dim  comp2 comp1', joint_dim=1)
         v = v[..., -n_components:, :].flip(-2)  # V is sorted in ascending order
         if rotate:
             v = varimax(v)
