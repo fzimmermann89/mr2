@@ -64,7 +64,7 @@ def test_pgd_solution_fourier_wavelet(stepsize: float, backtrack_factor: float) 
     dim = (-3, -2, -1)
 
     fourier_op = FastFourierOp(dim=dim)
-    wavelet_op = WaveletOp(domain_shape=image_shape, dim=dim)
+    wavelet_op = WaveletOp(domain_shape=image_shape, dim=dim, wavelet_name='haar', level=1)
 
     (kspace,) = fourier_op(image)
 

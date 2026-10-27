@@ -281,7 +281,7 @@ def test_wavelet_types_are_discrete() -> None:
 
 
 @pytest.mark.parametrize('domain_shape', [None, (16, 16)])
-@pytest.mark.parametrize('wavelet_name', ['gaus1', 'mexh', 'morl', 'cgau1', 'shan', 'fbsp', 'cmor'])
+@pytest.mark.parametrize('wavelet_name', ['gaus1', 'mexh', 'morl', 'cgau1', 'shan', 'fbsp', 'cmor'])  # typos: ignore
 def test_wavelet_op_continuous_wavelets(domain_shape: tuple[int, int] | None, wavelet_name: str) -> None:
     """Continuous wavelets fail at construction even with a deferred domain."""
     with pytest.raises(ValueError, match='wavelet'):
