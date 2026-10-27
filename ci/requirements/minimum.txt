@@ -5,6 +5,7 @@ torchvision==0.18.1+cpu
 numpy==1.23.5
 ismrmrd==1.14.2
 h5py==3.8.0
+nibabel==4.0.2
 einops==0.7.0
 pydicom==3.0.1
 pypulseq==1.4.2
