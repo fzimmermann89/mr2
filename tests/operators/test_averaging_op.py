@@ -49,7 +49,10 @@ def test_averageingop_no_domain_size() -> None:
 
 
 @pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
-@pytest.mark.parametrize('group', [[0, 0, 1], (0, 0, 1), [0, -2], [], slice(0, 0), torch.tensor([False, False])])
+@pytest.mark.parametrize(
+    'group',
+    [[0, 0, 1], (0, 0, 1), [0, -2], torch.tensor([0, -2]), [], slice(0, 0), torch.tensor([False, False])],
+)
 def test_averaging_adjoint_invalid_groups(
     group: list[int] | tuple[int, ...] | slice | torch.Tensor, device: str
 ) -> None:
@@ -60,8 +63,13 @@ def test_averaging_adjoint_invalid_groups(
 
 
 @pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
-@pytest.mark.parametrize('group', [(0, 2), [True, False, True], (True, False, True)])
-def test_averaging_adjoint_sequence_group(group: tuple[int, ...] | list[bool], device: str) -> None:
+@pytest.mark.parametrize(
+    'group',
+    [(0, 2), (-3, -1), [True, False, True], (True, False, True), torch.tensor([True, False, True]), slice(0, 3, 2)],
+)
+def test_averaging_adjoint_sequence_group(
+    group: tuple[int, ...] | list[bool] | torch.Tensor | slice, device: str
+) -> None:
     """Sequence groups count the selected entries, including boolean masks."""
     op = AveragingOp(-1, [group], domain_size=3)
     x = torch.tensor([2.0, 3.0, 4.0], device=device)

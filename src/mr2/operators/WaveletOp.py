@@ -237,9 +237,9 @@ class WaveletOp(LinearOperator):
             If the dimensions along which wavelets were calculated (specified
             during initialization) are not unique after normalization.
         NotImplementedError
-            If the wavelet is biorthogonal: reconstruction is not the linear adjoint.
+            If the wavelet is biorthogonal and the level is nonzero: reconstruction is not the linear adjoint.
         """
-        if not Wavelet(self._wavelet_name).orthogonal:
+        if self._level != 0 and not Wavelet(self._wavelet_name).orthogonal:
             raise NotImplementedError('Biorthogonal wavelet reconstruction is not the linear adjoint.')
         if self._domain_shape is None:
             raise ValueError('Adjoint requires to define the domain_shape in init()')

@@ -109,12 +109,19 @@ class AveragingOp(LinearOperator):
         adjoint = x.new_zeros(*x.shape[:dim], self.domain_size, *x.shape[dim + 1 :])
         placeholder = (slice(None),) * dim
         for i, group in enumerate(self.idx):
-            indices = torch.arange(
-                self.domain_size, device=group.device if isinstance(group, torch.Tensor) else x.device
-            )[group,]
-            if indices.numel() == 0 or indices.unique().numel() != indices.numel():
+            if isinstance(group, slice):
+                n = len(range(*group.indices(self.domain_size)))
+            else:
+                indices = torch.as_tensor(group)
+                if indices.dtype == torch.bool:
+                    n = int(indices.sum())
+                else:
+                    n = indices.numel()
+                    indices = torch.where(indices < 0, indices + self.domain_size, indices)
+                    if indices.unique().numel() != n:
+                        raise ValueError('Averaging adjoint requires nonempty groups without repeated indices.')
+            if n == 0:
                 raise ValueError('Averaging adjoint requires nonempty groups without repeated indices.')
-            n = indices.numel()
 
             adjoint[(*placeholder, group)] += (
                 x[(*placeholder, i, None)].expand(*x.shape[:dim], n, *x.shape[dim + 1 :]) / n

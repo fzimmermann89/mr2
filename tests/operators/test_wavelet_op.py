@@ -275,6 +275,21 @@ def test_wavelet_op_biorthogonal_adjoint(wavelet_name: WaveletType, device: str)
         op.H(coefficients)
 
 
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('wavelet_name', ['bior2.2', 'rbio2.2'])
+@pytest.mark.parametrize('dim', [(-1,), (-2, -1), (-3, -2, -1)])
+def test_wavelet_op_biorthogonal_level_zero(wavelet_name: WaveletType, dim: tuple, device: str) -> None:
+    """At explicit level zero no filters are applied, so the adjoint is the identity."""
+    shape = (8,) * len(dim)
+    op = WaveletOp(shape, dim=dim, wavelet_name=wavelet_name, level=0)
+    rng = RandomGenerator(seed=0)
+    image = rng.complex64_tensor(shape).to(device)
+    dual = rng.complex64_tensor((image.numel(),)).to(device)
+    torch.testing.assert_close(op(image)[0], image.flatten())
+    torch.testing.assert_close(op.H(dual)[0], dual.reshape(shape))
+    dotproduct_adjointness_test(op, image, dual)
+
+
 def test_wavelet_types_are_discrete() -> None:
     """Every advertised wavelet is supported by a discrete wavelet transform."""
     assert set(get_args(WaveletType)) <= set(wavelist(kind='discrete'))
