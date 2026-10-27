@@ -11,7 +11,7 @@ import h5py
 import pytest
 import torch
 from einops import repeat
-from mr2.data import KData, KHeader, KNoise, KTrajectory, SpatialDimension
+from mr2.data import KData, KHeader, KNoise, KTrajectory, Rotation, SpatialDimension
 from mr2.data.acq_filters import has_n_coils, is_coil_calibration_acquisition, is_image_acquisition
 from mr2.data.Dataclass import InconsistentDeviceError
 from mr2.data.enums import TrajectoryType
@@ -22,6 +22,60 @@ from mr2.utils import RandomGenerator
 
 from tests import relative_image_difference
 from tests.phantoms import EllipsePhantomTestData
+
+
+@pytest.mark.parametrize('dim', [0, 1, 2, 3, 4, -1, -2, -3, -4, -5])
+@pytest.mark.parametrize('same', [False, True])
+def test_kdata_concatenate_split_broadcast(dim: int, same: bool) -> None:
+    """Concatenation and splitting preserve data, trajectory, and broadcasted metadata."""
+    matrix = SpatialDimension(2, 4, 6)
+    fov = SpatialDimension(0.2, 0.4, 0.6)
+    original = KData(
+        header=KHeader(matrix, matrix, fov, fov),
+        data=RandomGenerator(0).complex64_tensor((4, 2, 2, 4, 6)),
+        traj=KTrajectory(
+            kz=torch.arange(2).reshape(1, 1, 2, 1, 1),
+            ky=torch.arange(4).reshape(1, 1, 1, 4, 1),
+            kx=torch.arange(6).reshape(1, 1, 1, 1, 6),
+        ),
+    )
+    original.header.acq_info.position.x = torch.arange(4).reshape(4, 1, 1, 1, 1).float()
+    other = original.clone()
+    other.data = other.data + 1
+    if not same:
+        other.header.acq_info.orientation = Rotation.from_euler('z', 1.0).reshape(1, 1, 1, 1, 1)
+        other.header.acq_info.position.y = torch.ones(1, 1, 1, 1, 1)
+        other.header.acq_info.idx.repetition = torch.ones(1, 1, 1, 1, 1, dtype=torch.int64)
+
+    joined = original.concatenate(other, dim=dim)
+    expected_shape = list(original.shape)
+    expected_shape[dim] *= 2
+    assert joined.shape == tuple(expected_shape)
+    torch.testing.assert_close(joined.data, torch.cat((original.data, other.data), dim=dim))
+    expected_orientation = torch.cat(
+        [item.header.acq_info.orientation.as_quat().expand(*item.shape, 4) for item in (original, other)],
+        dim=dim % original.ndim,
+    )
+    torch.testing.assert_close(
+        joined.header.acq_info.orientation.as_quat().expand(*joined.shape, 4), expected_orientation
+    )
+    assert joined.header.acq_info.orientation.shape[dim] == (1 if same else expected_shape[dim])
+    for actual, first, second in [
+        (joined.header.acq_info.position.y, original.header.acq_info.position.y, other.header.acq_info.position.y),
+        (
+            joined.header.acq_info.idx.repetition,
+            original.header.acq_info.idx.repetition,
+            other.header.acq_info.idx.repetition,
+        ),
+    ]:
+        expected = torch.cat((first.expand(original.shape), second.expand(other.shape)), dim=dim)
+        torch.testing.assert_close(actual.expand(joined.shape), expected)
+        assert actual.shape[dim] == (1 if same else expected_shape[dim])
+    assert joined.header.recon_matrix == matrix
+    assert joined.header.encoding_matrix == matrix
+    assert joined.split(dim=dim, size=original.shape[dim]) == (original, other)
+    chunks = original.split(dim=dim, size=2)
+    assert chunks[0].concatenate(*chunks[1:], dim=dim) == original
 
 
 def test_KData_from_file(ismrmrd_cart) -> None:

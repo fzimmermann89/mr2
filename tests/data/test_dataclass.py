@@ -7,6 +7,7 @@ import einops
 import pytest
 import torch
 from mr2.data import Dataclass, IData, KData, Rotation, SpatialDimension
+from mr2.data.AcqInfo import AcqInfo
 from mr2.utils import RandomGenerator
 from typing_extensions import Any
 
@@ -345,11 +346,11 @@ def test_dataclass_split() -> None:
     a = A()
 
     split = a.split(dim=0, size=2, overlap=1, dilation=2)
-    # 0 2, 1 3,..., 7,9
-    assert len(split) == 8
+    # The dilated span is 3, so overlap 1 gives stride 2.
+    assert len(split) == 4
     assert split[0].shape == (2, 20)
-    assert split[1] == a[(1, 3), ...]
-    assert split[-1] == a[(7, 9), ...]
+    assert split[1] == a[(2, 4), ...]
+    assert split[-1] == a[(6, 8), ...]
 
     split = a.split(dim=0, size=2, overlap=0, dilation=1)
     # 0 1, 2 3, 4 5, 6 7, 8 9
@@ -379,6 +380,51 @@ def test_dataclass_split_invalid() -> None:
         a.split(dim=-4, size=2, overlap=3)
     with pytest.raises(ValueError):
         a.split(dim=0, size=-2)
+
+
+@pytest.mark.parametrize(
+    ('length', 'size', 'overlap', 'dilation', 'expected'),
+    [
+        (6, 2, 0, 1, [[0, 1], [2, 3], [4, 5]]),
+        (6, 2, 1, 1, [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5]]),
+        (6, 3, 2, 1, [[0, 1, 2], [1, 2, 3], [2, 3, 4], [3, 4, 5]]),
+        (6, 2, 0, 2, [[0, 2], [3, 5]]),
+        (6, 2, 1, 2, [[0, 2], [2, 4]]),
+        (6, 2, -1, 1, [[0, 1], [3, 4]]),
+        (9, 2, -1, 2, [[0, 2], [4, 6]]),
+        (6, 3, 0, 2, [[0, 2, 4]]),
+        (3, 2, 0, 2, [[0, 2]]),
+        (3, 1, 0, 4, [[0], [1], [2]]),
+        (3, 4, 0, 1, []),
+        (0, 2, 0, 1, []),
+    ],
+)
+def test_dataclass_split_windows(length, size, overlap, dilation, expected) -> None:
+    """Splits contain full windows spaced by their dilated span minus overlap."""
+
+    class Sample(Dataclass, auto_reduce_repeats=False):
+        """One tensor to split."""
+
+        data: torch.Tensor
+
+    sample = Sample(torch.arange(length))
+    chunks = sample.split(dim=-1, size=size, overlap=overlap, dilation=dilation)
+    assert [chunk.data.tolist() for chunk in chunks] == expected
+
+
+@pytest.mark.parametrize(
+    ('kwargs', 'message'),
+    [
+        ({'size': 0}, 'Size must be larger than 0'),
+        ({'size': -1, 'overlap': -2}, 'Size must be larger than 0'),
+        ({'size': 2, 'overlap': 2}, 'Overlap must be smaller than size'),
+        ({'size': 2, 'overlap': 3}, 'Overlap must be smaller than size'),
+    ],
+)
+def test_dataclass_split_window_invalid(kwargs, message) -> None:
+    """Reject empty windows and overlap at least as large as the window size."""
+    with pytest.raises(ValueError, match=message):
+        A().split(dim=0, **kwargs)
 
 
 def test_dataclass_stack() -> None:
@@ -471,6 +517,63 @@ def test_dataclass_concatenate_scalar_shape() -> None:
     assert c.spatial_dimension == SpatialDimension(1, 2, 3)
     assert torch.equal(c.data, expected_data)
     assert torch.equal(c.orientation.as_quat(), expected_orientation.as_quat())
+
+
+@pytest.mark.parametrize('dim', [0, 1, -1, -2])
+@pytest.mark.parametrize('same', [False, True])
+def test_dataclass_concatenate_nested_broadcast(dim: int, same: bool) -> None:
+    """Nested fields inherit the parent's extent even with fewer dimensions."""
+
+    class Child(Dataclass):
+        """Broadcasted metadata with a scalar matrix size."""
+
+        value: torch.Tensor
+        position: SpatialDimension[torch.Tensor]
+        matrix: SpatialDimension[int]
+
+    class Parent(Dataclass):
+        """Data supplying the full broadcast shape."""
+
+        data: torch.Tensor
+        child: Child
+
+    a = Parent(
+        torch.arange(12).reshape(3, 4),
+        Child(torch.tensor(1), SpatialDimension(*(torch.tensor([1]) for _ in range(3))), SpatialDimension(1, 2, 3)),
+    )
+    b = a.clone()
+    b.data = b.data + 12
+    b.child.value = torch.tensor(1 if same else 2)
+    b.child.position.x = torch.tensor([1 if same else 2])
+    result = a.concatenate(b, dim=dim)
+    shape = list(a.shape)
+    shape[dim] *= 2
+    assert result.shape == tuple(shape)
+    assert result.child.matrix == a.child.matrix
+    for field_a, field_b, actual in [
+        (a.child.value, b.child.value, result.child.value),
+        (a.child.position.x, b.child.position.x, result.child.position.x),
+    ]:
+        expected = torch.cat((field_a.expand(a.shape), field_b.expand(b.shape)), dim=dim)
+        torch.testing.assert_close(actual.expand(shape), expected)
+        assert actual.shape[dim] == (1 if same else shape[dim])
+
+
+def test_dataclass_equal_nested_spatial_dimension() -> None:
+    """Deep equality reduces tensor comparisons in nested SpatialDimensions."""
+    position = SpatialDimension(*(torch.arange(3).reshape(3, 1, 1, 1, 1) for _ in range(3)))
+    original = AcqInfo(position=position)
+    copy = original.clone()
+    assert original == copy
+    unequal = original != copy
+    assert unequal is False
+    copy.position.x = copy.position.x.expand(3, 1, 1, 2, 1)
+    assert original == copy
+    copy.position.x = copy.position.x + 1
+    assert original != copy
+    copy.position.x = torch.arange(2).reshape(2, 1, 1, 1, 1)
+    copy.position.y = copy.position.z = copy.position.x
+    assert original != copy
 
 
 def test_dataclass_equal() -> None:
