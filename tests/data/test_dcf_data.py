@@ -238,3 +238,24 @@ def test_dcf_constructor_float64(device: str, method: str, geometry: str) -> Non
     assert dcf.data.device == traj.kx.device
     assert (dcf.data.isfinite() & (dcf.data > 0)).all()
     assert torch.broadcast_shapes(dcf.data.shape, traj.shape) == traj.shape
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('dtype', [torch.float32, torch.float64])
+def test_dcf_pipe_repeated_readouts(device: str, dtype: torch.dtype) -> None:
+    """Reducing duplicate sample axes preserves their multiplicity in each geometry."""
+    from mr2.algorithms.dcf import dcf_pipe
+
+    repeated = (torch.arange(8, dtype=dtype, device=device) - 4).expand(3, 8)
+    distinct = torch.arange(24, dtype=dtype, device=device).reshape(3, 8) / 3 - 4
+    kx = torch.stack((repeated, distinct)).reshape(2, 1, 1, 3, 8)
+    zero = torch.zeros(1, 1, 1, 1, 1, dtype=dtype, device=device)
+    traj = KTrajectory(zero, zero, kx)
+    result = DcfData.from_traj_pipe(traj, SpatialDimension(1, 1, 8)).data.expand(traj.shape)
+    expected = dcf_pipe(kx, (8,)).unsqueeze(-4)
+    torch.testing.assert_close(result, expected)
+    torch.testing.assert_close(result.sum((-3, -2, -1)), torch.full((2, 1), 8.0, dtype=dtype, device=device))
+    # The same readouts arranged along a single sample axis must have the same weights.
+    flat_traj = KTrajectory(zero, zero, kx.reshape(2, 1, 1, 1, 24))
+    flat = DcfData.from_traj_pipe(flat_traj, SpatialDimension(1, 1, 8)).data
+    torch.testing.assert_close(result.reshape(flat.shape), flat)

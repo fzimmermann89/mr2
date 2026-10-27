@@ -81,7 +81,7 @@ def dcf_2d3d_voronoi(traj: torch.Tensor) -> torch.Tensor:
 
     Returns
     -------
-        Density compensation values with the trajectory dtype and device, shaped `(1, k2, k1, k0)`.
+        Density compensation values with the trajectory dtype and device, shaped `(k2, k1, k0)`.
     """
     # 2D and 3D trajectories supported
     dim = traj.shape[0]

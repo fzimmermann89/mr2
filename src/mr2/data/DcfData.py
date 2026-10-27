@@ -2,7 +2,7 @@
 
 from functools import reduce
 from itertools import product
-from math import isfinite
+from math import isfinite, prod
 from typing import TYPE_CHECKING
 
 import torch
@@ -116,7 +116,8 @@ class DcfData(Dataclass):
             for axes in _trajectory_groups(ks):
                 group = torch.cat(torch.broadcast_tensors(*(ks[i] for i in axes)), dim=-4)
                 dcf = dcf * dcf_pipe(group, [encoding_matrix.zyx[i] for i in axes], n_iterations, oversampling)
-            results.append(dcf.expand(1, *traj.shape[-3:]))
+            repeats = prod(traj.shape[d] for d in (-3, -2, -1) if all(k.shape[d] == 1 for k in ks))
+            results.append((dcf / repeats).expand(1, *traj.shape[-3:]))
         return cls(data=torch.stack(results).reshape(traj.shape))
 
     def as_operator(self) -> 'DensityCompensationOp':
