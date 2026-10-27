@@ -8,6 +8,7 @@ from mr2.data import KData, KTrajectory, SpatialDimension
 from mr2.data.enums import TrajType
 from mr2.data.traj_calculators import KTrajectoryCartesian
 from mr2.operators import FourierOp
+from mr2.operators.LinearOperatorMatrix import LinearOperatorMatrix
 from mr2.utils import RandomGenerator
 from typing_extensions import Unpack
 
@@ -79,6 +80,47 @@ class NufftTrajektory(KTrajectory):
         true_types = super()._traj_types(tolerance)
         modified = tuple(tuple(t & (~TrajType.ONGRID) for t in ts) for ts in true_types)
         return cast(tuple[tuple[TrajType, TrajType, TrajType], tuple[TrajType, TrajType, TrajType]], modified)
+
+
+@pytest.mark.parametrize('as_matrix', [False, True], ids=['fourier', 'matrix'])
+@pytest.mark.parametrize('trajectory_type', ['uniform', 'non-uniform'], ids=['cartesian', 'nufft'])
+@pytest.mark.parametrize(
+    ('device', 'dtype'),
+    [
+        ('cpu', torch.float64),
+        pytest.param('cuda', torch.float32, marks=pytest.mark.cuda),
+        pytest.param('cuda', torch.float64, marks=pytest.mark.cuda),
+    ],
+)
+def test_fourier_op_cached_gram_after_to(
+    as_matrix: bool, trajectory_type: str, device: str, dtype: torch.dtype
+) -> None:
+    """Rebuild Fourier and matrix grams after device or dtype conversion."""
+    fourier_op, image, _ = create_fourier_op_and_range_domain(
+        (1, 1, 1, 8, 8),
+        (1, 1, 1, 8, 8),
+        (1, 1, 1, 1, 8),
+        (1, 1, 1, 8, 1),
+        (1, 1, 1, 1, 1),
+        trajectory_type,
+        trajectory_type,
+        'zero',
+    )
+    operator = LinearOperatorMatrix([[fourier_op, 2 * fourier_op]]) if as_matrix else fourier_op
+    cached_gram = operator.gram
+    assert operator.gram is cached_gram
+    operator.to(device=device, dtype=dtype)
+    image = image.to(device=device, dtype=torch.complex128 if dtype == torch.float64 else torch.complex64)
+    inputs = (image, image) if as_matrix else (image,)
+
+    actual = operator.gram(*inputs)
+    expected = (operator.H @ operator)(*inputs)
+    torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-5)
+    assert operator.gram is not cached_gram
+    assert operator.gram is operator.gram
+    assert all(buffer.device.type == device for buffer in operator.gram.buffers())
+    if trajectory_type == 'non-uniform':
+        assert all(buffer.dtype == dtype for buffer in operator.gram.buffers() if buffer.is_floating_point())
 
 
 @COMMON_MR_TRAJECTORIES

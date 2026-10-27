@@ -14,6 +14,11 @@ class Jacobian(LinearOperator):
 
     This operator implements the Jacobian of a (non-linear) operator at a given point :math:`x_0` as a LinearOperator,
     i.e. a linearization of the operator at the point :math:`x_0`.
+
+    Notes
+    -----
+    Convert this operator to the desired device and dtype before evaluating it.
+    Its manually cached VJP function and value at :math:`x_0` are not invalidated by conversions.
     """
 
     def __init__(self, operator: Operator[torch.Tensor, tuple[torch.Tensor]], *x0: torch.Tensor):
