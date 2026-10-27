@@ -60,9 +60,10 @@ def test_averaging_adjoint_invalid_groups(
 
 
 @pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
-def test_averaging_adjoint_tuple_group(device: str) -> None:
-    """The group validation treats a tuple as one group of indices."""
-    op = AveragingOp(-1, [(0, 1)], domain_size=2)
-    x = torch.tensor([2.0, 4.0], device=device)
+@pytest.mark.parametrize('group', [(0, 2), [True, False, True], (True, False, True)])
+def test_averaging_adjoint_sequence_group(group: tuple[int, ...] | list[bool], device: str) -> None:
+    """Sequence groups count the selected entries, including boolean masks."""
+    op = AveragingOp(-1, [group], domain_size=3)
+    x = torch.tensor([2.0, 3.0, 4.0], device=device)
     y = torch.tensor([3.0], device=device)
     dotproduct_adjointness_test(op, x, y)
