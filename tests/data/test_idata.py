@@ -55,7 +55,7 @@ def test_IData_to_nifti(dcm_2d, tmp_path, magnitude_only: bool) -> None:
 
 
 @pytest.mark.parametrize('magnitude_only', [True, False])
-@pytest.mark.parametrize('shape', [(4, 6, 8), (1, 5, 7)])
+@pytest.mark.parametrize('shape', [(4, 6, 8), (1, 5, 7), (1, 5, 1), (1, 1, 7)])
 @pytest.mark.parametrize('angles', [(0.0, 0.0, 0.0), (0.2, 0.3, 1.4)])
 def test_IData_to_nifti_affine(tmp_path, magnitude_only: bool, shape: tuple[int, int, int], angles) -> None:
     """NIfTI voxel coordinates map to the header's physical coordinates in RAS millimeters."""
@@ -78,8 +78,8 @@ def test_IData_to_nifti_affine(tmp_path, magnitude_only: bool, shape: tuple[int,
         reference[:3, axis] = (
             np.array([component.item() for component in direction.zyx[::-1]]) * spacing * lps_to_ras_mm
         )
-    # mr2 centers non-singleton axes at N/2; a single slice is already at the header position.
-    center = np.array([n / 2 if n > 1 else 0 for n in shape[::-1]])
+    # In-plane axes use N/2 even for a single pixel; a single slice has no through-plane offset.
+    center = np.array([shape[2] / 2, shape[1] / 2, shape[0] / 2 if shape[0] > 1 else 0])
     position = np.array([component.item() for component in header.position.zyx[::-1]]) * lps_to_ras_mm
     reference[:3, 3] = position - reference[:3, :3] @ center
 

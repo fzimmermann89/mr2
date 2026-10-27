@@ -196,8 +196,9 @@ class IData(Dataclass):
         position = torch.stack([p.mean() for p in self.header.position.zyx[::-1]])
         affine = orientation.new_zeros(4, 4)
         affine[:3, :3] = orientation * resolution
-        # mr2 stores the image center at N/2 along non-singleton axes.
-        center = orientation.new_tensor([n / 2 if n > 1 else 0 for n in self.data.shape[-3:][::-1]])
+        # In-plane axes use N/2 even for a single pixel; a single slice has no through-plane offset.
+        nz, ny, nx = self.data.shape[-3:]
+        center = orientation.new_tensor([nx / 2, ny / 2, nz / 2 if nz > 1 else 0])
         affine[:3, 3] = position - affine[:3, :3] @ center
         affine[:3] = m_to_mm(affine[:3])
         affine[:2] *= -1  # LPS to RAS
