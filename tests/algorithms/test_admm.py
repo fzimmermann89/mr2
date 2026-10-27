@@ -153,6 +153,42 @@ def test_admm_l2_callback_early_stop() -> None:
     assert callback_count == 1
 
 
+@pytest.mark.cuda
+@pytest.mark.parametrize('algorithm', [admm_linear, admm_l2], ids=['linear', 'l2'])
+def test_cuda_admm_solution(algorithm) -> None:
+    """ADMM variants recover a small soft-thresholded CUDA solution."""
+    data = torch.tensor([-0.8, -0.1, 0.3, 1.2], device='cuda')
+    regularization_parameter = 0.2
+    expected = torch.nn.functional.softshrink(data, regularization_parameter)
+    initial_values = (torch.zeros_like(data),)
+    g = regularization_parameter * L1Norm(divide_by_n=False)
+
+    if algorithm is admm_linear:
+        solution = algorithm(
+            f=0.5 * L2NormSquared(target=data, divide_by_n=False),
+            g=g,
+            operator=IdentityOp(),
+            initial_values=initial_values,
+            tau=1.0,
+            mu=0.95,
+            max_iterations=128,
+        )
+    else:
+        solution = algorithm(
+            g=g,
+            op=IdentityOp(),
+            b=data,
+            a=IdentityOp(),
+            initial_values=initial_values,
+            tau=1.0,
+            max_iterations=128,
+            cg_max_iterations=8,
+        )
+
+    assert solution[0].is_cuda
+    torch.testing.assert_close(solution[0], expected, atol=1e-3, rtol=1e-3)
+
+
 def test_admm_linear_value_errors() -> None:
     """Check that value-errors are caught."""
     rng = RandomGenerator(seed=0)

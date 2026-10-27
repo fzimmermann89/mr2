@@ -32,6 +32,13 @@ class Jacobian(LinearOperator):
         self._operator = operator
         self._f_x0: tuple[torch.Tensor, ...] | None = None
 
+    def _apply(self, fn: Callable[[torch.Tensor], torch.Tensor], recurse: bool = True) -> 'Jacobian':
+        """Move registered tensors and discard cached values tied to their old device or dtype."""
+        result = super()._apply(fn, recurse=recurse)
+        self._vjp = None
+        self._f_x0 = None
+        return result
+
     def adjoint(self, *x: torch.Tensor) -> tuple[torch.Tensor, ...]:  # type:ignore[override]
         """Apply the adjoint operator.
 

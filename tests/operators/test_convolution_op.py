@@ -232,3 +232,21 @@ def test_cuda() -> None:
     actual = op.H(op(x.cuda())[0])[0]
     assert op.kernel.is_cuda
     torch.testing.assert_close(actual.cpu(), expected)
+
+
+@pytest.mark.cuda
+def test_cuda_trainable_kernel_gradient() -> None:
+    """A trainable complex kernel gets the expected reflected-boundary gradient on CUDA."""
+    rng = RandomGenerator(seed=3)
+    kernel = torch.nn.Parameter(rng.complex64_tensor((2, 1, 3, 3)).cuda())
+    x = rng.complex64_tensor((1, 1, 4, 5), device='cuda')
+    op = ConvolutionOp(kernel, pad_mode='reflect')
+    parameter = op.kernel
+    (actual,) = torch.autograd.grad(op(x)[0].abs().square().sum(), parameter)
+
+    reference_kernel = parameter.detach().clone().requires_grad_()
+    reference = functional.conv2d(functional.pad(x.movedim(0, 1), (1, 1, 1, 1), mode='reflect'), reference_kernel)
+    (expected,) = torch.autograd.grad(reference.abs().square().sum(), reference_kernel)
+    torch.testing.assert_close(actual, expected)
+    assert actual.is_cuda
+    assert torch.isfinite(actual).all()
