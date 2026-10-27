@@ -89,6 +89,30 @@ def test_operator_norm_result():
     torch.testing.assert_close(operator_norm_est.item(), operator_norm_true, atol=1e-4, rtol=1e-4)
 
 
+@pytest.mark.parametrize('dim', [None, (-1,), (-2, -1)])
+@pytest.mark.parametrize('dtype', [torch.float32, torch.complex64])
+@pytest.mark.parametrize('max_iterations', [1, 4])
+@pytest.mark.parametrize('scale', [1e-8, 2.98])
+def test_operator_norm_initial_value_scaling(
+    dim: tuple[int, ...] | None, dtype: torch.dtype, max_iterations: int, scale: float
+) -> None:
+    """Initial scaling must not affect estimates or cause premature tolerance stopping."""
+    rng = RandomGenerator(seed=0)
+    matrix = rng.rand_tensor((2, 3, 4, 4), dtype=dtype)
+    initial_value = rng.rand_tensor((2, 3, 4), dtype=dtype)
+    operator = EinsumOp(matrix, '... y x, ... x -> ... y')
+
+    norm = torch.linalg.vector_norm(initial_value, dim=dim, keepdim=True)
+    unit_initial_value = initial_value / norm
+    # Scale each batch independently, keeping the direction within each problem unchanged.
+    batch_scale = scale * torch.arange(1, norm.numel() + 1).reshape(norm.shape)
+
+    expected = operator.operator_norm(unit_initial_value, dim=dim, max_iterations=max_iterations)
+    actual = operator.operator_norm(batch_scale * unit_initial_value, dim=dim, max_iterations=max_iterations)
+
+    torch.testing.assert_close(actual, expected)
+
+
 def test_fourier_operator_norm():
     """Test with Fast Fourier Operator (has norm 1 since norm="ortho" is used)."""
     rng = RandomGenerator(seed=0)
