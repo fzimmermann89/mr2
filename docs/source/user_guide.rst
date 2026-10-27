@@ -118,8 +118,7 @@ Identity, rearrangement, declared padding/cropping, orthonormal FFT and PCA
 operators use exact formulas. Patches average overlaps, sensitivity inversion
 normalizes coil power, and Cartesian sampling averages repeated observations.
 Uncovered coordinates and exactly zero diagonal weights map to zero. Batched
-Cartesian trajectories with unequal numbers of inside-encoding samples are
-rejected explicitly.
+Cartesian trajectories may have different numbers of inside-encoding samples.
 Coefficients are read again on each application; no solution or warm start is
 retained. Patch inversion requires an explicit or previously established domain
 size. Sensitivity/PCA/diagonal shortcuts require fully expanded independent
@@ -149,10 +148,10 @@ The generic fallback supports first-order reverse-mode differentiation, without
 JVP, vmap or higher derivatives. Exact formulas retain the transform support of
 their underlying operations.
 
-The generic method requires a true adjoint on fixed spaces. Biorthogonal wavelet
-reconstruction and averaging groups with repeated or empty indices now reject
-adjoint use because they do not meet this contract. Custom broadcast domains
-must also have a matching adjoint. Keep geometry unchanged through backward;
+The generic method requires a true adjoint on fixed spaces. Unsupported source
+configurations, such as non-orthogonal wavelets or repeated/empty averaging
+groups, retain the restrictions of their adjoint methods. Custom broadcast
+domains must also have a matching adjoint. Keep geometry unchanged through backward;
 source tensor values are protected against in-place changes, and attribute
 replacement is isolated for each numerical invocation.
 

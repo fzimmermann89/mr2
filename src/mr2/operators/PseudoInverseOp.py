@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import math
 from collections.abc import Sequence
+from functools import cached_property
 from typing import TYPE_CHECKING, Any, cast
 
 import torch
@@ -60,13 +61,15 @@ def _snapshot(source: Source) -> tuple[Source, Vectors, Vectors]:
         elif isinstance(value, torch.nn.Module):
             result = copy.copy(value)
             memo[id(value)] = result
-            # Rebuild cached matrix Grams from the current coefficient leaves.
-            # Cached scalar factors may otherwise survive attribute replacement.
-            result.__dict__ = {
-                key: visit(item)
-                for key, item in vars(value).items()
-                if not (isinstance(value, LinearOperatorMatrix) and key == 'gram')
+            # Rebuild derived caches from the snapshot leaves, including Grams
+            # whose coefficients or dtype/device may have changed since caching.
+            cached = {
+                key
+                for cls in type(value).__mro__
+                for key, item in vars(cls).items()
+                if isinstance(item, cached_property)
             }
+            result.__dict__ = {key: visit(item) for key, item in vars(value).items() if key not in cached}
         elif isinstance(value, dict):
             result = value.copy()
             memo[id(value)] = result

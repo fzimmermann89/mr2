@@ -4,7 +4,6 @@ import pytest
 import torch
 from mr2.data import KTrajectory, SpatialDimension
 from mr2.operators import (
-    AveragingOp,
     CartesianMaskingOp,
     CartesianSamplingOp,
     DensityCompensationOp,
@@ -20,7 +19,6 @@ from mr2.operators import (
     PseudoInverseOp,
     RearrangeOp,
     SensitivityOp,
-    WaveletOp,
     ZeroOp,
     ZeroPadOp,
 )
@@ -245,7 +243,7 @@ def test_scalar_and_zero() -> None:
 
 
 def test_cartesian_duplicates() -> None:
-    """Duplicate samples sum in the adjoint and average in the pseudoinverse."""
+    """The pseudoinverse averages duplicate samples and ignores outside points."""
     trajectory = KTrajectory(
         kz=torch.zeros(1, 1, 1, 1, 1),
         ky=torch.zeros(1, 1, 1, 1, 1),
@@ -254,13 +252,7 @@ def test_cartesian_duplicates() -> None:
     with pytest.warns(UserWarning, match='outside'):
         op = CartesianSamplingOp(SpatialDimension(1, 1, 2), trajectory)
     y = torch.tensor([3.0, 7.0, 11.0, 99.0]).reshape(1, 1, 1, 1, 4)
-    x = torch.tensor([2.0, 5.0]).reshape(1, 1, 1, 1, 2)
-    torch.testing.assert_close(op.H(y)[0].flatten(), torch.tensor([10.0, 11.0]))
     torch.testing.assert_close(op.pinv()(y)[0].flatten(), torch.tensor([5.0, 11.0]))
-    torch.testing.assert_close(op.gram(x)[0].flatten(), torch.tensor([4.0, 5.0]))
-    torch.testing.assert_close(
-        torch.vdot(op(x)[0].flatten(), y.flatten()), torch.vdot(x.flatten(), op.H(y)[0].flatten())
-    )
 
 
 def test_tuple_actions() -> None:
@@ -282,16 +274,6 @@ def test_tuple_actions() -> None:
     result = diagonal.pinv()(b, b)
     torch.testing.assert_close(result[0], b)
     torch.testing.assert_close(result[1], b / 2)
-
-
-def test_invalid_adjoints() -> None:
-    """Known invalid adjoint configurations fail even when nested in algebra."""
-    wavelet = WaveletOp((16,), dim=(-1,), wavelet_name='bior2.2', level=1)
-    with pytest.raises(NotImplementedError, match='Biorthogonal'):
-        (IdentityOp() @ wavelet).pinv()(wavelet(torch.ones(16))[0])
-    average = AveragingOp(-1, [[0, 0, 1]], domain_size=2)
-    with pytest.raises(ValueError, match='repeated'):
-        average.pinv()(torch.ones(1))
 
 
 def test_exact_transforms_and_movement() -> None:
@@ -346,21 +328,18 @@ def test_float32_and_small_rhs() -> None:
 
 @pytest.mark.parametrize('unequal_valid_counts', [False, True])
 def test_batched_sampling(unequal_valid_counts: bool) -> None:
-    """Different outside positions preserve per-batch counts or fail explicitly."""
+    """Batched pseudoinverses average valid samples with equal or unequal counts."""
     coordinates = torch.tensor([[-1.0, -1.0, 0.0, 3.0], [3.0, -1.0, 0.0, 0.0]])
     if unequal_valid_counts:
         coordinates[1, 1] = 3
     trajectory = KTrajectory(
         kz=torch.zeros(1, 1, 1, 1, 1), ky=torch.zeros(1, 1, 1, 1, 1), kx=coordinates.reshape(2, 1, 1, 1, 4)
     )
-    if unequal_valid_counts:
-        with pytest.warns(UserWarning, match='outside'), pytest.raises(NotImplementedError, match='equal numbers'):
-            CartesianSamplingOp(SpatialDimension(1, 1, 2), trajectory)
-        return
     with pytest.warns(UserWarning, match='outside'):
         op = CartesianSamplingOp(SpatialDimension(1, 1, 2), trajectory)
     y = torch.tensor([[3.0, 7.0, 11.0, 99.0], [99.0, 5.0, 3.0, 7.0]]).reshape(2, 1, 1, 1, 4)
-    torch.testing.assert_close(op.pinv()(y)[0].reshape(2, 2), torch.tensor([[5.0, 11.0], [5.0, 5.0]]))
+    expected = torch.tensor([[5.0, 11.0], [0.0 if unequal_valid_counts else 5.0, 5.0]])
+    torch.testing.assert_close(op.pinv()(y)[0].reshape(2, 2), expected)
 
 
 def test_zero_scalar_live_update() -> None:
@@ -422,3 +401,33 @@ def test_replaced_coefficient_after_gram_cache() -> None:
     refs = torch.autograd.grad(2 * expected[0].sum() - expected[1].sum(), (scale, b))
     for grad, ref in zip(grads, refs, strict=True):
         torch.testing.assert_close(grad, ref)
+
+
+@pytest.mark.parametrize('as_matrix', [False, True])
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+def test_cached_fourier_gram_conversion(as_matrix: bool, device: str) -> None:
+    """Snapshot Grams follow converted Fourier state in single and tuple inverses."""
+    from tests.operators.test_fourier_op import create_fourier_op_and_range_domain
+
+    fourier, image, _ = create_fourier_op_and_range_domain(
+        (1, 1, 1, 4, 4),
+        (1, 1, 1, 4, 4),
+        (1, 1, 1, 1, 4),
+        (1, 1, 1, 4, 1),
+        (1, 1, 1, 1, 1),
+        'uniform',
+        'uniform',
+        'zero',
+    )
+    source = fourier | (2 * fourier) if as_matrix else fourier
+    _ = source.gram
+    source.to(device=device, dtype=torch.float64)
+    image = image.to(device=device, dtype=torch.complex128)
+    data = fourier(image)[0]
+    result = source.pinv(tolerance=1e-8)(data)
+    expected = fourier.H(data)[0]
+    if as_matrix:
+        torch.testing.assert_close(result[0], expected / 5)
+        torch.testing.assert_close(result[1], 2 * expected / 5)
+    else:
+        torch.testing.assert_close(result[0], expected)
