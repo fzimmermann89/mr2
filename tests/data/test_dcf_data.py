@@ -211,3 +211,30 @@ def test_dcf_pipe_constant_input_validation(varying: bool, invalid: str) -> None
             n_iterations=0 if invalid == 'iterations' else 10,
             oversampling=0.5 if invalid == 'oversampling' else 2.0,
         )
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('method', ['voronoi', 'pipe'])
+@pytest.mark.parametrize('geometry', ['singleton', 'cartesian', 'spiral', 'rpe'])
+def test_dcf_constructor_float64(device: str, method: str, geometry: str) -> None:
+    """Constructors preserve float64 for constant, separable, coupled and mixed geometry."""
+    if geometry == 'singleton':
+        k = torch.zeros(1, 1, 1, 1, 1)
+        traj = KTrajectory(k, k, k)
+    elif geometry == 'cartesian':
+        kx = torch.arange(-4, 4).reshape(1, 1, 1, 1, 8)
+        traj = KTrajectory(torch.zeros_like(kx[..., :1]), torch.zeros_like(kx[..., :1]), kx)
+    elif geometry == 'spiral':
+        traj = example_traj_spiral_2d(40, 2, 4)
+    else:
+        traj = example_traj_rpe(6, 16, 8)
+    traj = traj.to(device=device, dtype=torch.float64)
+    dcf = (
+        DcfData.from_traj_voronoi(traj)
+        if method == 'voronoi'
+        else DcfData.from_traj_pipe(traj, SpatialDimension(32, 32, 32))
+    )
+    assert dcf.data.dtype == torch.float64
+    assert dcf.data.device == traj.kx.device
+    assert (dcf.data.isfinite() & (dcf.data > 0)).all()
+    assert torch.broadcast_shapes(dcf.data.shape, traj.shape) == traj.shape

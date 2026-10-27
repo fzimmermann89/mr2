@@ -28,7 +28,7 @@ def dcf_1d(traj: torch.Tensor) -> torch.Tensor:
 
     Returns
     -------
-        density compensation values
+        Density compensation values with the trajectory dtype and device.
     """
     traj_sorted, inverse, counts = torch.unique(
         torch.round(traj, decimals=UNIQUE_ROUNDING_DECIMALS),
@@ -44,7 +44,7 @@ def dcf_1d(traj: torch.Tensor) -> torch.Tensor:
     # we assign the point at x0 the area (x1 - x0) / 2 + (x1 - x0) / 2, and
     # we assign the point at xN the area (xN - xN-1) / 2 + (xN - xN-1) / 2.
 
-    kernel = torch.tensor([-1 / 2, 0, 1 / 2], dtype=torch.float32, device=traj.device).reshape(1, 1, 3)
+    kernel = traj.new_tensor([-1 / 2, 0, 1 / 2]).reshape(1, 1, 3)
 
     if (elements := len(traj_sorted)) >= 3:
         central_diff = torch.nn.functional.conv1d(traj_sorted[None, None, :], kernel)[0, 0]
@@ -81,7 +81,7 @@ def dcf_2d3d_voronoi(traj: torch.Tensor) -> torch.Tensor:
 
     Returns
     -------
-        density compensation values `(1, k2, k1, k0)`
+        Density compensation values with the trajectory dtype and device, shaped `(1, k2, k1, k0)`.
     """
     # 2D and 3D trajectories supported
     dim = traj.shape[0]
@@ -137,4 +137,4 @@ def dcf_2d3d_voronoi(traj: torch.Tensor) -> torch.Tensor:
     # Sort dcf values back into the original order (i.e. before calling unique)
     dcf = np.reshape((dcf / counts)[inverse], traj_dim[1:])
 
-    return torch.tensor(dcf, dtype=torch.float32, device=traj.device)
+    return torch.tensor(dcf, dtype=traj.dtype, device=traj.device)

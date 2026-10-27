@@ -64,7 +64,7 @@ class DcfData(Dataclass):
             dcf = reduce(torch.mul, dcfs)
         else:
             # Edgecase: Only singleton spatial dimensions
-            dcf = torch.ones(*traj.shape[-3:], 1, 1, 1, device=traj.kx.device)
+            dcf = traj.kx.new_ones((*traj.shape[:-4], 1, 1, 1, 1))
 
         return cls(data=dcf)
 

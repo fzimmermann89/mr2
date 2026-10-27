@@ -123,15 +123,17 @@ def test_periodic_coordinates(device: str) -> None:
 
 
 @pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
-def test_multiple_batch_dimensions(device: str) -> None:
+@pytest.mark.parametrize('dtype', [torch.float32, torch.float64])
+def test_multiple_batch_dimensions(device: str, dtype: torch.dtype) -> None:
     """Leading batch axes preserve independent weights and their normalization."""
-    radial = make_trajectory('radial').to(device).unsqueeze(-3)
-    spiral = make_trajectory('spiral').to(device).reshape(2, 1, 32, 64)
+    radial = make_trajectory('radial').to(device=device, dtype=dtype).unsqueeze(-3)
+    spiral = make_trajectory('spiral').to(device=device, dtype=dtype).reshape(2, 1, 32, 64)
     geometries = torch.stack((radial, spiral))
     batch = torch.stack((geometries, geometries * 0.8)).transpose(0, 1)
     result = dcf_pipe(batch, (32, 32))
     assert result.shape == (2, 2, 1, 32, 64)
+    assert result.dtype == dtype
     for i in range(2):
         for j in range(2):
             torch.testing.assert_close(result[i, j], dcf_pipe(batch[i, j], (32, 32)))
-    torch.testing.assert_close(result.sum((-3, -2, -1)), torch.full((2, 2), 32**2, device=device).float())
+    torch.testing.assert_close(result.sum((-3, -2, -1)), torch.full((2, 2), 32**2, device=device, dtype=dtype))
