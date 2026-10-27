@@ -67,8 +67,9 @@ def rovir(img: torch.Tensor, roi_mask: torch.Tensor, *, n_compressed_coils: int)
     roi_voxels = voxel_data[roi_mask]
     background_voxels = voxel_data[~roi_mask]
 
-    roi_covariance = roi_voxels.conj().mT @ roi_voxels / roi_voxels.shape[0]
-    background_covariance = background_voxels.conj().mT @ background_voxels / background_voxels.shape[0]
+    # For compression w^H x, the covariance is E[x x^H] with x a column coil vector.
+    roi_covariance = roi_voxels.mT @ roi_voxels.conj() / roi_voxels.shape[0]
+    background_covariance = background_voxels.mT @ background_voxels.conj() / background_voxels.shape[0]
 
     identity = torch.eye(n_coils, dtype=img.dtype, device=img.device)
 

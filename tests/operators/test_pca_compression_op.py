@@ -104,6 +104,44 @@ def test_pca_compression_op_with_varimax_rotation() -> None:
     )
 
 
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('dtype', [torch.float32, torch.complex64])
+@pytest.mark.parametrize('centering', [False, True])
+def test_pca_compression_op_rank_one_reconstruction(device: str, dtype: torch.dtype, centering: bool) -> None:
+    """One principal component reconstructs rank-one data with arbitrary coil phases."""
+    rng = RandomGenerator(seed=0)
+    weights = rng.randn_tensor((2, 6), dtype, device=device)
+    signal = torch.tensor([1, 2, -1, -2], dtype=dtype, device=device)
+    data = signal[:, None] * weights[:, None, :]
+    operator = PCACompressionOp(data, n_components=1, centering=centering)
+
+    (reconstructed,) = (operator.H @ operator)(data)
+
+    torch.testing.assert_close(reconstructed, data, atol=1e-5, rtol=1e-5)
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('dtype', [torch.float32, torch.complex64])
+@pytest.mark.parametrize('centering', [False, True])
+@pytest.mark.parametrize('rotate', [False, True])
+@pytest.mark.parametrize('n_components', [1, 3])
+def test_pca_compression_op_captured_energy(
+    device: str, dtype: torch.dtype, centering: bool, rotate: bool, n_components: int
+) -> None:
+    """PCA retains the same energy as the optimal truncated SVD, including after rotation."""
+    rng = RandomGenerator(seed=0)
+    data = rng.randn_tensor((2, 40, 6), dtype, device=device) @ rng.randn_tensor((2, 6, 6), dtype, device=device)
+    operator = PCACompressionOp(data, n_components=n_components, centering=centering, rotate=rotate)
+    if centering:
+        data = data - data.mean(-2, keepdim=True)
+
+    (compressed,) = operator(data)
+    captured_energy = compressed.abs().square().sum(dim=(-2, -1))
+    optimal_energy = torch.linalg.svdvals(data)[..., :n_components].square().sum(-1)
+
+    torch.testing.assert_close(captured_energy, optimal_energy, atol=1e-5, rtol=1e-5)
+
+
 @pytest.mark.cuda
 def test_pca_compression_op_cuda() -> None:
     """Test if PCA compression operator works on CUDA devices."""
