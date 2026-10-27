@@ -1028,27 +1028,31 @@ class Dataclass:
         return self.rearrange(f'{input_pattern} -> {output_pattern}')
 
     def split(self, dim: int, size: int = 1, overlap: int = 0, dilation: int = 1) -> tuple[Self, ...]:
-        """Split the dataclass along a dimension.
+        """Split the dataclass into full windows along a dimension.
+
+        Incomplete trailing windows are omitted. Each window contains `size`
+        elements and spans `(size - 1) * dilation + 1` input positions.
 
         Parameters
         ----------
         dim
             dimension to split along.
         size
-            size of the splits.
+            Number of elements in each split. Must be positive.
         overlap
-            overlap between splits.
-            The stride will be `size - overlap`.
-            Negative overlap will leave spaces between splits.
+            Number of input positions by which consecutive window spans overlap.
+            Must be smaller than `size`. The stride is
+            `(size - 1) * dilation + 1 - overlap`.
+            Negative overlap leaves gaps between window spans.
         dilation
-            dilation of elements in each split.
+            Spacing between elements in each split. Must be positive.
 
         Examples
         --------
         If the dimension has 6 elements:
 
         - split with size 2, overlap 0, dilation 1 -> elements (0,1), (2,3), and (4,5)
-        - split with size 2, overlap 1, dilation 1 -> elements (0,1), (1,2), (2,3), (3,4), (4,5), and (5,6)
+        - split with size 2, overlap 1, dilation 1 -> elements (0,1), (1,2), (2,3), (3,4), and (4,5)
         - split with size 2, overlap 0, dilation 2 -> elements (0,2), and (3,5)
         - split with size 2, overlap -1, dilation 1 -> elements (0,1), and (3,4)
 
@@ -1059,13 +1063,16 @@ class Dataclass:
         """
         shape = self.shape
         dim = normalize_index(len(shape), dim)
+        if size < 1:
+            raise ValueError('Size must be larger than 0')
         if dilation < 1:
             raise ValueError('Dilation must be larger than 0')
-        if overlap > size:
+        if overlap >= size:
             raise ValueError('Overlap must be smaller than size')
+        span = (size - 1) * dilation + 1
         indices = [
-            (*[slice(None)] * dim, slice(start, start + size * dilation, dilation))
-            for start in range(0, shape[dim] - size * dilation + 1 + max(0, overlap), size - overlap)
+            (*[slice(None)] * dim, slice(start, start + span, dilation))
+            for start in range(0, shape[dim] - span + 1, span - overlap)
         ]
         res = tuple(self[idx] for idx in indices)
         return res
@@ -1074,11 +1081,11 @@ class Dataclass:
         """Concatenate other instances to the current instance.
 
         Tensor-like fields are broadcast against each other in non-concat
-        dimensions and concatenated along `dim`. Nested objects that support
-        both `concatenate` and `expand` (e.g. `Rotation`) are first expanded
-        to the per-object broadcast shape, so a field that is broadcast
-        across siblings still gets the parent's concat size. List fields are
-        joined into a new list. Other fields are left untouched.
+        dimensions and concatenated along `dim`. Nested dataclasses use the
+        parent's per-object broadcast shapes for all their fields. Other nested
+        objects supporting both `concatenate` and `expand` (e.g. `Rotation`)
+        use the parent's concat extent while keeping shared singleton dimensions
+        elsewhere. List fields are joined into a new list. Other fields are left untouched.
 
         Parameters
         ----------
@@ -1101,28 +1108,38 @@ class Dataclass:
             target_shapes = broadcast_shapes_except(shapes, dim)
             dim = normalize_index(len(target_shapes[0]), dim)
 
-        new = shallowcopy(self)
-        for field in dataclasses.fields(new):
-            values = [getattr(obj, field.name) for obj in objects]
-            head, *tail = values
+        def concatenate_fields(objects: Sequence[Dataclass]) -> Dataclass:
+            new = shallowcopy(objects[0])
+            for field in dataclasses.fields(new):
+                values = [getattr(obj, field.name) for obj in objects]
+                head, *tail = values
 
-            if all(isinstance(v, list) for v in values):
-                # build a new list to avoid mutating the shallow-copied attribute
-                setattr(new, field.name, [item for v in values for item in v])
+                if all(isinstance(v, list) for v in values):
+                    # Build a new list to avoid mutating the shallow-copied attribute.
+                    setattr(new, field.name, [item for v in values for item in v])
 
-            elif all(isinstance(v, torch.Tensor) for v in values):
-                expanded = [v.broadcast_to(shape) for v, shape in zip(values, target_shapes, strict=True)]
-                setattr(new, field.name, broadcasted_concatenate(expanded, dim=dim))
+                elif all(isinstance(v, torch.Tensor) for v in values):
+                    expanded = [v.broadcast_to(shape) for v, shape in zip(values, target_shapes, strict=True)]
+                    setattr(new, field.name, broadcasted_concatenate(expanded, dim=dim))
 
-            elif isinstance(head, HasConcatenate) and all(isinstance(v, HasExpand) for v in values):
-                # Expand siblings to the parent broadcast shape so concat picks up dims
-                # introduced by other fields (e.g. a Rotation broadcast against a larger tensor).
-                expanded = [v.expand(*shape) for v, shape in zip(values, target_shapes, strict=True)]
-                setattr(new, field.name, expanded[0].concatenate(*expanded[1:], dim=dim))
+                elif all(isinstance(v, Dataclass) for v in values):
+                    # Keep the parent's shapes even for reduced or scalar metadata.
+                    setattr(new, field.name, concatenate_fields(values))
 
-            elif isinstance(head, HasConcatenate):
-                setattr(new, field.name, head.concatenate(*tail, dim=dim))
+                elif isinstance(head, HasConcatenate) and all(isinstance(v, HasExpand) for v in values):
+                    field_shapes = [(1,) * (len(target_shapes[0]) - len(v.shape)) + tuple(v.shape) for v in values]
+                    field_shapes = broadcast_shapes_except(field_shapes, dim)
+                    expanded = [
+                        v.expand(*shape[:dim], target[dim], *shape[dim + 1 :])
+                        for v, shape, target in zip(values, field_shapes, target_shapes, strict=True)
+                    ]
+                    setattr(new, field.name, expanded[0].concatenate(*expanded[1:], dim=dim))
 
+                elif isinstance(head, HasConcatenate):
+                    setattr(new, field.name, head.concatenate(*tail, dim=dim))
+            return new
+
+        new = cast(Self, concatenate_fields(objects))
         new._reduce_repeats_(recurse=True)
         return new
 
@@ -1156,8 +1173,13 @@ class Dataclass:
                         return False
                 except RuntimeError:
                     return False
-            elif field_self != field_other:
-                return False
+            else:
+                try:
+                    equal = field_self == field_other
+                    if not (equal.all() if isinstance(equal, torch.Tensor) else equal):
+                        return False
+                except RuntimeError:
+                    return False
         return True
 
     def __len__(self) -> int:
