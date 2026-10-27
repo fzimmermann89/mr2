@@ -205,7 +205,7 @@ class KData(Dataclass):
                 mtime: int = h5py.h5g.get_objinfo(dataset['data']._contents.id).mtime
             except AttributeError:
                 mtime = 0
-            modification_time = datetime.datetime.fromtimestamp(mtime)
+            modification_time = datetime.datetime.fromtimestamp(mtime) if mtime else None
 
         return cls.from_ismrmrd(
             ismrmrd_header,

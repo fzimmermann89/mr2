@@ -7,6 +7,7 @@ import subprocess
 import sys
 import weakref
 from contextlib import closing
+from types import SimpleNamespace
 
 import h5py
 import ismrmrd
@@ -216,6 +217,15 @@ def test_hdf5_errors(tmp_path) -> None:
     with pytest.raises(OSError):
         KData.from_file(stream, DummyTrajectory())
     assert not stream.closed
+
+
+@pytest.mark.parametrize('mtime', [0, 946684800])
+def test_hdf5_timestamp(raw_data, monkeypatch, mtime) -> None:
+    """Unknown HDF5 timestamps stay unknown; recorded timestamps are retained."""
+    filename, _, _ = raw_data
+    monkeypatch.setattr(h5py.h5g, 'get_objinfo', lambda *_args: SimpleNamespace(mtime=mtime))
+    result = KData.from_file(filename, DummyTrajectory())
+    assert result.header.datetime == (datetime.datetime.fromtimestamp(mtime) if mtime else None)
 
 
 def test_disable_filter_and_timestamp(raw_data) -> None:
