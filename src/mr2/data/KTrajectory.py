@@ -140,8 +140,8 @@ class KTrajectory(Dataclass):
     ) -> Self:
         """Read a k-space trajectory from an ISMRMRD file.
 
-        The trajectory is extracted from an ISMRMRD file. If the encoding matrix is set in the header,
-        the trajectory is rescaled to fit within the dimensions of the matrix.
+        Discarded readout samples are removed. If ``normalize`` is enabled,
+        the trajectory is rescaled to fit the encoding matrix in the header.
 
         Parameters
         ----------
@@ -172,7 +172,15 @@ class KTrajectory(Dataclass):
             ]
             if not acquisitions:
                 raise ValueError('No matching acquisitions found in the ISMRMRD file.')
-            traj = torch.stack([torch.as_tensor(acq.traj, dtype=torch.float32) for acq in acquisitions], dim=0)
+            traj = torch.stack(
+                [
+                    torch.as_tensor(
+                        acq.traj[acq.discard_pre : acq.number_of_samples - acq.discard_post], dtype=torch.float32
+                    )
+                    for acq in acquisitions
+                ],
+                dim=0,
+            )
             if not normalize:
                 scaling_matrix = None
             elif (

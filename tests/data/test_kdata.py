@@ -33,7 +33,7 @@ def test_KData_from_file(ismrmrd_cart) -> None:
 
 
 @pytest.mark.parametrize(('discard_pre', 'discard_post'), [(0, 0), (3, 0), (0, 2), (3, 2)])
-@pytest.mark.parametrize('trajectory_type', [KTrajectoryCartesian, KTrajectoryIsmrmrd])
+@pytest.mark.parametrize('trajectory_type', [KTrajectoryCartesian, KTrajectoryIsmrmrd, KTrajectory])
 def test_KData_from_file_discards(tmp_path, discard_pre: int, discard_post: int, trajectory_type) -> None:
     """Discarded samples leave data and trajectory identical to an unpadded file."""
     reference_file = tmp_path / 'reference.h5'
@@ -43,7 +43,12 @@ def test_KData_from_file_discards(tmp_path, discard_pre: int, discard_post: int,
         padded_file, matrix_size=8, oversampling=1, n_coils=1, discard_pre=discard_pre, discard_post=discard_post
     )
     reference = KData.from_file(reference_file, KTrajectoryCartesian())
-    actual = KData.from_file(padded_file, trajectory_type())
+    trajectory = (
+        KTrajectory.from_ismrmrd(padded_file, acquisition_filter_criterion=is_image_acquisition)
+        if trajectory_type is KTrajectory
+        else trajectory_type()
+    )
+    actual = KData.from_file(padded_file, trajectory)
 
     torch.testing.assert_close(actual.data, reference.data)
     torch.testing.assert_close(actual.traj.as_tensor(), reference.traj.as_tensor())

@@ -107,8 +107,8 @@ class KData(Dataclass):
             path to the ISMRMRD file or file-like object
         trajectory
             KTrajectoryCalculator to calculate the k-space trajectory or an already calculated KTrajectory
-            If a KTrajectory is given, the shape should be `(acquisisions 1 1 k0)` in the same order as the acquisitions
-            in the ISMRMRD file.
+            If a KTrajectory is given, the shape should be `(acquisitions 1 1 1 k0)` in the same order as the
+            acquisitions selected from the ISMRMRD file, with discarded readout samples already removed.
         header_overwrites
             dictionary of key-value pairs to overwrite the header
         dataset_idx
