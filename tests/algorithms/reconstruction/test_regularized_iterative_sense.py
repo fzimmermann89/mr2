@@ -4,7 +4,7 @@ import pytest
 import torch
 from mr2.algorithms.reconstruction import RegularizedIterativeSENSEReconstruction
 from mr2.data import CsmData, DcfData, KData
-from mr2.operators import FiniteDifferenceOp, FourierOp
+from mr2.operators import FiniteDifferenceOp, FourierOp, IdentityOp
 from mr2.utils import RandomGenerator
 
 
@@ -55,24 +55,7 @@ def test_regularized_iterative_sense_with_explicit_dcf(cartesian_kdata: KData) -
 
 
 @pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
-def test_regularized_iterative_sense_default_data(cartesian_kdata: KData, device: str) -> None:
-    """Test finite-difference regularization with the default zero prior."""
-    reconstruction = RegularizedIterativeSENSEReconstruction(
-        kdata=cartesian_kdata,
-        n_iterations=2,
-        regularization_weight=0.5,
-        regularization_op=FiniteDifferenceOp(dim=(-1, -2), mode='central'),
-    ).to(device)
-    idata = reconstruction(cartesian_kdata.to(device))
-    assert idata.data.shape[-3:] == cartesian_kdata.header.recon_matrix.zyx
-    assert idata.data.device.type == device
-    assert torch.isfinite(idata.data).all()
-
-
-@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
-@pytest.mark.parametrize(
-    'prior', ['default', 'scalar_zero', 'tensor_zero', 'range_zero', 'differentiable_zero', 'nonzero']
-)
+@pytest.mark.parametrize('prior', ['default', 'tensor_zero', 'differentiable_zero', 'nonzero'])
 def test_regularized_iterative_sense_normal_equation(cartesian_kdata: KData, device: str, prior: str) -> None:
     """Check the normal-equation residual for zero and nonzero priors."""
     reconstruction = RegularizedIterativeSENSEReconstruction(
@@ -87,12 +70,10 @@ def test_regularized_iterative_sense_normal_equation(cartesian_kdata: KData, dev
     (right_hand_side,) = acquisition_model.H(kdata.data)
     regularization_op = reconstruction.regularization_op
     (regularization_data,) = regularization_op(torch.zeros_like(right_hand_side))
-    if prior == 'scalar_zero':
-        reconstruction.regularization_data = torch.tensor(0.0, device=device)
-    elif prior == 'tensor_zero':
+    if prior == 'tensor_zero':
         reconstruction.regularization_data = torch.zeros(1, device=device)
-    elif prior in ('range_zero', 'differentiable_zero'):
-        reconstruction.regularization_data = regularization_data.requires_grad_(prior == 'differentiable_zero')
+    elif prior == 'differentiable_zero':
+        reconstruction.regularization_data = regularization_data.requires_grad_()
     elif prior == 'nonzero':
         regularization_data = RandomGenerator(seed=0).complex64_tensor(regularization_data.shape).to(device)
         reconstruction.regularization_data = regularization_data
@@ -109,6 +90,39 @@ def test_regularized_iterative_sense_normal_equation(cartesian_kdata: KData, dev
         (gradient,) = torch.autograd.grad(idata.data.abs().square().sum(), reconstruction.regularization_data)
         assert torch.isfinite(gradient).all()
         assert gradient.norm() > 0
+
+
+def test_regularized_iterative_sense_zero_prior_jvp(cartesian_kdata: KData) -> None:
+    """Preserve forward-mode derivatives for a zero prior in the operator range."""
+    reconstruction = RegularizedIterativeSENSEReconstruction(
+        kdata=cartesian_kdata,
+        n_iterations=2,
+        regularization_weight=0.5,
+        regularization_op=FiniteDifferenceOp(dim=(-1, -2), mode='central'),
+    )
+    assert reconstruction.csm_op is not None
+    acquisition_model = reconstruction.fourier_op @ reconstruction.csm_op
+    (image,) = acquisition_model.H(cartesian_kdata.data)
+    (prior,) = reconstruction.regularization_op(torch.zeros_like(image))
+
+    with torch.autograd.forward_ad.dual_level():
+        reconstruction.regularization_data = torch.autograd.forward_ad.make_dual(prior, torch.ones_like(prior))
+        (_, tangent) = torch.autograd.forward_ad.unpack_dual(reconstruction(cartesian_kdata).data)
+    assert tangent is not None
+    assert torch.isfinite(tangent).all()
+    assert tangent.norm() > 0
+
+
+def test_regularized_iterative_sense_scalar_zero_prior_jvp(cartesian_kdata: KData) -> None:
+    """Preserve forward-mode derivatives for a scalar zero prior with identity regularization."""
+    reconstruction = RegularizedIterativeSENSEReconstruction(
+        fourier_op=IdentityOp(), csm=None, n_iterations=1, regularization_weight=0.5
+    )
+    with torch.autograd.forward_ad.dual_level():
+        reconstruction.regularization_data = torch.autograd.forward_ad.make_dual(torch.tensor(0.0), torch.tensor(1.0))
+        (_, tangent) = torch.autograd.forward_ad.unpack_dual(reconstruction(cartesian_kdata).data)
+    assert tangent is not None
+    torch.testing.assert_close(tangent, torch.full_like(tangent, 1 / 3))
 
 
 @pytest.mark.cuda

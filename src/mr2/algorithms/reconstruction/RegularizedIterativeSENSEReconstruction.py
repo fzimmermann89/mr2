@@ -139,7 +139,12 @@ class RegularizedIterativeSENSEReconstruction(DirectReconstruction):
 
         if not torch.all(self.regularization_weight == 0):
             operator = operator + self.regularization_weight * self.regularization_op.gram
-            if self.regularization_data.requires_grad or not torch.all(self.regularization_data == 0):
+            if (
+                self.regularization_data.numel() != 1
+                or self.regularization_data.requires_grad
+                or torch.autograd.forward_ad.unpack_dual(self.regularization_data).tangent is not None
+                or self.regularization_data != 0
+            ):
                 right_hand_side = (
                     right_hand_side + self.regularization_weight * self.regularization_op.H(self.regularization_data)[0]
                 )
