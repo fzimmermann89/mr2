@@ -1,7 +1,10 @@
 name: PyTest CUDA
 
 on:
-  workflow_call:
+  pull_request:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -49,3 +52,7 @@ jobs:
           name: pytest-report-cuda
           path: pytest-cuda.xml
           if-no-files-found: ignore
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}

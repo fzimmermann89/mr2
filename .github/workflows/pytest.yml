@@ -10,10 +10,6 @@ permissions:
   contents: read
 
 jobs:
-  cuda:
-    name: CUDA tests
-    uses: ./.github/workflows/pytest_cuda.yml
-
   test:
     name: Test ${{ matrix.environment }} (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest

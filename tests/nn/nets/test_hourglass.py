@@ -28,7 +28,7 @@ def test_hourglass_forward(torch_compile: bool, device: str) -> None:
         depths=1,
         n_features=(16, 32, 64),
         attention_neighborhood=(7, 7, None),
-        n_heads=(1, 2, 4),  # CUDA FlexAttention requires at least 16 features per head.
+        n_heads=(1, 2, 4) if device == 'cuda' else 4,  # CUDA FlexAttention requires at least 16 features per head.
         cond_dim=32,
     )
 
