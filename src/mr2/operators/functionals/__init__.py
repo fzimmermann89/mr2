@@ -7,6 +7,7 @@ from mr2.operators.functionals.L2NormSquared import L2NormSquared
 from mr2.operators.functionals.MSE import MSE
 from mr2.operators.functionals.NCC import NCC
 from mr2.operators.functionals.NuclearNorm import NuclearNorm
+from mr2.operators.functionals.RicianNegLogLikelihood import RicianNegLogLikelihood
 from mr2.operators.functionals.SSIM import SSIM
 from mr2.operators.functionals.ZeroFunctional import ZeroFunctional
 
@@ -19,5 +20,6 @@ __all__ = [
     'L2NormSquared',
     'L21Norm',
     'NuclearNorm',
+    'RicianNegLogLikelihood',
     'ZeroFunctional',
 ]
