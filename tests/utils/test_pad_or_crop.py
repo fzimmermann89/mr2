@@ -12,7 +12,7 @@ from mr2.utils.pad_or_crop import pad_or_crop
 @pytest.mark.parametrize('new', [1, 4, 5, 6, 7])
 @pytest.mark.parametrize('dim', [None, (0,), (-1,)])
 def test_pad_or_crop_preserves_center(old: int, new: int, dim: tuple[int, ...] | None) -> None:
-    """Padding and cropping keep the fftshift centre at size // 2."""
+    """Padding and cropping keep the fftshift center at size // 2."""
     data = torch.zeros(old, old)
     data[old // 2, old // 2] = 1
     expected_shape = (new, old) if dim == (0,) else (old, new)

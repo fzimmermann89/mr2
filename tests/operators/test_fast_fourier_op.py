@@ -83,7 +83,7 @@ MATRIX_PARAMETERS = pytest.mark.parametrize(
 def test_fast_fourier_op_center_delta(
     recon_matrix: tuple[int, ...], encoding_matrix: tuple[int, ...], device: str
 ) -> None:
-    """A centred delta transforms to constant k-space without a phase ramp."""
+    """A centered delta transforms to constant k-space without a phase ramp."""
     x = torch.zeros(recon_matrix, dtype=torch.complex64, device=device)
     x[tuple(size // 2 for size in recon_matrix)] = 1
     y = torch.full(encoding_matrix, prod(encoding_matrix) ** -0.5, dtype=x.dtype, device=device)

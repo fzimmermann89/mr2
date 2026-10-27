@@ -16,7 +16,7 @@ def pad_or_crop(
     mode: Literal['constant', 'reflect', 'replicate', 'circular'] = 'constant',
     value: float = 0.0,
 ) -> torch.Tensor:
-    """Change shape of data by cropping or padding, preserving the fftshift centre at ``size // 2``.
+    """Change shape of data by cropping or padding, preserving the fftshift center at ``size // 2``.
 
     Parameters
     ----------

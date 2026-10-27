@@ -58,7 +58,7 @@ def test_zero_pad_op_content() -> None:
 def test_zero_pad_op_preserves_center(
     original_shape: tuple[int, ...], padded_shape: tuple[int, ...], device: str
 ) -> None:
-    """Forward and adjoint preserve a delta at the fftshift centre."""
+    """Forward and adjoint preserve a delta at the fftshift center."""
     x = torch.zeros(original_shape, device=device)
     x[tuple(size // 2 for size in original_shape)] = 1
     y = torch.zeros(padded_shape, device=device)
