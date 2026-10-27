@@ -2,9 +2,11 @@
 
 from pathlib import Path
 
+import nibabel
+import numpy as np
 import pytest
 import torch
-from mr2.data import IData
+from mr2.data import IData, IHeader, Rotation, SpatialDimension
 
 
 @pytest.mark.parametrize(
@@ -50,6 +52,63 @@ def test_IData_to_nifti(dcm_2d, tmp_path, magnitude_only: bool) -> None:
     idata = IData.from_dicom_files(dcm_2d[0].filename)
     idata.to_nifti(tmp_path / 'test.nii', magnitude_only=magnitude_only)
     assert (tmp_path / 'test.nii').exists()
+
+
+@pytest.mark.parametrize('magnitude_only', [True, False])
+@pytest.mark.parametrize('shape', [(4, 6, 8), (1, 5, 7)])
+@pytest.mark.parametrize('angles', [(0.0, 0.0, 0.0), (0.2, 0.3, 1.4)])
+def test_IData_to_nifti_affine(tmp_path, magnitude_only: bool, shape: tuple[int, int, int], angles) -> None:
+    """NIfTI voxel coordinates map to the header's physical coordinates in RAS millimetres."""
+    header = IHeader(
+        resolution=SpatialDimension(z=0.003, y=0.002, x=0.001),
+        orientation=Rotation.from_euler('xyz', angles),
+        position=SpatialDimension(z=torch.tensor(0.01), y=torch.tensor(0.02), x=torch.tensor(0.03)),
+    )
+    data = torch.arange(np.prod(shape).item(), dtype=torch.float32).reshape(1, 1, *shape).to(torch.complex64)
+    idata = IData(data=data, header=header)
+    filename = tmp_path / 'geometry.nii'
+    idata.to_nifti(filename, magnitude_only=magnitude_only)
+    nifti = nibabel.load(filename)
+
+    # Build the reference from physical directions, in exported data order x, y, z.
+    directions = header.orientation.as_directions()[::-1]
+    lps_to_ras_mm = np.array([-1000, -1000, 1000])
+    reference = np.eye(4)
+    for axis, (direction, spacing) in enumerate(zip(directions, header.resolution.zyx[::-1], strict=True)):
+        reference[:3, axis] = (
+            np.array([component.item() for component in direction.zyx[::-1]]) * spacing * lps_to_ras_mm
+        )
+    # mr2 centres non-singleton axes at N/2; a single slice is already at the header position.
+    center = np.array([n / 2 if n > 1 else 0 for n in shape[::-1]])
+    position = np.array([component.item() for component in header.position.zyx[::-1]]) * lps_to_ras_mm
+    reference[:3, 3] = position - reference[:3, :3] @ center
+
+    np.testing.assert_allclose(nifti.affine, reference, atol=1e-5)
+    np.testing.assert_allclose(nibabel.affines.voxel_sizes(nifti.affine), [1, 2, 3], atol=1e-6)
+    np.testing.assert_allclose(nifti.header.get_zooms()[:3], [1, 2, 3], atol=1e-6)
+    np.testing.assert_allclose(nibabel.affines.apply_affine(nifti.affine, center), position, atol=1e-5)
+    assert nibabel.aff2axcodes(nifti.affine) == nibabel.aff2axcodes(reference)
+    if angles == (0.0, 0.0, 0.0):
+        assert nibabel.aff2axcodes(nifti.affine) == ('L', 'P', 'S')
+    assert nifti.header.get_xyzt_units()[0] == 'mm'
+    np.testing.assert_array_equal(
+        np.asanyarray(nifti.dataobj).squeeze(), data[0, 0].numpy().transpose(2, 1, 0).squeeze()
+    )
+
+
+@pytest.mark.parametrize('magnitude_only', [True, False])
+@pytest.mark.parametrize('field', ['te', 'ti', 'tr'])
+@pytest.mark.parametrize('as_tensor', [True, False])
+def test_IData_to_nifti_description(tmp_path, magnitude_only: bool, field: str, as_tensor: bool) -> None:
+    """Timing values in the NIfTI description are labelled in seconds."""
+    header = IHeader(resolution=SpatialDimension(0.003, 0.002, 0.001))
+    setattr(header, field, torch.tensor(0.005) if as_tensor else [0.005])
+    idata = IData(data=torch.zeros(1, 1, 1, 2, 3, dtype=torch.complex64), header=header)
+    filename = tmp_path / 'description.nii'
+    idata.to_nifti(filename, magnitude_only=magnitude_only)
+    description = nibabel.load(filename).header['descrip'].item().decode()
+    timing = next(part for part in description.split('; ') if part.startswith(field.upper() + '='))
+    assert timing.endswith('constant 0.005s')
 
 
 @pytest.mark.parametrize(

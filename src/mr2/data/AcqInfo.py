@@ -13,7 +13,7 @@ from mr2.data.Dataclass import Dataclass
 from mr2.data.Rotation import Rotation
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.utils.reshape import unsqueeze_at, unsqueeze_right
-from mr2.utils.unit_conversion import m_to_mm, micrometer_to_m, mm_to_m
+from mr2.utils.unit_conversion import m_to_micrometer, m_to_mm, micrometer_to_m, mm_to_m
 
 _convert_time_stamp_type: TypeAlias = Callable[
     [
@@ -386,7 +386,10 @@ def write_acqinfo_to_ismrmrd_acquisition_(
         acq_info.idx.user7,
     )
     # active_channesl, number_of_samples and trajectory_dimensions are read-only and cannot be set
-    ismrmrd_acq.patient_table_position = acq_info.patient_table_position[0].apply(m_to_mm).zyx[::-1]  # zyx -> xyz
+    # Match the micrometre convention used by the reader and Siemens ISMRMRD files.
+    ismrmrd_acq.patient_table_position = (
+        acq_info.patient_table_position[0].apply(m_to_micrometer).zyx[::-1]
+    )  # zyx -> xyz
     directions = acq_info.orientation[0].as_directions()
     ismrmrd_acq.slice_dir = directions[0].zyx[::-1]  # zyx -> xyz
     ismrmrd_acq.phase_dir = directions[1].zyx[::-1]

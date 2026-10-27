@@ -190,23 +190,29 @@ class IData(Dataclass):
             otherwise the complex image data is saved as a NIFTI2 file.
             Many software packages do not support complex data.
         """
-        orientation = self.header.orientation.mean().as_matrix()
-        position = torch.stack([p.mean() for p in self.header.position.zyx])
-        affine_zyx = torch.cat(
-            [torch.tensor([[1.0, 0.0, 0.0, 0.0]]), torch.cat([position[:, None], orientation], 1)], 0
-        )
-        affine = affine_zyx.flip([0, 1])
+        # Exported voxel axes and physical coordinates are both ordered x, y, z.
+        orientation = self.header.orientation.mean().as_matrix().flip([0, 1])
+        resolution = orientation.new_tensor(self.header.resolution.zyx[::-1])
+        position = torch.stack([p.mean() for p in self.header.position.zyx[::-1]])
+        affine = orientation.new_zeros(4, 4)
+        affine[:3, :3] = orientation * resolution
+        # mr2 stores the image centre at N/2 along non-singleton axes.
+        center = orientation.new_tensor([n / 2 if n > 1 else 0 for n in self.data.shape[-3:][::-1]])
+        affine[:3, 3] = position - affine[:3, :3] @ center
+        affine[:3] = m_to_mm(affine[:3])
+        affine[:2] *= -1  # LPS to RAS
+        affine[3, 3] = 1
         data = rearrange(self.data, '... other coils z y x-> x y z 1 other (...) coils')
         if magnitude_only:
             nifti = nibabel.nifti2.Nifti1Image(data.abs().numpy(), affine.numpy(), dtype=np.float32)
         else:
             nifti = nibabel.nifti2.Nifti2Image(data.numpy(), affine.numpy(), dtype=np.complex64)
 
-        nifti.header['pixdim'][1:4] = [self.header.resolution.x, self.header.resolution.y, self.header.resolution.z]
+        nifti.header.set_xyzt_units('mm')
         description = (
-            f'TE={summarize_values(self.header.te)}ms; '
-            f'TI={summarize_values(self.header.ti)}ms; '
-            f'TR={summarize_values(self.header.tr)}ms; '
+            f'TE={summarize_values(self.header.te)}s; '
+            f'TI={summarize_values(self.header.ti)}s; '
+            f'TR={summarize_values(self.header.tr)}s; '
             f'FA={summarize_values(self.header.fa)}rad'
         )
         nifti.header['descrip'] = description.encode('utf-8')
