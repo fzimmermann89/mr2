@@ -17,6 +17,8 @@ class Jacobian(LinearOperator):
 
     Notes
     -----
+    If :math:`x_0` requires gradients and is not a `torch.nn.Parameter`, convert it to the desired device and dtype
+    before constructing the Jacobian; converting the Jacobian does not convert these tensors.
     Convert this operator to the desired device and dtype before evaluating it.
     Otherwise, adjoint evaluations and the cached value at :math:`x_0` can still use the original device and dtype.
     """
