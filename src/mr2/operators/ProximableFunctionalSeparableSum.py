@@ -24,8 +24,6 @@ class ProximableFunctionalSeparableSum(Operator[Unpack[T], tuple[torch.Tensor]])
     Use ``f | g`` to build a separable sum from two proximable functionals.
     """
 
-    functionals: tuple[ProximableFunctional, ...]
-
     @overload
     def __init__(self: ProximableFunctionalSeparableSum[torch.Tensor], f1: ProximableFunctional, /) -> None: ...
 
@@ -90,7 +88,12 @@ class ProximableFunctionalSeparableSum(Operator[Unpack[T], tuple[torch.Tensor]])
             The proximable functionals to be summed.
         """
         super().__init__()
-        self.functionals = functionals
+        self._functionals = torch.nn.ModuleList(functionals)
+
+    @property
+    def functionals(self) -> tuple[ProximableFunctional, ...]:
+        """The proximable functionals in the sum."""
+        return cast(tuple[ProximableFunctional, ...], tuple(self._functionals))
 
     def __call__(self, *x: Unpack[T]) -> tuple[torch.Tensor]:
         """Evaluate the sum of separable functionals.
