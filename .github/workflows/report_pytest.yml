@@ -99,7 +99,7 @@ jobs:
 
       - name: Post Failure Comment if Coverage Comment failed
         if: >-
-          steps.pr-context.outputs.number != '' &&
+          !cancelled() && steps.pr-context.outputs.number != '' &&
           (steps.download_report.outcome != 'success' || steps.coverage_comment.outputs.coverageHtml == '')
         uses: edumserrano/find-create-or-update-comment@v3
         with:

@@ -53,15 +53,19 @@ def test_jacobian_value_at_x0() -> None:
 
 
 @pytest.mark.cuda
-def test_jacobian_cache_is_cleared_when_moved() -> None:
+@pytest.mark.parametrize('requires_grad', [False, True])
+def test_jacobian_cache_is_cleared_when_moved(requires_grad: bool) -> None:
     """Cached values and VJPs follow the Jacobian across device moves."""
-    x0 = torch.tensor([1.0, 2.0])
+    x0 = torch.tensor([1.0, 2.0], requires_grad=requires_grad)
     jacobian = Jacobian(L2NormSquared(), x0)
     jacobian.adjoint(torch.tensor(0.5))
     assert jacobian.value_at_x0[0].device.type == 'cpu'
 
     jacobian.cuda()
     torch.testing.assert_close(jacobian.value_at_x0[0], x0.cuda().square().sum())
+    if requires_grad:
+        (gradient,) = torch.autograd.grad(jacobian.value_at_x0[0], x0)
+        torch.testing.assert_close(gradient, 2 * x0)
     (actual,) = jacobian.adjoint(torch.tensor(0.5, device='cuda'))
     torch.testing.assert_close(actual, x0.cuda())
 
@@ -71,13 +75,17 @@ def test_jacobian_cache_is_cleared_when_moved() -> None:
     torch.testing.assert_close(actual, x0)
 
 
-def test_jacobian_cache_is_cleared_when_cast() -> None:
+@pytest.mark.parametrize('requires_grad', [False, True])
+def test_jacobian_cache_is_cleared_when_cast(requires_grad: bool) -> None:
     """Cached values and VJPs follow the Jacobian dtype after a cast."""
-    x0 = torch.tensor([1.0, 2.0])
+    x0 = torch.tensor([1.0, 2.0], requires_grad=requires_grad)
     jacobian = Jacobian(L2NormSquared(), x0)
     jacobian.adjoint(torch.tensor(0.5))
     jacobian.double()
     torch.testing.assert_close(jacobian.value_at_x0[0], x0.double().square().sum())
+    if requires_grad:
+        (gradient,) = torch.autograd.grad(jacobian.value_at_x0[0], x0)
+        torch.testing.assert_close(gradient, 2 * x0)
 
     (actual,) = jacobian.adjoint(torch.tensor(0.5, dtype=torch.float64))
     assert actual.dtype == torch.float64
