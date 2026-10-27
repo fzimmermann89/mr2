@@ -165,7 +165,7 @@ class KData(Dataclass):
         is_hdf5 = file_format == 'ismrmrd-hdf5' or (
             file_format is None and (not isinstance(filename, (str, PathLike)) or h5py.is_hdf5(filename))
         )
-        if is_hdf5 and cls._is_mr2_file(filename):
+        if file_format is None and is_hdf5 and cls._is_mr2_file(filename):
             return super().from_file(filename)
         if trajectory is None:
             raise ValueError('A trajectory source is required for ISMRMRD input.')
@@ -308,6 +308,7 @@ class KData(Dataclass):
             remain open. Close the iterator when stopping early to release an owned file.
         trajectory
             Trajectory source, as in `from_ismrmrd`, applied to each acquisition.
+            A precomputed KTrajectory must match one readout, rather than the full measurement.
             KTrajectoryIsmrmrd must use normalize=False, since normalization requires the full measurement.
         header_overwrites
             Header fields to overwrite.
@@ -341,7 +342,7 @@ class KData(Dataclass):
                             acquisition_filter_criterion=None,
                             header_defaults=header_defaults,
                         )
-                        del obj
+                        del obj  # Release raw samples while the caller processes KData.
                         yield kdata
 
     @classmethod

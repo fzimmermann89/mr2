@@ -519,6 +519,8 @@ def test_from_file_mr2(raw_data, tmp_path, use_buffer, data_type) -> None:
     if data_type == 'kdata':
         assert isinstance(result, KData)
         assert_kdata_equal(result, expected)
+        with pytest.raises(ValueError, match='trajectory source'):
+            KData.from_file(source, file_format='ismrmrd-hdf5')
     elif data_type == 'noise':
         assert isinstance(result, KNoise)
         torch.testing.assert_close(result.data, expected.data)

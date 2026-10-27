@@ -155,17 +155,6 @@ class KTrajectory(Dataclass):
         """
         if cls._is_mr2_file(filename):
             return super().from_file(filename)
-        return cls._from_ismrmrd(filename, dataset_idx, acquisition_filter_criterion, normalize)
-
-    @classmethod
-    def _from_ismrmrd(
-        cls,
-        filename: FileOrPath,
-        dataset_idx: int = -1,
-        acquisition_filter_criterion: Callable[[ismrmrd.Acquisition], bool] | None = None,
-        normalize: bool = False,
-    ) -> Self:
-        """Read trajectory samples from an ISMRMRD HDF5 dataset."""
         with h5py.File(filename, 'r') as hdf5_file:
             file = ismrmrd.file.Folder(hdf5_file)
             datasets = list(file.keys())

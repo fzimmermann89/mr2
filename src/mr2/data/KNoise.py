@@ -36,12 +36,6 @@ class KNoise(Dataclass):
         """
         if cls._is_mr2_file(filename):
             return super().from_file(filename)
-        return cls._from_ismrmrd(filename, dataset_idx, acquisition_filter_criterion)
-
-    @classmethod
-    def _from_ismrmrd(cls, filename: FileOrPath, dataset_idx: int, acquisition_filter_criterion: Callable) -> Self:
-        """Read noise acquisitions from ISMRMRD HDF5."""
-        # Can raise FileNotFoundError
         with h5py.File(filename, 'r') as hdf5_file:
             file = ismrmrd.file.Folder(hdf5_file)
             ds = file[list(file.keys())[dataset_idx]]

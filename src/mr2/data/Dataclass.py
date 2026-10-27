@@ -909,13 +909,7 @@ class Dataclass:
 
     @classmethod
     def _from_mr2(cls, filepath: FileOrPath) -> Self:
-        """Load a dataclass from an MR2 file.
-
-        Parameters
-        ----------
-        filepath
-            Path or seekable binary file containing MR2 data.
-        """
+        """Restore an MR2 dataclass, checking its stored type and version."""
         with h5py.File(filepath, 'r') as f:
             if (version := f.attrs.get('version', None)) != _MR2_VERSION:
                 warn(f'Unsupported MR2 version {version}. Only version {_MR2_VERSION} is supported.', stacklevel=2)

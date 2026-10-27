@@ -84,9 +84,20 @@ def test_IData_from_dcm_folder_via_path(dcm_2d_multi_echo_times):
 
 
 def test_IData_from_wrong_path():
-    """Error for non-existing/empty folder/wrong suffix."""
+    """Error for a missing path."""
     with pytest.raises(FileNotFoundError):
         _ = IData.from_file('non/existing/path')
+
+
+def test_IData_folder_suffix(dcm_2d, tmp_path):
+    """Folder loading honors the suffix and reports an empty selection."""
+    filename = tmp_path / 'image.custom'
+    filename.write_bytes(dcm_2d[0].filename.read_bytes())
+    with pytest.raises(ValueError, match='No dicom files with suffix'):
+        IData.from_file(tmp_path)
+    expected = IData.from_file(filename)
+    actual = IData.from_file(tmp_path, suffix='custom')
+    torch.testing.assert_close(actual.data, expected.data)
 
 
 def test_IData_from_empty_dcm_file_list():

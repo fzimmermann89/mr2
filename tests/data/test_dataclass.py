@@ -1,5 +1,6 @@
 """Tests the base Dataclass."""
 
+import io
 from dataclasses import field
 from pathlib import Path
 
@@ -634,13 +635,17 @@ def test_kdata_save_as_mr2_roundtrip(consistently_shaped_kdata: KData, tmp_path:
     assert reloaded.header.encoding_fov == consistently_shaped_kdata.header.encoding_fov
 
 
-def test_idata_save_as_mr2_roundtrip(random_kheader, random_test_data, tmp_path: Path) -> None:
+@pytest.mark.parametrize('use_buffer', [False, True])
+def test_idata_save_as_mr2_roundtrip(random_kheader, random_test_data, tmp_path: Path, use_buffer) -> None:
     """Test MR2 roundtrip for IData."""
     idata = IData.from_tensor_and_kheader(data=random_test_data, header=random_kheader)
     filepath = tmp_path / 'idata.mr2'
 
     idata.save_as_mr2(filepath)
-    reloaded = IData.from_file(filepath)
+    source = io.BytesIO(filepath.read_bytes()) if use_buffer else filepath
+    reloaded = IData.from_file(source)
+    if isinstance(source, io.BytesIO):
+        assert not source.closed
 
     torch.testing.assert_close(reloaded.data, idata.data)
     torch.testing.assert_close(reloaded.header.position.z, idata.header.position.z)
