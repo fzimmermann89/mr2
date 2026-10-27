@@ -64,7 +64,7 @@ def test_pocs_full_sampling() -> None:
 def test_partial_fourier_calibration(size: int, side: str) -> None:
     """The symmetric acquired center preserves known phase on odd/even grids and either side."""
     support = torch.arange(size) >= 3 if side == 'high' else torch.arange(size) < size - 3
-    center = _partial_fourier_center(support, 0, torch.get_default_dtype())
+    center, _, _ = _partial_fourier_center(support, 0, torch.get_default_dtype())
     conjugate_indices = (2 * (size // 2) - torch.arange(size)) % size
     assert torch.equal(center, center[conjugate_indices])
     assert torch.all(center[~support] == 0)
@@ -86,7 +86,7 @@ def test_fixed_phase_signed_projection() -> None:
     fft = FastFourierOp((0,))
     kspace = torch.tensor([0, 0, 1 + 4j, 3, 2 - 1j, -4j, 2, -3j], dtype=torch.complex128)
     mask = torch.arange(8) >= 2
-    center = _partial_fourier_center(mask, 0, kspace.real.dtype)
+    center, _, _ = _partial_fourier_center(mask, 0, kspace.real.dtype)
     phase = _partial_fourier_phase(kspace, center, fft)
     (image,) = fft.H(kspace)
     demodulated = (phase.conj() * image).real

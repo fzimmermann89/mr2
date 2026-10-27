@@ -18,13 +18,15 @@ def _partial_fourier_setup(
         raise ValueError('acquired_mask must be boolean and on the same device as kspace.')
     dim = normalize_indices(kspace.ndim, dim)
     axis = normalize_index(kspace.ndim, partial_fourier_dim)
-    if not dim or axis not in dim:
+    if axis not in dim:
         raise ValueError('Fourier dimensions must be non-empty and include partial_fourier_dim.')
     return torch.broadcast_to(acquired_mask, kspace.shape), axis, FastFourierOp(dim)
 
 
-def _partial_fourier_center(acquired_mask: torch.Tensor, axis: int, dtype: torch.dtype) -> torch.Tensor:
-    """Return a centered cosine taper within the conjugate-symmetric acquired region.
+def _partial_fourier_center(
+    acquired_mask: torch.Tensor, axis: int, dtype: torch.dtype
+) -> tuple[torch.Tensor, int, int]:
+    """Return the symmetric center taper, calibration radius and acquired side (-1 or +1).
 
     The mask must vary only along ``axis`` and contain one contiguous interval
     touching either edge. The even-grid Nyquist sample is excluded from calibration.
@@ -51,7 +53,7 @@ def _partial_fourier_center(acquired_mask: torch.Tensor, axis: int, dtype: torch
     )
     shape = [1] * acquired_mask.ndim
     shape[axis] = size
-    return taper.reshape(shape)
+    return taper.reshape(shape), radius, -1 if first == 0 else 1
 
 
 def _partial_fourier_phase(kspace: torch.Tensor, center: torch.Tensor, fourier_op: FastFourierOp) -> torch.Tensor:
@@ -118,7 +120,7 @@ def pocs_partial_fourier(
     mask, axis, fourier_op = _partial_fourier_setup(kspace, acquired_mask, dim, partial_fourier_dim)
     if mask.all():
         return kspace.clone()
-    center = _partial_fourier_center(mask, axis, kspace.real.dtype)
+    center, _, _ = _partial_fourier_center(mask, axis, kspace.real.dtype)
     measured = torch.where(mask, kspace, 0)
     if n_iterations == 0:
         return measured
@@ -145,7 +147,7 @@ def homodyne_partial_fourier(
     Returns :math:`\operatorname{Re}(\overline{p} F^H(w k))`, where :math:`p`
     is the unit phase estimated from the same tapered symmetric center as
     `~mr2.algorithms.pocs_partial_fourier`. With ``restore_phase=True``, multiply
-    this signed real image by :math:`p`. Neither output takes a magnitude.
+    this signed real image by :math:`p`. For partial sampling, neither output takes a magnitude.
 
     Parameters
     ----------
@@ -190,13 +192,10 @@ def homodyne_partial_fourier(
     if mask.all():
         (image,) = fourier_op.H(kspace)
         return image if restore_phase else image.abs()
-    center = _partial_fourier_center(mask, axis, kspace.real.dtype)
+    center, radius, side = _partial_fourier_center(mask, axis, kspace.real.dtype)
     measured = torch.where(mask, kspace, 0)
     phase = _partial_fourier_phase(measured, center, fourier_op)
     size = kspace.shape[axis]
-    radius = int((center > 0).sum()) // 2
-    support = mask.movedim(axis, -1)[(0,) * (mask.ndim - 1)]
-    side = -1 if bool(support[0]) else 1
     frequency = torch.arange(size, dtype=kspace.real.dtype, device=kspace.device) - size // 2
     weight = (1 + side * frequency / radius).clamp(0, 2)
     if size % 2 == 0:
