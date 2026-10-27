@@ -34,8 +34,6 @@ def test_pocs_recovery(size: int, side: str, axis: int) -> None:
 @pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
 def test_pocs_preserves_measurements(device: str) -> None:
     """Acquired outer samples and zeros survive every iteration; missing values are ignored."""
-    if device == 'cuda' and not torch.cuda.is_available():
-        pytest.skip('CUDA unavailable')
     kspace = torch.ones(2, 3, 16, 12, dtype=torch.complex64, device=device)
     kspace[..., 4, :] = 0
     mask = (torch.arange(16, device=device) >= 4)[:, None].expand(16, 12)
@@ -86,8 +84,9 @@ def test_fixed_phase_signed_projection() -> None:
     fft = FastFourierOp((0,))
     kspace = torch.tensor([0, 0, 1 + 4j, 3, 2 - 1j, -4j, 2, -3j], dtype=torch.complex128)
     mask = torch.arange(8) >= 2
-    center, _, _ = _partial_fourier_center(mask, 0, kspace.real.dtype)
-    phase = _partial_fourier_phase(kspace, center, fft)
+    taper = kspace.real.new_tensor([0, 0, 0.25, 0.75, 1, 0.75, 0.25, 0])
+    (low_resolution,) = fft.H(kspace * taper)
+    phase = torch.exp(1j * low_resolution.angle())
     (image,) = fft.H(kspace)
     demodulated = (phase.conj() * image).real
     assert (demodulated < 0).any()
@@ -97,21 +96,23 @@ def test_fixed_phase_signed_projection() -> None:
 
 
 @pytest.mark.parametrize(
-    ('mask', 'dim', 'axis'),
+    ('mask', 'dim', 'axis', 'error'),
     [
-        ([False] * 8, (0,), 0),
-        ([False, False, False, False, True, True, True, True], (0,), 0),
-        ([False, True, True, True, True, True, True, False], (0,), 0),
-        ([True, False, True, True, True, True, True, True], (0,), 0),
-        ([[False, False, True, True, True, True, True, True], [True] * 8], (1,), 1),
-        ([True] * 8, (0,), -2),
-        ([[True] * 8], (0,), 1),
+        ([False] * 8, (0,), 0, ValueError),
+        ([False, False, False, False, True, True, True, True], (0,), 0, ValueError),
+        ([False, True, True, True, True, True, True, False], (0,), 0, ValueError),
+        ([True, False, True, True, True, True, True, True], (0,), 0, ValueError),
+        ([[False, False, True, True, True, True, True, True], [True] * 8], (1,), 1, ValueError),
+        ([True] * 8, (0,), -2, IndexError),
+        ([[True] * 8], (0,), 1, ValueError),
     ],
     ids=['empty', 'no-conjugate-pair', 'interior', 'hole', 'varying', 'out-of-range', 'missing-pf-axis'],
 )
-def test_pocs_unsupported_inputs(mask: list[bool] | list[list[bool]], dim: tuple[int, ...], axis: int) -> None:
+def test_pocs_unsupported_inputs(
+    mask: list[bool] | list[list[bool]], dim: tuple[int, ...], axis: int, error: type[Exception]
+) -> None:
     """Reject unsupported acquisition support and invalid transform axes."""
     acquired = torch.tensor(mask)
     kspace = torch.ones(acquired.shape, dtype=torch.complex64)
-    with pytest.raises((ValueError, IndexError)):
+    with pytest.raises(error):
         pocs_partial_fourier(kspace, acquired, dim, axis)

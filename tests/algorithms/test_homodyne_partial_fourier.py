@@ -49,8 +49,6 @@ def test_homodyne_smooth_phase(size: int, axis: int, side: str) -> None:
 @pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
 def test_homodyne_full_and_batched(device: str) -> None:
     """Full sampling has unit scale, while partial sampling preserves batch/device conventions."""
-    if device == 'cuda' and not torch.cuda.is_available():
-        pytest.skip('CUDA unavailable')
     kspace = torch.ones(2, 3, 16, dtype=torch.complex64, device=device)
     fft = FastFourierOp((-1,))
     (image,) = fft.H(kspace)
