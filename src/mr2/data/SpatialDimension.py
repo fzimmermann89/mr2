@@ -333,10 +333,17 @@ class SpatialDimension(Dataclass, Generic[T_co]):
         """Negate SpatialDimension."""
         return SpatialDimension(-self.z, -self.y, -self.x)
 
+    # Tensor masks specialize the bool return required by object comparisons.
+    @overload
+    def __eq__(  # type: ignore[overload-overlap]
+        self: SpatialDimension[T_co_scalar], other: SpatialDimension[T_co_vector]
+    ) -> T_co_vector: ...
     @overload
     def __eq__(self: SpatialDimension[T_co_scalar], other: object) -> bool: ...
     @overload
-    def __eq__(self: SpatialDimension[T_co_vector], other: SpatialDimension[T_co_vector]) -> T_co_vector: ...
+    def __eq__(
+        self: SpatialDimension[T_co_vector], other: SpatialDimension[T_co_vector] | SpatialDimension[T_co_scalar]
+    ) -> T_co_vector: ...
 
     def __eq__(
         self: SpatialDimension[T_co_scalar] | SpatialDimension[T_co_vector],
@@ -348,9 +355,15 @@ class SpatialDimension(Dataclass, Generic[T_co]):
         return (self.z == other.z) & (self.y == other.y) & (self.x == other.x)
 
     @overload
+    def __ne__(  # type: ignore[overload-overlap]
+        self: SpatialDimension[T_co_scalar], other: SpatialDimension[T_co_vector]
+    ) -> T_co_vector: ...
+    @overload
     def __ne__(self: SpatialDimension[T_co_scalar], other: object) -> bool: ...
     @overload
-    def __ne__(self: SpatialDimension[T_co_vector], other: SpatialDimension[T_co_vector]) -> T_co_vector: ...
+    def __ne__(
+        self: SpatialDimension[T_co_vector], other: SpatialDimension[T_co_vector] | SpatialDimension[T_co_scalar]
+    ) -> T_co_vector: ...
 
     def __ne__(
         self: SpatialDimension[T_co_scalar] | SpatialDimension[T_co_vector],

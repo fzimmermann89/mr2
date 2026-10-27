@@ -423,6 +423,21 @@ def test_spatial_dimension_ne_scalar() -> None:
     assert original.__ne__(object()) is NotImplemented
 
 
+def test_spatial_dimension_eq_ne_mixed() -> None:
+    """Scalar and tensor comparisons return tensor masks in either order."""
+    scalar = SpatialDimension(1, 2, 3)
+    tensor = SpatialDimension(torch.tensor([0, 1]), torch.tensor([2]), torch.tensor([3]))
+    assert_type(scalar == tensor, torch.Tensor)
+    assert_type(tensor == scalar, torch.Tensor)
+    assert_type(scalar != tensor, torch.Tensor)
+    assert_type(tensor != scalar, torch.Tensor)
+    expected = torch.tensor([False, True])
+    torch.testing.assert_close(scalar == tensor, expected)
+    torch.testing.assert_close(tensor == scalar, expected)
+    torch.testing.assert_close(scalar != tensor, ~expected)
+    torch.testing.assert_close(tensor != scalar, ~expected)
+
+
 def test_spatial_dimension_comp_scalar() -> None:
     """Test equality of SpatialDimension."""
     assert SpatialDimension(1, 2, 3) > SpatialDimension(0, 0, 0)
