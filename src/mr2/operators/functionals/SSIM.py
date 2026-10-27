@@ -83,6 +83,7 @@ def ssim3d(
     if weight is not None:
         if (weight < 0).any():
             raise ValueError('Mask contains negative values')
+        weight = weight.to(device=prediction.device)
         target, prediction, weight = cast(
             tuple[torch.Tensor, torch.Tensor, torch.Tensor], torch.broadcast_tensors(target, prediction, weight)
         )
@@ -106,7 +107,7 @@ def ssim3d(
         # Set weights to 0 for windows that are not fully inside the mask.
         valid = local_mean((weight > 0).to(dtype=weight.dtype)) == 1
         weight = local_mean(weight) * valid
-        weight /= weight.sum(dim=(-3, -2, -1), keepdim=True).clamp_min(1)
+        weight /= weight.sum(dim=(-3, -2, -1), keepdim=True).clamp_min(1e-12)
 
     if data_range is None:
         if weight is None:

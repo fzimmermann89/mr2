@@ -1,11 +1,35 @@
 """Test the SSIM functional."""
 
 from collections.abc import Sequence
+from typing import Literal
 
 import pytest
 import torch
 from mr2.operators.functionals.SSIM import SSIM
 from mr2.utils import RandomGenerator
+
+
+@pytest.mark.parametrize('reduction', ['full', 'volume', 'none'])
+@pytest.mark.parametrize('soft_weight', [False, True])
+@pytest.mark.parametrize('scale', [0.01, 1e-6, 100.0])
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+def test_ssim_weight_scale(
+    reduction: Literal['full', 'volume', 'none'], soft_weight: bool, scale: float, device: str
+) -> None:
+    """Scaling mask or soft weights must not change SSIM values or gradients."""
+    if device == 'cuda' and not torch.cuda.is_available():
+        pytest.skip('CUDA unavailable')
+    rng = RandomGenerator(0)
+    target = rng.float32_tensor((2, 1, 10, 10)).to(device)
+    prediction = (0.8 * target + 0.2 * rng.rand_like(target)).requires_grad_()
+    weight = rng.rand_like(target, low=0.1, high=1.0) if soft_weight else torch.ones_like(target)
+    weight[..., :1, :] = 0
+    expected = SSIM(target, weight, reduction=reduction)(prediction)[0]
+    result = SSIM(target, scale * weight, reduction=reduction)(prediction)[0]
+    torch.testing.assert_close(result, expected)
+    expected_grad = torch.autograd.grad(expected.sum(), prediction)[0]
+    result_grad = torch.autograd.grad(result.sum(), prediction)[0]
+    torch.testing.assert_close(result_grad, expected_grad)
 
 
 def test_ssim() -> None:

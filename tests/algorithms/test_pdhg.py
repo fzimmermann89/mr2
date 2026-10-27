@@ -3,9 +3,40 @@
 import pytest
 import torch
 from mr2.algorithms.optimizers import pdhg
+from mr2.algorithms.optimizers.pdhg import PDHGStatus
 from mr2.operators import FastFourierOp, IdentityOp, LinearOperatorMatrix, ProximableFunctionalSeparableSum, WaveletOp
 from mr2.operators.functionals import L1Norm, L1NormViewAsReal, L2NormSquared, ZeroFunctional
 from mr2.utils import RandomGenerator
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('explicit_steps', [False, True])
+def test_pdhg_default_functionals(device: str, explicit_steps: bool) -> None:
+    """PDHG and its callback objective work with unmoved default functionals."""
+    if device == 'cuda' and not torch.cuda.is_available():
+        pytest.skip('CUDA unavailable')
+    initial = torch.tensor([-3.0, 0.0, 4.0], device=device)
+    objectives = []
+
+    def callback(status: PDHGStatus) -> None:
+        objective = status['objective'](*status['solution'])
+        assert objective.device == initial.device
+        assert torch.isfinite(objective)
+        objectives.append(objective)
+
+    (result,) = pdhg(
+        f=L1Norm(),
+        g=None,
+        operator=None,
+        initial_values=(initial,),
+        primal_stepsize=0.5 if explicit_steps else None,
+        dual_stepsize=0.5 if explicit_steps else None,
+        max_iterations=128,
+        tolerance=0,
+        callback=callback,
+    )
+    assert len(objectives) == 128
+    torch.testing.assert_close(result, torch.zeros_like(initial), atol=1e-5, rtol=0)
 
 
 def test_l2_l1_identification1() -> None:

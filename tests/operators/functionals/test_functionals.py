@@ -4,7 +4,18 @@ from typing import Literal
 import pytest
 import torch
 from mr2.operators.Functional import ElementaryFunctional, ElementaryProximableFunctional
-from mr2.operators.functionals import MSE, L1Norm, L1NormViewAsReal, L2NormSquared, L21Norm, NuclearNorm, ZeroFunctional
+from mr2.operators.functionals import (
+    MSE,
+    NCC,
+    SSIM,
+    L1Norm,
+    L1NormViewAsReal,
+    L2NormSquared,
+    L21Norm,
+    NuclearNorm,
+    RicianNegLogLikelihood,
+    ZeroFunctional,
+)
 from mr2.utils import RandomGenerator
 from mr2.utils.reshape import normalize_indices
 from typing_extensions import TypedDict
@@ -16,6 +27,73 @@ from tests.operators.functionals.conftest import (
     functional_test_cases,
     make_functional,
 )
+
+
+@pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
+@pytest.mark.parametrize('functional', FUNCTIONALS)
+@pytest.mark.parametrize(
+    ('method', 'sigma_device'),
+    [
+        ('forward', None),
+        ('prox', None),
+        ('prox', 'cpu'),
+        ('prox', 'cuda'),
+        ('prox_convex_conj', None),
+        ('prox_convex_conj', 'cpu'),
+        ('prox_convex_conj', 'cuda'),
+    ],
+)
+@pytest.mark.parametrize('dtype', [torch.float32, torch.complex64])
+@pytest.mark.parametrize('scalar_parameters', [False, True])
+def test_functional_cuda_scalar_parameters(
+    functional: type[ElementaryFunctional],
+    method: str,
+    dtype: torch.dtype,
+    sigma_device: str | None,
+    scalar_parameters: bool,
+) -> None:
+    """Unmoved scalar parameters must work with CUDA inputs in every method."""
+    f = (
+        make_functional(functional, target=0.25, weight=0.7, divide_by_n=True)
+        if scalar_parameters
+        else make_functional(functional, divide_by_n=True)
+    )
+    x = RandomGenerator(0).rand_tensor((2, 3, 4), dtype=dtype)
+    operation = getattr(f, method)
+    sigma = 0.5 if sigma_device is None else torch.tensor(0.5, device=sigma_device)
+    expected = operation(x)[0] if method == 'forward' else operation(x, 0.5)[0]
+    result = operation(x.cuda())[0] if method == 'forward' else operation(x.cuda(), sigma)[0]
+
+    assert result.device.type == 'cuda'
+    torch.testing.assert_close(result.cpu(), expected, rtol=1e-5, atol=1e-6)
+    assert f.weight.device.type == 'cpu'
+    assert f.target.device.type == 'cpu'
+
+
+@pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
+@pytest.mark.parametrize('functional', [SSIM, NCC, RicianNegLogLikelihood])
+@pytest.mark.parametrize('scalar_weight', [False, True])
+def test_nonproximable_functional_cuda_scalar_parameters(
+    functional: type[SSIM | NCC | RicianNegLogLikelihood], scalar_weight: bool
+) -> None:
+    """Check default and CPU scalar parameters of the remaining functionals on CUDA."""
+    rng = RandomGenerator(0)
+    x = rng.float32_tensor((2, 1, 9, 9))
+    f: SSIM | NCC | RicianNegLogLikelihood
+    if functional is RicianNegLogLikelihood:
+        f = RicianNegLogLikelihood(target=0.5, noise_std=0.25, weight=0.7 if scalar_weight else 1.0)
+        expected = f(x)[0]
+    else:
+        target = rng.rand_like(x)
+        weight = torch.tensor(0.7) if scalar_weight else None
+        f = SSIM(target, weight=weight) if functional is SSIM else NCC(target, weight=weight)
+        expected = f(x)[0]
+        f.target = target.cuda()
+    result = f(x.cuda())[0]
+    assert result.device.type == 'cuda'
+    torch.testing.assert_close(result.cpu(), expected)
 
 
 @pytest.mark.parametrize('shape', [[1, 2, 3], ()])

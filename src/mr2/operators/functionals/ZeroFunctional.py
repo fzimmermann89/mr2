@@ -49,7 +49,7 @@ class ZeroFunctional(ElementaryProximableFunctional):
         else:
             new_shape = [s for i, s in enumerate(x.shape) if i not in normal_dim]
 
-        return (torch.zeros(new_shape, dtype=dtype, device=self.target.device),)
+        return (torch.zeros(new_shape, dtype=dtype, device=x.device),)
 
     def prox(self, x: torch.Tensor, sigma: float | torch.Tensor = 1.0) -> tuple[torch.Tensor,]:
         """Apply the proximal operator to a tensor.
