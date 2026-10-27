@@ -9,11 +9,16 @@ from mr2.phantoms.EllipsePhantom import EllipsePhantom
 from mr2.utils import RandomGenerator
 
 
+@pytest.fixture(params=['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+def device(request) -> str:
+    return request.param
+
+
 @pytest.fixture
-def kdata():
+def kdata(device: str):
     matrix = SpatialDimension(x=128, y=128, z=1)
     kdata = EllipsePhantom().kdata(KTrajectoryCartesian.fullysampled(matrix), matrix)
-    return kdata
+    return kdata.to(device)
 
 
 @pytest.fixture

@@ -109,7 +109,9 @@ class ConjugateGradientDC(Module):
             op = op + weight
             return op
 
-        def rhs_factory(_csm: torch.Tensor, weight: torch.Tensor, zero_filled: torch.Tensor, image: torch.Tensor):
+        def rhs_factory(csm: torch.Tensor, weight: torch.Tensor, zero_filled: torch.Tensor, image: torch.Tensor):
+            if csm.numel():
+                (zero_filled,) = SensitivityOp(csm).adjoint(zero_filled)
             return (zero_filled + weight * image,)
 
         cg_op = ConjugateGradientOp(operator_factory=operator_factory, rhs_factory=rhs_factory)

@@ -9,7 +9,7 @@ def test_gradient_descent_dc(
     image_noisy: torch.Tensor, kdata_us: KData, image: torch.Tensor, image_us: torch.Tensor
 ) -> None:
     image_noisy = image_noisy.clone().requires_grad_(True)
-    dc = GradientDescentDC(initial_stepsize=1.0)
+    dc = GradientDescentDC(initial_stepsize=1.0).to(image_noisy.device)
     result = dc(image_noisy, kdata_us)
     loss = (result - image).abs().mean()
     assert loss < (image_noisy - image).abs().mean()
