@@ -80,9 +80,9 @@ class PCACompressionOp(LinearOperator):
             Prefer calling the instance of the PCACompressionOp operator as ``operator(x)`` over
             directly calling this method. See this PyTorch `discussion <https://discuss.pytorch.org/t/is-model-forward-x-the-same-as-model-call-x/33460/3>`_.
         """
-        if torch.broadcast_shapes(self._compression_matrix.shape[:-2], data.shape[:-1]) != data.shape[:-1]:
-            raise ValueError('PCA input must have fully expanded batch dimensions.')
         try:
+            if torch.broadcast_shapes(self._compression_matrix.shape[:-2], data.shape[:-1]) != data.shape[:-1]:
+                raise ValueError('PCA input must have fully expanded batch dimensions.')
             result = (self._compression_matrix @ data.unsqueeze(-1)).squeeze(-1)
         except RuntimeError as e:
             raise RuntimeError(
@@ -109,9 +109,9 @@ class PCACompressionOp(LinearOperator):
         -------
             Expanded data, with shape `(*other, joint_dim, compression_dim)`.
         """
-        if torch.broadcast_shapes(self._compression_matrix.shape[:-2], data.shape[:-1]) != data.shape[:-1]:
-            raise ValueError('PCA adjoint input must have fully expanded batch dimensions.')
         try:
+            if torch.broadcast_shapes(self._compression_matrix.shape[:-2], data.shape[:-1]) != data.shape[:-1]:
+                raise ValueError('PCA adjoint input must have fully expanded batch dimensions.')
             result = (self._compression_matrix.mH @ data.unsqueeze(-1)).squeeze(-1)
         except RuntimeError as e:
             raise RuntimeError(

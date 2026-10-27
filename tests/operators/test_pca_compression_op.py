@@ -67,11 +67,9 @@ def test_pca_compression_op_forward_mode_autodiff(
     )
 
 
-def test_pca_compression_op_wrong_shapes() -> None:
+@pytest.mark.parametrize(('init_data_shape', 'input_shape'), [((10, 6), (100, 3)), ((2, 10, 6), (3, 20, 6))])
+def test_pca_compression_op_wrong_shapes(init_data_shape: Sequence[int], input_shape: Sequence[int]) -> None:
     """Test if Operator raises error if shape mismatch."""
-    init_data_shape = (10, 6)
-    input_shape = (100, 3)
-
     # Create test data
     rng = RandomGenerator(seed=0)
     data_to_calculate_compression_matrix_from = rng.complex64_tensor(init_data_shape)
