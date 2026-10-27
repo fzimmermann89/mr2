@@ -8,6 +8,7 @@ from typing import Literal
 from xml.etree import ElementTree as ET
 
 import h5py
+import ismrmrd
 import pytest
 import torch
 from einops import repeat
@@ -15,12 +16,13 @@ from mr2.data import KData, KHeader, KNoise, KTrajectory, SpatialDimension
 from mr2.data.acq_filters import has_n_coils, is_coil_calibration_acquisition, is_image_acquisition
 from mr2.data.Dataclass import InconsistentDeviceError
 from mr2.data.enums import TrajectoryType
-from mr2.data.traj_calculators import KTrajectoryIsmrmrd
+from mr2.data.traj_calculators import KTrajectoryCartesian, KTrajectoryIsmrmrd
 from mr2.data.traj_calculators.KTrajectoryCalculator import DummyTrajectory
 from mr2.operators import FastFourierOp, LinearOperator
 from mr2.utils import RandomGenerator
 
 from tests import relative_image_difference
+from tests.data import IsmrmrdRawTestData
 from tests.phantoms import EllipsePhantomTestData
 
 
@@ -28,6 +30,48 @@ def test_KData_from_file(ismrmrd_cart) -> None:
     """Read in data from file."""
     kdata = KData.from_file(ismrmrd_cart.filename, DummyTrajectory())
     assert kdata is not None
+
+
+@pytest.mark.parametrize(('discard_pre', 'discard_post'), [(0, 0), (3, 0), (0, 2), (3, 2)])
+@pytest.mark.parametrize('trajectory_type', [KTrajectoryCartesian, KTrajectoryIsmrmrd])
+def test_KData_from_file_discards(tmp_path, discard_pre: int, discard_post: int, trajectory_type) -> None:
+    """Discarded samples leave data and trajectory identical to an unpadded file."""
+    reference_file = tmp_path / 'reference.h5'
+    padded_file = tmp_path / 'padded.h5'
+    IsmrmrdRawTestData(reference_file, matrix_size=8, oversampling=1, n_coils=1)
+    IsmrmrdRawTestData(
+        padded_file, matrix_size=8, oversampling=1, n_coils=1, discard_pre=discard_pre, discard_post=discard_post
+    )
+    reference = KData.from_file(reference_file, KTrajectoryCartesian())
+    actual = KData.from_file(padded_file, trajectory_type())
+
+    torch.testing.assert_close(actual.data, reference.data)
+    torch.testing.assert_close(actual.traj.as_tensor(), reference.traj.as_tensor())
+
+
+@pytest.mark.parametrize('trajectory_type', [KTrajectoryCartesian, KTrajectoryIsmrmrd])
+def test_KData_from_file_drops_short_readouts(tmp_path, trajectory_type) -> None:
+    """Dropping a short readout also drops its metadata and trajectory."""
+    reference_file = tmp_path / 'reference.h5'
+    mixed_file = tmp_path / 'mixed.h5'
+    IsmrmrdRawTestData(reference_file, matrix_size=8, oversampling=1, n_coils=1, discard_pre=3, discard_post=2)
+    with ismrmrd.File(reference_file, 'r') as file:
+        header = file['dataset'].header
+        acquisitions = [acq for acq in file['dataset'].acquisitions[:] if is_image_acquisition(acq)]
+    reference = KData.from_file(reference_file, trajectory_type())
+    short = acquisitions[2]
+    short.resize(short.number_of_samples - 2, short.active_channels, short.trajectory_dimensions)
+    with ismrmrd.File(mixed_file, 'w') as file:
+        file['dataset'].header = header
+        file['dataset'].acquisitions = acquisitions
+
+    with pytest.warns(UserWarning, match='Keeping only acquisitions with 8 data samples'):
+        actual = KData.from_file(mixed_file, trajectory_type())
+
+    keep = [0, 1, 3, 4, 5, 6, 7]
+    torch.testing.assert_close(actual.data, reference.data[..., keep, :])
+    torch.testing.assert_close(actual.traj.as_tensor(), reference.traj.as_tensor()[..., keep, :])
+    torch.testing.assert_close(actual.header.acq_info.idx.k1.flatten(), torch.tensor(keep, dtype=torch.int32))
 
 
 def test_KData_from_file_repairs_missing_required_xml_fields(ismrmrd_cart, tmp_path) -> None:
