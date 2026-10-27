@@ -42,6 +42,7 @@ def test_kdata_concatenate_split_broadcast(dim: int, same: bool) -> None:
     original.header.acq_info.position.x = torch.arange(4).reshape(4, 1, 1, 1, 1).float()
     other = original.clone()
     other.data = other.data + 1
+    other.traj.kx = other.traj.kx + 1
     if not same:
         other.header.acq_info.orientation = Rotation.from_euler('z', 1.0).reshape(1, 1, 1, 1, 1)
         other.header.acq_info.position.y = torch.ones(1, 1, 1, 1, 1)
@@ -52,6 +53,8 @@ def test_kdata_concatenate_split_broadcast(dim: int, same: bool) -> None:
     expected_shape[dim] *= 2
     assert joined.shape == tuple(expected_shape)
     torch.testing.assert_close(joined.data, torch.cat((original.data, other.data), dim=dim))
+    expected_kx = torch.cat([item.traj.kx.expand(item.shape) for item in (original, other)], dim=dim)
+    torch.testing.assert_close(joined.traj.kx.expand(joined.shape), expected_kx)
     expected_orientation = torch.cat(
         [item.header.acq_info.orientation.as_quat().expand(*item.shape, 4) for item in (original, other)],
         dim=dim % original.ndim,
