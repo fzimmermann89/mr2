@@ -301,3 +301,63 @@ def test_cart_masking_op_from_trajectory(sampling: str) -> None:
     rng = RandomGenerator(seed=0)
     u = rng.complex64_tensor(size=k_shape)
     torch.testing.assert_close(masking_op(u), (sampling_op.H @ sampling_op)(u))
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+def test_cartesian_duplicates(device: str) -> None:
+    """Duplicate samples sum in the adjoint and count in the Gram."""
+    trajectory = KTrajectory(
+        kz=torch.zeros(1, 1, 1, 1, 1, device=device),
+        ky=torch.zeros(1, 1, 1, 1, 1, device=device),
+        kx=torch.tensor([-1.0, -1.0, 0.0, 3.0], device=device).reshape(1, 1, 1, 1, 4),
+    )
+    with pytest.warns(UserWarning, match='outside'):
+        op = CartesianSamplingOp(SpatialDimension(1, 1, 2), trajectory)
+    y = torch.tensor([3.0, 7.0, 11.0, 99.0], device=device).reshape(1, 1, 1, 1, 4)
+    x = torch.tensor([2.0, 5.0], device=device).reshape(1, 1, 1, 1, 2)
+    torch.testing.assert_close(op.H(y)[0].flatten(), torch.tensor([10.0, 11.0], device=device))
+    torch.testing.assert_close(op.gram(x)[0].flatten(), torch.tensor([4.0, 5.0], device=device))
+    dotproduct_adjointness_test(op, x, y)
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize(
+    'coordinates',
+    [
+        [[-1.0, -1.0, 0.0, 0.0], [-1.0, 0.0, -1.0, 0.0]],
+        [[-1.0, -1.0, 0.0, 3.0], [3.0, -1.0, 0.0, 0.0]],
+        [[-1.0, -1.0, 0.0, 0.0], [3.0, -1.0, 0.0, 3.0]],
+        [[-1.0, -1.0, 0.0, 3.0], [3.0, 3.0, 3.0, 3.0]],
+        [[3.0, 4.0, 3.0, 4.0], [4.0, 3.0, 4.0, 3.0]],
+    ],
+    ids=['inside', 'equal-counts', 'unequal-counts', 'empty-row', 'all-outside'],
+)
+def test_batched_sampling(coordinates: list[list[float]], device: str) -> None:
+    """Batches independently ignore outside points, including empty rows."""
+    trajectory = KTrajectory(
+        kz=torch.zeros(1, 1, 1, 1, 1),
+        ky=torch.zeros(1, 1, 1, 1, 1),
+        kx=torch.tensor(coordinates).reshape(2, 1, 1, 1, 4),
+    )
+    if any(coordinate == 3 for row in coordinates for coordinate in row):
+        with pytest.warns(UserWarning, match='outside'):
+            op = CartesianSamplingOp(SpatialDimension(1, 1, 2), trajectory)
+    else:
+        op = CartesianSamplingOp(SpatialDimension(1, 1, 2), trajectory)
+    op = op.to(device)
+    rng = RandomGenerator(seed=0)
+    x = rng.complex64_tensor((3, 2, 5, 1, 1, 2)).to(device)
+    y = rng.complex64_tensor((3, 2, 5, 1, 1, 4)).to(device)
+    expected_forward = torch.zeros_like(y)
+    expected_adjoint = torch.zeros_like(x)
+    for batch, row in enumerate(coordinates):
+        for sample, coordinate in enumerate(row):
+            if coordinate in (-1, 0):
+                index = int(coordinate) + 1
+                expected_forward[:, batch, ..., sample] = x[:, batch, ..., index]
+                expected_adjoint[:, batch, ..., index] += y[:, batch, ..., sample]
+    torch.testing.assert_close(op(x)[0], expected_forward)
+    torch.testing.assert_close(op.H(y)[0], expected_adjoint)
+    torch.testing.assert_close(op.gram(x), (op.H @ op)(x))
+    dotproduct_adjointness_test(op, x, y)
+    gradient_of_linear_operator_test(op, x, y)

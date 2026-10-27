@@ -86,6 +86,18 @@ def test_pca_compression_op_wrong_shapes() -> None:
         pca_comp_op.adjoint(input_data)
 
 
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('batch_shape', [(), (1,), (1, 4)])
+@pytest.mark.parametrize('adjoint', [False, True])
+def test_pca_compression_op_unexpanded_batch(batch_shape: tuple[int, ...], adjoint: bool, device: str) -> None:
+    """Inputs must include all batch entries needed by the compression matrices."""
+    rng = RandomGenerator(seed=0)
+    op = PCACompressionOp(rng.complex64_tensor((2, 20, 5)), 3).to(device)
+    data = rng.complex64_tensor((*batch_shape, 3 if adjoint else 5)).to(device)
+    with pytest.raises(ValueError, match='fully expanded batch dimensions'):
+        (op.H if adjoint else op)(data)
+
+
 def test_pca_compression_op_with_varimax_rotation() -> None:
     """Test PCA compression with Varimax rotation preserves the PCA subspace."""
     rng = RandomGenerator(seed=0)

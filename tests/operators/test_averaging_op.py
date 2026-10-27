@@ -46,3 +46,23 @@ def test_averageingop_no_domain_size() -> None:
     with pytest.warns(match='Domain'):
         (actual,) = op.adjoint(v)
     assert actual.shape == u.shape
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('group', [[0, 0, 1], (0, 0, 1), [0, -2], [], slice(0, 0), torch.tensor([False, False])])
+def test_averaging_adjoint_invalid_groups(
+    group: list[int] | tuple[int, ...] | slice | torch.Tensor, device: str
+) -> None:
+    """Empty groups and repeated indices cannot silently produce an invalid adjoint."""
+    op = AveragingOp(-1, [group], domain_size=2).to(device)
+    with pytest.raises(ValueError, match='nonempty groups without repeated indices'):
+        op.H(torch.ones(1, device=device))
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+def test_averaging_adjoint_tuple_group(device: str) -> None:
+    """The group validation treats a tuple as one group of indices."""
+    op = AveragingOp(-1, [(0, 1)], domain_size=2)
+    x = torch.tensor([2.0, 4.0], device=device)
+    y = torch.tensor([3.0], device=device)
+    dotproduct_adjointness_test(op, x, y)

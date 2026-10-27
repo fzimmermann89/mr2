@@ -30,13 +30,6 @@ WaveletType = Literal[
     'rbio1.1', 'rbio1.3', 'rbio1.5', 'rbio2.2', 'rbio2.4', 'rbio2.6', 'rbio2.8',
     'rbio3.1', 'rbio3.3', 'rbio3.5', 'rbio3.7', 'rbio3.9', 'rbio4.4', 'rbio5.5', 'rbio6.8',
     'dmey',
-    'gaus1', 'gaus2', 'gaus3', 'gaus4', 'gaus5', 'gaus6', 'gaus7', 'gaus8', # typos: ignore
-    'mexh',
-    'morl',
-    'cgau1', 'cgau2', 'cgau3', 'cgau4', 'cgau5', 'cgau6', 'cgau7', 'cgau8',
-    'shan',
-    'fbsp',
-    'cmor'
 ]
 class WaveletOp(LinearOperator):
     """Wavelet operator class."""
@@ -66,6 +59,7 @@ class WaveletOp(LinearOperator):
             Name of wavelets
         level
             Highest wavelet level. If set to `None`, the highest possible level is calculated based on the domain shape.
+            If no decomposition level is possible, a `ValueError` is raised. Set `level=0` explicitly to allow this.
 
         Raises
         ------
@@ -73,10 +67,13 @@ class WaveletOp(LinearOperator):
             If wavelets are calculated for more than three dimensions.
         `ValueError`
             If wavelet dimensions and domain shape do not match.
+        `ValueError`
+            If the wavelet is not discrete, or the domain is too small for automatic level selection.
         `NotImplementedError`
             If any dimension of the domain shape is odd. Adjoint will lead to the wrong domain shape.
         """
         super().__init__()
+        wavelet = Wavelet(wavelet_name)
         self._domain_shape = domain_shape
         self._wavelet_name = wavelet_name
         self._dim = dim
@@ -106,7 +103,7 @@ class WaveletOp(LinearOperator):
                 )
 
             # size of wavelets
-            wavelet_length = torch.as_tensor((Wavelet(wavelet_name).dec_len,) * len(domain_shape))
+            wavelet_length = torch.as_tensor((wavelet.dec_len,) * len(domain_shape))
 
             # calculate shape of wavelet coefficients at each level
             current_shape = torch.as_tensor(domain_shape)
@@ -114,6 +111,10 @@ class WaveletOp(LinearOperator):
             # if level is None, select the highest possible level.
             # raise error/warnings if level is not possible or lead to boundary effects
             verified_level = _check_level(domain_shape, wavelet_length, level)
+            if verified_level == 0 and level is None:
+                raise ValueError(
+                    'Domain is too small for this wavelet. Choose a shorter wavelet or set level=0 explicitly.'
+                )
 
             if verified_level == 0:  # only a/aa/aaa component possible
                 self.coefficients_shape:list[torch.Size] = [torch.Size(domain_shape)]
@@ -167,6 +168,14 @@ class WaveletOp(LinearOperator):
 
         # move axes where wavelets are calculated to the end
         x = x.moveaxis(dim, list(range(-len(self._dim), 0)))
+        if (
+            self._domain_shape is None
+            and self._level is None
+            and _check_level(x.shape[-len(dim):], (Wavelet(self._wavelet_name).dec_len,) * len(dim), None) == 0
+        ):
+            raise ValueError(
+                'Domain is too small for this wavelet. Choose a shorter wavelet or set level=0 explicitly.'
+            )
 
         # the ptwt functions work only for real data, thus we handle complex inputs as an additional channel
         x_real = torch.view_as_real(x).moveaxis(-1, 0) if x.is_complex() else x
@@ -227,7 +236,11 @@ class WaveletOp(LinearOperator):
         ValueError
             If the dimensions along which wavelets were calculated (specified
             during initialization) are not unique after normalization.
+        NotImplementedError
+            If the wavelet is biorthogonal: reconstruction is not the linear adjoint.
         """
+        if not Wavelet(self._wavelet_name).orthogonal:
+            raise NotImplementedError('Biorthogonal wavelet reconstruction is not the linear adjoint.')
         if self._domain_shape is None:
             raise ValueError('Adjoint requires to define the domain_shape in init()')
 

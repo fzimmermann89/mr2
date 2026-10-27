@@ -19,7 +19,7 @@ class CartesianSamplingOp(LinearOperator):
 
     Selects points on a Cartesian grid based on the k-space trajectory.
     Thus, the adjoint sorts the data into regular Cartesian sampled grid based on the k-space
-    trajectory. Non-acquired points are zero-filled.
+    trajectory. Repeated samples are summed and non-acquired points are zero-filled.
     """
 
     def __init__(self, encoding_matrix: SpatialDimension[int], traj: KTrajectory) -> None:
@@ -107,12 +107,12 @@ class CartesianSamplingOp(LinearOperator):
             )
 
             inside_encoding_matrix = rearrange(inside_encoding_matrix, '... kz ky kx -> ... (kz ky kx)')
-            inside_encoding_matrix_idx = inside_encoding_matrix.nonzero(as_tuple=True)[-1]
-            inside_encoding_matrix_idx = torch.reshape(inside_encoding_matrix_idx, (*kidx.shape[:-1], -1))
-            self._inside_encoding_matrix_idx: torch.Tensor | None = inside_encoding_matrix_idx
-            kidx = torch.take_along_dim(kidx, inside_encoding_matrix_idx, dim=-1)
+            self._inside_encoding_matrix: torch.Tensor | None = inside_encoding_matrix
+            # Keep the acquired shape: batches can contain different numbers of valid samples.
+            # Invalid points use a safe index and are zeroed in forward and adjoint.
+            kidx = kidx.masked_fill(~inside_encoding_matrix, 0)
         else:
-            self._inside_encoding_matrix_idx = None
+            self._inside_encoding_matrix = None
 
         self._fft_idx = kidx
 
@@ -120,7 +120,7 @@ class CartesianSamplingOp(LinearOperator):
         self._needs_indexing = (
             not torch.all(torch.diff(kidx) == 1)
             or traj.shape[-3:] != sorted_grid_shape.zyx
-            or self._inside_encoding_matrix_idx is not None
+            or self._inside_encoding_matrix is not None
         )
 
         self._trajectory_shape = traj.shape
@@ -157,18 +157,9 @@ class CartesianSamplingOp(LinearOperator):
         x_kflat = rearrange(x, '... coils k2_enc k1_enc k0_enc -> ... coils (k2_enc k1_enc k0_enc)')
         # take_along_dim broadcasts, but needs the same number of dimensions
         idx = unsqueeze_left(self._fft_idx, x_kflat.ndim - self._fft_idx.ndim)
-        x_inside_encoding_matrix = torch.take_along_dim(x_kflat, idx, dim=-1)
-
-        if self._inside_encoding_matrix_idx is None:
-            # all trajectory points are inside the encoding matrix
-            x_indexed = x_inside_encoding_matrix
-        else:
-            # we need to add zeros
-            x_indexed = self._broadcast_and_scatter_along_last_dim(
-                x_inside_encoding_matrix,
-                self._trajectory_shape[-1] * self._trajectory_shape[-2] * self._trajectory_shape[-3],
-                self._inside_encoding_matrix_idx,
-            )
+        x_indexed = torch.take_along_dim(x_kflat, idx, dim=-1)
+        if self._inside_encoding_matrix is not None:
+            x_indexed = x_indexed.masked_fill(~self._inside_encoding_matrix, 0)
 
         # reshape to (... other coils, k2, k1, k0)
         x_reshaped = x_indexed.reshape(x.shape[:-3] + self._trajectory_shape[-3:])
@@ -195,9 +186,8 @@ class CartesianSamplingOp(LinearOperator):
 
         y_kflat = rearrange(y, '... coils k2 k1 k0 -> ... coils (k2 k1 k0)')
 
-        if self._inside_encoding_matrix_idx is not None:
-            idx = unsqueeze_left(self._inside_encoding_matrix_idx, y_kflat.ndim - self._inside_encoding_matrix_idx.ndim)
-            y_kflat = torch.take_along_dim(y_kflat, idx, dim=-1)
+        if self._inside_encoding_matrix is not None:
+            y_kflat = y_kflat.masked_fill(~self._inside_encoding_matrix, 0)
 
         y_scattered = self._broadcast_and_scatter_along_last_dim(
             y_kflat, self._sorted_grid_shape.z * self._sorted_grid_shape.y * self._sorted_grid_shape.x, self._fft_idx
@@ -236,14 +226,14 @@ class CartesianSamplingOp(LinearOperator):
         broadcast_shape = torch.broadcast_shapes(scatter_index.shape[:-1], data_to_scatter.shape[:-1])
         idx_expanded = torch.broadcast_to(scatter_index, (*broadcast_shape, scatter_index.shape[-1]))
 
-        # although scatter_ is inplace, this will not cause issues with autograd, as self
+        # although scatter_add_ is inplace, this will not cause issues with autograd, as self
         # is always constant zero and gradients w.r.t. src work as expected.
         data_scattered = torch.zeros(
             *broadcast_shape,
             n_last_dim,
             dtype=data_to_scatter.dtype,
             device=data_to_scatter.device,
-        ).scatter_(dim=-1, index=idx_expanded, src=data_to_scatter)
+        ).scatter_add_(dim=-1, index=idx_expanded, src=data_to_scatter)
 
         return data_scattered
 
@@ -260,7 +250,7 @@ class CartesianSamplingOp(LinearOperator):
     def __repr__(self) -> str:
         """Representation method for CartesianSamplingOperator."""
         device = self._fft_idx.device if self._fft_idx is not None else 'none'
-        if self._inside_encoding_matrix_idx is None:
+        if self._inside_encoding_matrix is None:
             enc_matrix_warning = ''
         else:
             enc_matrix_warning = (
@@ -281,7 +271,7 @@ class CartesianMaskingOp(LinearOperator):
     """Cartesian Masking Operator.
 
     The Cartesian Masking Operator is the composition `CartesianSamplingOp.H @ CartesianSamplingOp`,
-    which sets to zero all non sampled Cartesian k-space points.
+    which weights Cartesian k-space points by their sampling counts.
     """
 
     def __init__(self, mask: torch.Tensor | None):
