@@ -58,7 +58,7 @@ def test_IData_to_nifti(dcm_2d, tmp_path, magnitude_only: bool) -> None:
 @pytest.mark.parametrize('shape', [(4, 6, 8), (1, 5, 7)])
 @pytest.mark.parametrize('angles', [(0.0, 0.0, 0.0), (0.2, 0.3, 1.4)])
 def test_IData_to_nifti_affine(tmp_path, magnitude_only: bool, shape: tuple[int, int, int], angles) -> None:
-    """NIfTI voxel coordinates map to the header's physical coordinates in RAS millimetres."""
+    """NIfTI voxel coordinates map to the header's physical coordinates in RAS millimeters."""
     header = IHeader(
         resolution=SpatialDimension(z=0.003, y=0.002, x=0.001),
         orientation=Rotation.from_euler('xyz', angles),
@@ -78,7 +78,7 @@ def test_IData_to_nifti_affine(tmp_path, magnitude_only: bool, shape: tuple[int,
         reference[:3, axis] = (
             np.array([component.item() for component in direction.zyx[::-1]]) * spacing * lps_to_ras_mm
         )
-    # mr2 centres non-singleton axes at N/2; a single slice is already at the header position.
+    # mr2 centers non-singleton axes at N/2; a single slice is already at the header position.
     center = np.array([n / 2 if n > 1 else 0 for n in shape[::-1]])
     position = np.array([component.item() for component in header.position.zyx[::-1]]) * lps_to_ras_mm
     reference[:3, 3] = position - reference[:3, :3] @ center
@@ -100,7 +100,7 @@ def test_IData_to_nifti_affine(tmp_path, magnitude_only: bool, shape: tuple[int,
 @pytest.mark.parametrize('field', ['te', 'ti', 'tr'])
 @pytest.mark.parametrize('as_tensor', [True, False])
 def test_IData_to_nifti_description(tmp_path, magnitude_only: bool, field: str, as_tensor: bool) -> None:
-    """Timing values in the NIfTI description are labelled in seconds."""
+    """Timing values in the NIfTI description are labeled in seconds."""
     header = IHeader(resolution=SpatialDimension(0.003, 0.002, 0.001))
     setattr(header, field, torch.tensor(0.005) if as_tensor else [0.005])
     idata = IData(data=torch.zeros(1, 1, 1, 2, 3, dtype=torch.complex64), header=header)

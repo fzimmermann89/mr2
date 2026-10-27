@@ -386,7 +386,7 @@ def write_acqinfo_to_ismrmrd_acquisition_(
         acq_info.idx.user7,
     )
     # active_channesl, number_of_samples and trajectory_dimensions are read-only and cannot be set
-    # Match the micrometre convention used by the reader and Siemens ISMRMRD files.
+    # Match the micrometer convention used by the reader and Siemens ISMRMRD files.
     ismrmrd_acq.patient_table_position = (
         acq_info.patient_table_position[0].apply(m_to_micrometer).zyx[::-1]
     )  # zyx -> xyz
