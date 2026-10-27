@@ -181,6 +181,26 @@ def test_sum_operator_linearoperator():
     assert_type(c, Operator[torch.Tensor, tuple[torch.Tensor]])
 
 
+def test_neg_operator():
+    rng = RandomGenerator(0)
+    a = DummyOperator(torch.tensor(3.0))
+    c = -a
+    x = rng.complex64_tensor(10)
+    torch.testing.assert_close(c(x)[0], -a(x)[0])
+    assert not isinstance(c, LinearOperator), '-Operator should not be a LinearOperator'
+    assert_type(c, Operator[torch.Tensor, tuple[torch.Tensor]])
+
+
+def test_neg_linearoperator():
+    rng = RandomGenerator(0)
+    a = DummyLinearOperator(rng.complex64_tensor((3, 10)))
+    c = -a
+    x = rng.complex64_tensor(10)
+    torch.testing.assert_close(c(x)[0], -a(x)[0])
+    assert isinstance(c, LinearOperator), '-LinearOperator should be a LinearOperator'
+    assert_type(c, LinearOperator)
+
+
 def test_sum_operator_tensor():
     rng = RandomGenerator(0)
     a = DummyOperator(torch.tensor(3.0))

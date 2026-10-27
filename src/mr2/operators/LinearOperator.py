@@ -222,6 +222,11 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
     def __matmul__(self, other: LinearOperator) -> LinearOperator: ...
 
     @overload
+    def __matmul__(  # type: ignore[overload-overlap]
+        self, other: mr2.operators.LinearOperatorMatrix
+    ) -> mr2.operators.LinearOperatorMatrix: ...
+
+    @overload
     def __matmul__(
         self, other: Operator[Unpack[Tin2], tuple[torch.Tensor,]] | Operator[Unpack[Tin2], tuple[torch.Tensor, ...]]
     ) -> Operator[Unpack[Tin2], tuple[torch.Tensor,]]: ...
@@ -230,15 +235,24 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
         self,
         other: Operator[Unpack[Tin2], tuple[torch.Tensor,]]
         | LinearOperator
+        | mr2.operators.LinearOperatorMatrix
         | Operator[Unpack[Tin2], tuple[torch.Tensor, ...]],
     ) -> (
-        Operator[Unpack[Tin2], tuple[torch.Tensor,]] | LinearOperator | Operator[Unpack[Tin2], tuple[torch.Tensor, ...]]
+        Operator[Unpack[Tin2], tuple[torch.Tensor,]]
+        | LinearOperator
+        | mr2.operators.LinearOperatorMatrix
+        | Operator[Unpack[Tin2], tuple[torch.Tensor, ...]]
     ):
         """Operator composition.
 
-        Returns ``lambda x: self(other(x))``
+        Returns ``lambda x: self(other(x))``.
+        For a `~mr2.operators.LinearOperatorMatrix`, the operator is applied to each output of the matrix,
+        see `mr2.operators.LinearOperatorMatrix.__rmatmul__`.
         """
-        if isinstance(other, mr2.operators.IdentityOp):
+        if isinstance(other, mr2.operators.LinearOperatorMatrix):
+            # handled by LinearOperatorMatrix.__rmatmul__
+            return NotImplemented
+        elif isinstance(other, mr2.operators.IdentityOp):
             # neutral element of composition
             return self
         elif isinstance(self, mr2.operators.IdentityOp):
@@ -261,8 +275,20 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
         """
         return self + other
 
+    def __neg__(self) -> LinearOperator:
+        """Operator negation.
+
+        Returns ``lambda x: -self(x)``
+        """
+        return (-1.0) * self
+
     @overload  # type: ignore[override]
     def __add__(self, other: LinearOperator | torch.Tensor | complex) -> LinearOperator: ...
+
+    @overload
+    def __add__(  # type: ignore[overload-overlap]
+        self, other: mr2.operators.LinearOperatorMatrix
+    ) -> mr2.operators.LinearOperatorMatrix: ...
 
     @overload
     def __add__(
@@ -270,14 +296,24 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
     ) -> Operator[torch.Tensor, tuple[torch.Tensor,]]: ...
 
     def __add__(
-        self, other: Operator[torch.Tensor, tuple[torch.Tensor,]] | LinearOperator | torch.Tensor | complex
-    ) -> Operator[torch.Tensor, tuple[torch.Tensor,]] | LinearOperator:
+        self,
+        other: Operator[torch.Tensor, tuple[torch.Tensor,]]
+        | LinearOperator
+        | mr2.operators.LinearOperatorMatrix
+        | torch.Tensor
+        | complex,
+    ) -> Operator[torch.Tensor, tuple[torch.Tensor,]] | LinearOperator | mr2.operators.LinearOperatorMatrix:
         """Operator addition.
 
         Returns ``lambda x: self(x) + other(x)`` if other is a operator,
-        ``lambda x: self(x) + other`` if other is a tensor
+        ``lambda x: self(x) + other`` if other is a tensor.
+        For a `~mr2.operators.LinearOperatorMatrix`, the operator is added to the diagonal blocks,
+        see `mr2.operators.LinearOperatorMatrix.__radd__`.
         """
-        if isinstance(other, torch.Tensor | complex | int | float):
+        if isinstance(other, mr2.operators.LinearOperatorMatrix):
+            # handled by LinearOperatorMatrix.__radd__
+            return NotImplemented
+        elif isinstance(other, torch.Tensor | complex | int | float):
             # tensor addition
             return LinearOperatorSum(self, mr2.operators.IdentityOp() * other)
         elif isinstance(self, mr2.operators.ZeroOp):
@@ -291,7 +327,8 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
             return LinearOperatorSum(self, other)
         elif isinstance(other, Operator):
             # for general operators
-            return OperatorSum(self, other)
+            # cast due to https://github.com/python/mypy/issues/16335
+            return OperatorSum(self, cast(Operator[torch.Tensor, tuple[torch.Tensor,]], other))
         else:
             return NotImplemented
 

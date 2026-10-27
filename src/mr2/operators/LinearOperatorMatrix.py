@@ -16,7 +16,7 @@ from mr2.operators.Operator import Operator
 from mr2.operators.ZeroOp import ZeroOp
 
 _SingleIdxType = int | slice | EllipsisType | Sequence[int]
-_IdxType = _SingleIdxType | tuple[_SingleIdxType, _SingleIdxType]
+_IdxType = _SingleIdxType | tuple[_SingleIdxType] | tuple[_SingleIdxType, _SingleIdxType]
 
 
 class LinearOperatorMatrix(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]]):
@@ -34,7 +34,10 @@ class LinearOperatorMatrix(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torc
     The matrix can be indexed and sliced like a regular matrix to get submatrices.
     If indexing returns a single element, it is returned as a `~mr2.operators.LinearOperator`.
 
-    Basic arithmetic operations are supported with `~mr2.operators.LinearOperator` and Tensors.
+    Basic arithmetic operations are supported with `~mr2.operators.LinearOperator`, tensors and scalars.
+    In these, a `~mr2.operators.LinearOperator`, tensor or scalar :math:`A` acts as :math:`A` times the identity
+    matrix: ``M + A`` adds :math:`A` to the diagonal blocks of a square matrix,
+    ``A @ M`` and ``M @ A`` compose :math:`A` with each block.
     Use ``A | B`` for horizontal stacking (side-by-side columns) and ``A % B`` for vertical stacking (stacked rows).
 
     """
@@ -104,6 +107,9 @@ class LinearOperatorMatrix(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torc
     def __getitem__(self, idx: _IdxType) -> Self | LinearOperator:
         """Index the Operator Matrix.
 
+        Follows the indexing rules of sequences, numpy arrays and torch tensors:
+        Integers and sequences of integers must be in range, slice bounds are clamped.
+
         Parameters
         ----------
         idx
@@ -113,17 +119,15 @@ class LinearOperatorMatrix(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torc
         -------
             Subset `LinearOperatorMatrix` or `~mr2.operators.LinearOperator`.
         """
-        idxs: tuple[_SingleIdxType, _SingleIdxType] = idx if isinstance(idx, tuple) else (idx, slice(None))
-        if len(idxs) > 2:
+        if not isinstance(idx, tuple):
+            idx = (idx,)
+        if len(idx) > 2:
             raise IndexError('Too many indices for LinearOperatorMatrix')
+        idxs: tuple[_SingleIdxType, _SingleIdxType] = (idx[0], idx[1] if len(idx) == 2 else slice(None))
 
         def _to_numeric_index(idx: slice | int | Sequence[int] | EllipsisType, length: int) -> Sequence[int]:
             """Convert index to a sequence of integers or raise an error."""
             if isinstance(idx, slice):
-                if (idx.start is not None and (idx.start < -length or idx.start >= length)) or (
-                    idx.stop is not None and (idx.stop < -length or idx.stop > length)
-                ):
-                    raise IndexError('Index out of range')
                 return range(*idx.indices(length))
             if isinstance(idx, int):
                 if idx < -length or idx >= length:
@@ -132,7 +136,7 @@ class LinearOperatorMatrix(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torc
             if idx is Ellipsis:
                 return range(length)
             if isinstance(idx, Sequence):
-                if min(idx) < -length or max(idx) >= length:
+                if any(i < -length or i >= length for i in idx):
                     raise IndexError('Index out of range')
                 return idx
             else:
@@ -140,6 +144,8 @@ class LinearOperatorMatrix(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torc
 
         row_numbers = _to_numeric_index(idxs[0], self._shape[0])
         col_numbers = _to_numeric_index(idxs[1], self._shape[1])
+        if len(row_numbers) == 0 or len(col_numbers) == 0:
+            raise IndexError('Index results in an empty LinearOperatorMatrix')
 
         sliced_operators = [
             [row[col_number] for col_number in col_numbers]
@@ -160,27 +166,68 @@ class LinearOperatorMatrix(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torc
         """Representation of the Operator Matrix."""
         return f'LinearOperatorMatrix(shape={self._shape}, operators={self._operators})'
 
+    def _add_to_diagonal(self, other: LinearOperator | torch.Tensor | complex, right: bool) -> Self:
+        """Add ``other`` times the identity matrix, i.e. ``other`` to each diagonal block.
+
+        If `right` is `True`, ``op + other`` is used for the diagonal blocks, otherwise ``other + op``.
+        """
+        if not self.shape[0] == self.shape[1]:
+            raise ValueError('Cannot add a LinearOperator, tensor or scalar to a non-square OperatorMatrix.')
+        operators = [
+            [(op + other if right else other + op) if i == j else op for j, op in enumerate(row)]
+            for i, row in enumerate(self._operators)
+        ]
+        return self.__class__(cast(list[list[LinearOperator]], operators))
+
     # Note: The type ignores are needed because we currently cannot do arithmetic operations with non-linear operators.
     def __add__(self, other: Self | LinearOperator | torch.Tensor | complex) -> Self:  # type: ignore[override]
-        """Addition."""
-        operators: list[list[LinearOperator]] = []
+        """Addition.
+
+        A `~mr2.operators.LinearOperator`, tensor, or scalar `other` is interpreted as ``other`` times the identity
+        matrix, i.e., it is added to each diagonal block of a square matrix.
+        """
         if isinstance(other, LinearOperatorMatrix):
             if self.shape != other.shape:
                 raise ValueError('OperatorMatrix shapes do not match.')
-            for self_row, other_row in zip(self._operators, other._operators, strict=False):
-                operators.append([s + o for s, o in zip(self_row, other_row, strict=False)])
-        elif isinstance(other, LinearOperator | torch.Tensor | complex):
-            if not self.shape[0] == self.shape[1]:
-                raise NotImplementedError('Cannot add a LinearOperator to a non-square OperatorMatrix.')
-            for i, self_row in enumerate(self._operators):
-                operators.append([op + other if i == j else op for j, op in enumerate(self_row)])
-        else:
-            return NotImplemented
-        return self.__class__(operators)
+            operators = [
+                [s + o for s, o in zip(self_row, other_row, strict=True)]
+                for self_row, other_row in zip(self._operators, other._operators, strict=True)
+            ]
+            return self.__class__(operators)
+        if isinstance(other, LinearOperator | torch.Tensor | complex | float | int):
+            return self._add_to_diagonal(other, right=True)
+        return NotImplemented
 
-    def __radd__(self, other: Self | LinearOperator | torch.Tensor | complex) -> Self:
-        """Right addition."""
-        return self.__add__(other)
+    def __radd__(self, other: LinearOperator | torch.Tensor | complex) -> Self:  # type: ignore[misc]
+        """Right addition.
+
+        See `__add__`.
+        """
+        if isinstance(other, LinearOperator | torch.Tensor | complex | float | int):
+            return self._add_to_diagonal(other, right=False)
+        return NotImplemented
+
+    def __neg__(self) -> Self:
+        """Negation."""
+        return (-1.0) * self
+
+    def __sub__(self, other: Self | LinearOperator | torch.Tensor | complex) -> Self:  # type: ignore[override]
+        """Subtraction.
+
+        See `__add__`.
+        """
+        if isinstance(other, LinearOperatorMatrix | LinearOperator | torch.Tensor | complex | float | int):
+            return self + (-other)
+        return NotImplemented
+
+    def __rsub__(self, other: LinearOperator | torch.Tensor | complex) -> Self:  # type: ignore[misc]
+        """Right subtraction.
+
+        See `__add__`.
+        """
+        if isinstance(other, LinearOperator | torch.Tensor | complex | float | int):
+            return (-self)._add_to_diagonal(other, right=False)
+        return NotImplemented
 
     def __mul__(self, other: torch.Tensor | Sequence[torch.Tensor | complex] | complex) -> Self:
         """LinearOperatorMatrix*Tensor multiplication.
@@ -215,7 +262,15 @@ class LinearOperatorMatrix(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torc
         return self.__class__(operators)
 
     def __rmatmul__(self, other: LinearOperator) -> Self:  # type: ignore[misc]
-        """Composition of operators."""
+        """Composition of a LinearOperator with the matrix.
+
+        ``other`` is applied to each output of the matrix, i.e., ``(other @ M)(*x)[i] == other(M(*x)[i])``.
+        This is equivalent to the composition of ``other`` times the identity matrix with the matrix,
+        consistent with ``M @ other`` and ``M + other``.
+        For a matrix with a single row, this is the plain composition of the operators.
+        """
+        if not isinstance(other, LinearOperator):
+            return NotImplemented
         operators = [[other @ op for op in row] for row in self._operators]
         return self.__class__(operators)
 
