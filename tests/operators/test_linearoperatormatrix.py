@@ -77,6 +77,24 @@ def test_linearoperatormatrix_add_scalar(scalar: complex):
         torch.testing.assert_close(result(*vector), expected)
 
 
+def test_linearoperatormatrix_tensor_left():
+    """Tensor+LinearOperatorMatrix and Tensor-LinearOperatorMatrix with the tensor as left operand."""
+    rng = RandomGenerator(0)
+    matrix = random_linearoperatormatrix((2, 2), (2, 2), rng)
+    other = rng.complex64_tensor(2)
+    vector = rng.complex64_tensor((2, 2))
+    result = other + matrix
+    assert isinstance(result, LinearOperatorMatrix)
+    torch.testing.assert_close(
+        result(*vector), tuple(mv + other * v for mv, v in zip(matrix(*vector), vector, strict=True))
+    )
+    result = other - matrix
+    assert isinstance(result, LinearOperatorMatrix)
+    torch.testing.assert_close(
+        result(*vector), tuple(other * v - mv for mv, v in zip(matrix(*vector), vector, strict=True))
+    )
+
+
 def test_linearoperatormatrix_sub_scalar():
     """Subtracting a scalar from either side."""
     rng = RandomGenerator(0)
