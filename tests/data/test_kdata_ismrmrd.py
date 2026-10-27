@@ -83,7 +83,7 @@ def test_reader_parity(raw_data, trajectory, tmp_path) -> None:
         KData.from_file(stream, trajectory, header_overwrites=overwrites, file_format='ismrmrd-stream'), expected
     )
     assert not stream.closed
-    stream_path = tmp_path / 'serialized.ismrmrd'
+    stream_path = tmp_path / 'serialized.mrd'
     stream_path.write_bytes(stream.getvalue())
     assert_kdata_equal(KData.from_file(stream_path, trajectory, header_overwrites=overwrites), expected)
     with stream_path.open('rb') as file:
@@ -209,7 +209,7 @@ def test_hdf5_errors(tmp_path) -> None:
     path = tmp_path / 'broken.h5'
     path.write_bytes(b'broken HDF5')
     with pytest.raises(OSError):
-        KData.from_file(path, DummyTrajectory())
+        KData.from_file(path, DummyTrajectory(), file_format='ismrmrd-hdf5')
     with pytest.raises(FileNotFoundError):
         KData.from_file(tmp_path / 'missing.ismrmrd', DummyTrajectory())
     stream = io.BytesIO(path.read_bytes())
@@ -467,6 +467,16 @@ def test_iter_acquisitions(raw_data, monkeypatch) -> None:
         assert result.header.protocol_name == 'next measurement'
         with pytest.raises(StopIteration):
             next(readouts)
+    assert not stream.closed
+
+
+def test_iter_rejects_measurement_normalization(raw_data) -> None:
+    """Per-readout normalization would change the relative trajectory coordinates."""
+    _, header, acquisitions = raw_data
+    stream = serialize_measurements([(header, acquisitions)])
+    with pytest.raises(ValueError, match='normalization requires a complete measurement'):
+        next(KData.iter_ismrmrd(stream, KTrajectoryIsmrmrd(normalize=True)))
+    assert stream.tell() == 0
     assert not stream.closed
 
 

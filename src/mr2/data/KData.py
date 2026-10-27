@@ -163,12 +163,7 @@ class KData(Dataclass):
         if file_format == 'mr2':
             return super().from_file(filename)
         is_hdf5 = file_format == 'ismrmrd-hdf5' or (
-            file_format is None
-            and (
-                not isinstance(filename, (str, PathLike))
-                or Path(filename).suffix.lower() in ('.h5', '.mrd')
-                or h5py.is_hdf5(filename)
-            )
+            file_format is None and (not isinstance(filename, (str, PathLike)) or h5py.is_hdf5(filename))
         )
         if is_hdf5 and cls._is_mr2_file(filename):
             return super().from_file(filename)
@@ -313,6 +308,7 @@ class KData(Dataclass):
             remain open. Close the iterator when stopping early to release an owned file.
         trajectory
             Trajectory source, as in `from_ismrmrd`, applied to each acquisition.
+            KTrajectoryIsmrmrd must use normalize=False, since normalization requires the full measurement.
         header_overwrites
             Header fields to overwrite.
         acquisition_filter_criterion
@@ -323,6 +319,8 @@ class KData(Dataclass):
         KData
             K-space data with shape ``(1, coils, 1, 1, samples)``.
         """
+        if isinstance(trajectory, KTrajectoryIsmrmrd) and trajectory.normalize:
+            raise ValueError('Trajectory normalization requires a complete measurement. Use from_file instead.')
         header_defaults: dict[str, object] = {}
         if isinstance(filename, (str, PathLike)):
             header_defaults['datetime'] = datetime.datetime.fromtimestamp(Path(filename).stat().st_mtime)
