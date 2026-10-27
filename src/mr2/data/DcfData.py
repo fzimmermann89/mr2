@@ -37,27 +37,13 @@ class DcfData(Dataclass):
         """
         dcfs = []
 
-        ks = [traj.kz, traj.ky, traj.kx]
-        spatial_dims = (-3, -2, -1)
-        ks_needing_voronoi = set()
-        for dim in spatial_dims:
-            non_singleton_ks = [ax for ax in ks if ax.shape[dim] != 1]
-            if len(non_singleton_ks) == 1:
-                # Found a dimension with only one non-singleton axes in ks
-                # --> Can handle this as a 1D trajectory
-                dcfs.append(smap(dcf_1d, non_singleton_ks.pop(), (dim,)))
-            elif len(non_singleton_ks) > 0:
-                # More than one of the ks is non-singleton
-                # --> A full dimension needing voronoi
-                ks_needing_voronoi |= set(non_singleton_ks)
+        ks = [reduce_repeat(k, tol=0, dim=(-3, -2, -1)) for k in (traj.kz, traj.ky, traj.kx)]
+        for axes in _trajectory_groups(ks):
+            if len(axes) == 1:
+                dcfs.append(smap(dcf_1d, ks[axes[0]], 3))
             else:
-                # A dimension in which each of ks is singleton
-                # --> Don't need to do anything
-                pass
-
-        if ks_needing_voronoi:
-            # Handle full dimensions needing voronoi
-            dcfs.append(smap(dcf_2d3d_voronoi, torch.stack(torch.broadcast_tensors(*ks_needing_voronoi), -4), 4))
+                group = torch.stack(torch.broadcast_tensors(*(ks[i] for i in axes)), dim=-4)
+                dcfs.append(smap(dcf_2d3d_voronoi, group, 4))
 
         if dcfs:
             # Multiply all dcfs together

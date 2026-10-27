@@ -259,3 +259,28 @@ def test_dcf_pipe_repeated_readouts(device: str, dtype: torch.dtype) -> None:
     flat_traj = KTrajectory(zero, zero, kx.reshape(2, 1, 1, 1, 24))
     flat = DcfData.from_traj_pipe(flat_traj, SpatialDimension(1, 1, 8)).data
     torch.testing.assert_close(result.reshape(flat.shape), flat)
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('method', ['voronoi', 'pipe'])
+@pytest.mark.parametrize('dense', [False, True])
+def test_dcf_connected_directions(device: str, method: str, dense: bool) -> None:
+    """A direction shared by two sample axes belongs to one coupled group."""
+    from mr2.algorithms.dcf import dcf_1d, dcf_2d3d_voronoi, dcf_pipe
+
+    kz = torch.tensor([-2.0, 0.0, 2.0], device=device).reshape(1, 1, 3, 1, 1)
+    ky = RandomGenerator(0).float32_tensor((1, 1, 1, 5, 8)).to(device)
+    kx = torch.arange(-4, 4, dtype=torch.float32, device=device).reshape(1, 1, 1, 1, 8)
+    group = torch.cat(torch.broadcast_tensors(ky[0], kx[0]), dim=0)
+    if method == 'voronoi':
+        expected = dcf_1d(kz.flatten()).reshape(kz.shape) * dcf_2d3d_voronoi(group)
+    else:
+        expected = dcf_pipe(kz[0], (6,)).unsqueeze(0) * dcf_pipe(group, (8, 8))
+    coordinates = torch.broadcast_tensors(kz, ky, kx) if dense else (kz, ky, kx)
+    traj = KTrajectory(coordinates[0], coordinates[1], coordinates[2], repeat_detection_tolerance=None)
+    result = (
+        DcfData.from_traj_voronoi(traj)
+        if method == 'voronoi'
+        else DcfData.from_traj_pipe(traj, SpatialDimension(6, 8, 8))
+    )
+    torch.testing.assert_close(result.data.expand(traj.shape), expected.expand(traj.shape))
