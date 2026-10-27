@@ -164,6 +164,59 @@ def test_fourier_op_gram(
     torch.testing.assert_close(actual, expected, rtol=1e-3, atol=1e-3)
 
 
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('encoding_offset', [0, 1])
+@pytest.mark.parametrize(
+    ('recon_shape', 'cartesian_axis'),
+    [
+        ((1, 1, 8), None),
+        ((1, 1, 9), None),
+        ((1, 8, 8), None),
+        ((1, 9, 9), None),
+        ((1, 8, 9), None),
+        ((1, 9, 8), None),
+        ((4, 6, 8), None),
+        ((5, 7, 9), None),
+        ((5, 6, 8), None),
+        ((4, 7, 8), None),
+        ((4, 6, 9), None),
+        ((5, 6, 9), 0),
+        ((5, 6, 9), 1),
+        ((5, 6, 9), 2),
+    ],
+)
+def test_fourier_op_gram_centering(
+    recon_shape: tuple[int, int, int], cartesian_axis: int | None, encoding_offset: int, device: str
+) -> None:
+    """Toeplitz Gram agrees with H @ F for odd, even and mixed axis sizes."""
+    rng = RandomGenerator(seed=0)
+    encoding_shape = tuple(size + encoding_offset if size > 1 else 1 for size in recon_shape)
+    sample_shape = [5 if size > 1 else 1 for size in recon_shape]
+    if cartesian_axis is not None:
+        sample_shape[cartesian_axis] = encoding_shape[cartesian_axis]
+    nonuniform_shape = [1 if axis == cartesian_axis else size for axis, size in enumerate(sample_shape)]
+    coordinates = []
+    for axis, size in enumerate(encoding_shape):
+        if size == 1:
+            coordinate = torch.zeros(1, 1, 1, 1, 1)
+        elif axis == cartesian_axis:
+            shape = [1] * 5
+            shape[axis + 2] = size
+            coordinate = (torch.arange(size, dtype=torch.float32) - size // 2).reshape(shape)
+        else:
+            coordinate = rng.float32_tensor((1, 1, *nonuniform_shape), low=-size / 2, high=size / 2)
+        coordinates.append(coordinate.to(device))
+
+    kz, ky, kx = coordinates
+    trajectory = KTrajectory(kz, ky, kx)
+    op = FourierOp(SpatialDimension(*recon_shape), SpatialDimension(*encoding_shape), trajectory).to(device)
+    x = rng.complex64_tensor((1, 2, *recon_shape)).to(device)
+    (expected,) = (op.H @ op)(x)
+    (actual,) = op.gram(x)
+
+    torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-4)
+
+
 def test_fourier_op_cartesian_sorting(ismrmrd_cart) -> None:
     """Verify correct sorting of Cartesian k-space data before FFT."""
     kdata = KData.from_file(ismrmrd_cart.filename, KTrajectoryCartesian())

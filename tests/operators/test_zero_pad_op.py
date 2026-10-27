@@ -42,6 +42,33 @@ def test_zero_pad_op_content() -> None:
     torch.testing.assert_close(original_data[:, 10:20, :, 5:35, :, :], padded_data[:, :, :, :, 15:65, :])
 
 
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize(
+    ('original_shape', 'padded_shape'),
+    [
+        ((4,), (5,)),
+        ((5,), (4,)),
+        ((4,), (7,)),
+        ((7,), (4,)),
+        ((4, 5), (5, 4)),
+        ((4, 5, 6), (7, 4, 5)),
+        ((7, 4, 5), (4, 5, 6)),
+    ],
+)
+def test_zero_pad_op_preserves_center(
+    original_shape: tuple[int, ...], padded_shape: tuple[int, ...], device: str
+) -> None:
+    """Forward and adjoint preserve a delta at the fftshift centre."""
+    x = torch.zeros(original_shape, device=device)
+    x[tuple(size // 2 for size in original_shape)] = 1
+    y = torch.zeros(padded_shape, device=device)
+    y[tuple(size // 2 for size in padded_shape)] = 1
+    op = ZeroPadOp(dim=tuple(range(-len(original_shape), 0)), original_shape=original_shape, padded_shape=padded_shape)
+
+    torch.testing.assert_close(*op(x), y)
+    torch.testing.assert_close(*op.H(y), x)
+
+
 SHAPE_PARAMETERS = pytest.mark.parametrize(
     ('u_shape', 'v_shape'),
     [
