@@ -53,17 +53,18 @@ def test_jacobian_value_at_x0() -> None:
 
 
 @pytest.mark.cuda
-@pytest.mark.parametrize('requires_grad', [False, True])
-def test_jacobian_cache_is_cleared_when_moved(requires_grad: bool) -> None:
+@pytest.mark.parametrize(('requires_grad', 'grad_enabled'), [(False, True), (True, True), (True, False)])
+def test_jacobian_cache_is_cleared_when_moved(requires_grad: bool, grad_enabled: bool) -> None:
     """Cached values and VJPs follow the Jacobian across device moves."""
     x0 = torch.tensor([1.0, 2.0], requires_grad=requires_grad)
     jacobian = Jacobian(L2NormSquared(), x0)
     jacobian.adjoint(torch.tensor(0.5))
     assert jacobian.value_at_x0[0].device.type == 'cpu'
 
-    jacobian.cuda()
+    with torch.set_grad_enabled(grad_enabled):
+        jacobian.cuda()
     torch.testing.assert_close(jacobian.value_at_x0[0], x0.cuda().square().sum())
-    if requires_grad:
+    if requires_grad and grad_enabled:
         (gradient,) = torch.autograd.grad(jacobian.value_at_x0[0], x0)
         torch.testing.assert_close(gradient, 2 * x0)
     (actual,) = jacobian.adjoint(torch.tensor(0.5, device='cuda'))
@@ -75,15 +76,16 @@ def test_jacobian_cache_is_cleared_when_moved(requires_grad: bool) -> None:
     torch.testing.assert_close(actual, x0)
 
 
-@pytest.mark.parametrize('requires_grad', [False, True])
-def test_jacobian_cache_is_cleared_when_cast(requires_grad: bool) -> None:
+@pytest.mark.parametrize(('requires_grad', 'grad_enabled'), [(False, True), (True, True), (True, False)])
+def test_jacobian_cache_is_cleared_when_cast(requires_grad: bool, grad_enabled: bool) -> None:
     """Cached values and VJPs follow the Jacobian dtype after a cast."""
     x0 = torch.tensor([1.0, 2.0], requires_grad=requires_grad)
     jacobian = Jacobian(L2NormSquared(), x0)
     jacobian.adjoint(torch.tensor(0.5))
-    jacobian.double()
+    with torch.set_grad_enabled(grad_enabled):
+        jacobian.double()
     torch.testing.assert_close(jacobian.value_at_x0[0], x0.double().square().sum())
-    if requires_grad:
+    if requires_grad and grad_enabled:
         (gradient,) = torch.autograd.grad(jacobian.value_at_x0[0], x0)
         torch.testing.assert_close(gradient, 2 * x0)
 

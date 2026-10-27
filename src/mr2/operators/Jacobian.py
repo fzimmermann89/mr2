@@ -39,7 +39,7 @@ class Jacobian(LinearOperator):
             # TensorList leaves gradient-requiring tensors as ordinary attributes.
             for index, x0 in enumerate(self._x0):
                 if str(index) in vars(self._x0):
-                    self._x0[index] = fn(x0)
+                    setattr(self._x0, str(index), fn(x0))
         self._vjp = None
         self._f_x0 = None
         return result
