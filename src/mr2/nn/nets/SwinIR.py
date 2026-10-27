@@ -4,6 +4,7 @@ import torch
 from torch.nn import GELU, Module
 
 from mr2.nn.attention.ShiftedWindowAttention import ShiftedWindowAttention
+from mr2.nn.CondMixin import CondMixin
 from mr2.nn.DropPath import DropPath
 from mr2.nn.FiLM import FiLM
 from mr2.nn.LayerNorm import LayerNorm
@@ -11,7 +12,7 @@ from mr2.nn.ndmodules import convND
 from mr2.nn.Sequential import Sequential
 
 
-class SwinTransformerLayer(Module):
+class SwinTransformerLayer(CondMixin, Module):
     """Swin Transformer layer.
 
     Implements a single layer of the Swin Transformer architecture.
@@ -86,7 +87,7 @@ class SwinTransformerLayer(Module):
         return x
 
 
-class ResidualSwinTransformerBlock(Module):
+class ResidualSwinTransformerBlock(CondMixin, Module):
     """Residual Swin Transformer block (RSTB).
 
     Combines a Swin Transformer layer with a residual connection,
