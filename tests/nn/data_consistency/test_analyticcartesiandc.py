@@ -9,7 +9,7 @@ def test_analytic_cartesian_dc(
     image_noisy: torch.Tensor, kdata_us: KData, image: torch.Tensor, image_us: torch.Tensor
 ) -> None:
     image_noisy = image_noisy.clone().requires_grad_(True)
-    dc = AnalyticCartesianDC(initial_regularization_weight=1e-6).to(image_noisy.device)
+    dc = AnalyticCartesianDC(initial_regularization_weight=1e-6)
     result = dc(image_noisy, kdata_us)
     loss = (result - image).abs().mean()
     assert loss < (image_noisy - image).abs().mean()

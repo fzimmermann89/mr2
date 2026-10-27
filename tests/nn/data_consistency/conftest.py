@@ -1,7 +1,6 @@
 """Test fixtures for data consistency tests."""
 
 import pytest
-import torch
 from mr2.data.KData import KData
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.data.traj_calculators.KTrajectoryCartesian import KTrajectoryCartesian
@@ -10,18 +9,11 @@ from mr2.phantoms.EllipsePhantom import EllipsePhantom
 from mr2.utils import RandomGenerator
 
 
-@pytest.fixture(params=['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
-def device(request) -> str:
-    if request.param == 'cuda' and not torch.cuda.is_available():
-        pytest.skip('CUDA unavailable')
-    return request.param
-
-
 @pytest.fixture
-def kdata(device: str):
+def kdata():
     matrix = SpatialDimension(x=128, y=128, z=1)
     kdata = EllipsePhantom().kdata(KTrajectoryCartesian.fullysampled(matrix), matrix)
-    return kdata.to(device)
+    return kdata
 
 
 @pytest.fixture
