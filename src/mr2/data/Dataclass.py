@@ -1084,8 +1084,8 @@ class Dataclass:
         dimensions and concatenated along `dim`. Nested dataclasses use the
         parent's per-object broadcast shapes for all their fields. Other nested
         objects supporting both `concatenate` and `expand` (e.g. `Rotation`)
-        are expanded to these shapes before concatenating. List fields are joined
-        into a new list. Other fields are left untouched.
+        use the parent's concat extent while keeping shared singleton dimensions
+        elsewhere. List fields are joined into a new list. Other fields are left untouched.
 
         Parameters
         ----------
@@ -1127,7 +1127,12 @@ class Dataclass:
                     setattr(new, field.name, concatenate_fields(values))
 
                 elif isinstance(head, HasConcatenate) and all(isinstance(v, HasExpand) for v in values):
-                    expanded = [v.expand(*shape) for v, shape in zip(values, target_shapes, strict=True)]
+                    field_shapes = [(1,) * (len(target_shapes[0]) - len(v.shape)) + tuple(v.shape) for v in values]
+                    field_shapes = broadcast_shapes_except(field_shapes, dim)
+                    expanded = [
+                        v.expand(*shape[:dim], target[dim], *shape[dim + 1 :])
+                        for v, shape, target in zip(values, field_shapes, target_shapes, strict=True)
+                    ]
                     setattr(new, field.name, expanded[0].concatenate(*expanded[1:], dim=dim))
 
                 elif isinstance(head, HasConcatenate):

@@ -519,6 +519,35 @@ def test_dataclass_concatenate_scalar_shape() -> None:
     assert torch.equal(c.orientation.as_quat(), expected_orientation.as_quat())
 
 
+@pytest.mark.parametrize('dim', [0, 1, -1])
+@pytest.mark.parametrize('same', [False, True])
+def test_dataclass_concatenate_nested_rotation_storage(dim: int, same: bool) -> None:
+    """Concatenated rotations keep unrelated dimensions broadcasted in storage."""
+
+    class Child(Dataclass):
+        """Nested orientation metadata."""
+
+        orientation: Rotation
+
+    class Parent(Dataclass):
+        """Data with a broadcasted orientation."""
+
+        data: torch.Tensor
+        child: Child
+
+    a = Parent(torch.arange(2 * 16 * 32).reshape(2, 16, 32), Child(Rotation.identity()))
+    b = Parent(a.data, Child(Rotation.from_euler('z', 0.0 if same else 1.0).reshape(1, 1)))
+    result = a.concatenate(b, dim=dim)
+    orientation = result.child.orientation
+    expected_shape = [1, 1, 1]
+    expected_shape[dim] = 1 if same else a.shape[dim] * 2
+    assert orientation.shape == tuple(expected_shape)
+    expected = torch.cat([obj.child.orientation.as_quat().expand(*obj.shape, 4) for obj in (a, b)], dim=dim % a.ndim)
+    torch.testing.assert_close(orientation.as_quat().expand(*result.shape, 4), expected)
+    quaternions = orientation._quaternions
+    assert quaternions.untyped_storage().nbytes() <= 2 * a.shape[dim] * 4 * quaternions.element_size()
+
+
 @pytest.mark.parametrize('dim', [0, 1, -1, -2])
 @pytest.mark.parametrize('same', [False, True])
 def test_dataclass_concatenate_nested_broadcast(dim: int, same: bool) -> None:
