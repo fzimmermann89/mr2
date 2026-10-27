@@ -91,7 +91,8 @@ class RegularizedIterativeSENSEReconstruction(DirectReconstruction):
         n_iterations
             Number of CG iterations.
         regularization_data
-            Regularization data, e.g. a reference image (:math:`x_0`).
+            Regularization data in the range of :math:`B`, e.g. a reference image for the identity operator.
+            By default, the prior is zero and its contribution :math:`B^H x_{reg}` is omitted.
         regularization_weight
             Strength of the regularization (:math:`\lambda`).
         regularization_op
@@ -138,9 +139,10 @@ class RegularizedIterativeSENSEReconstruction(DirectReconstruction):
 
         if not torch.all(self.regularization_weight == 0):
             operator = operator + self.regularization_weight * self.regularization_op.gram
-            right_hand_side = (
-                right_hand_side + self.regularization_weight * self.regularization_op.H(self.regularization_data)[0]
-            )
+            if self.regularization_data.requires_grad or not torch.all(self.regularization_data == 0):
+                right_hand_side = (
+                    right_hand_side + self.regularization_weight * self.regularization_op.H(self.regularization_data)[0]
+                )
 
         initial_value = self._iterative_initial_value(acquisition_model, kdata.data, right_hand_side)
         (img_tensor,) = cg(
