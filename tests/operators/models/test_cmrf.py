@@ -5,6 +5,7 @@ from collections.abc import Sequence
 import pytest
 import torch
 from mr2.operators.models.cMRF import CardiacFingerprinting
+from mr2.operators.models.EPG import Parameters
 from mr2.utils import RandomGenerator
 from mr2.utils.reshape import unsqueeze_right
 from tests import autodiff_test
@@ -21,6 +22,21 @@ def test_cmrf_basic(parameter_shape: Sequence[int] = (2, 1, 1, 4, 2)) -> None:
     (signal,) = model(m0, t1, t2)
     assert signal.isfinite().all()
     assert signal.shape == (705, *parameter_shape)
+
+
+def test_cmrf_n_states() -> None:
+    """Test cMRF uses the requested number of EPG states."""
+    m0 = torch.tensor(1.0 + 0.5j)
+    t1 = torch.tensor(1.0)
+    t2 = torch.tensor(0.1)
+    signals = []
+    for n_states in (2, 40):
+        model = CardiacFingerprinting(n_states=n_states)
+        (signal,) = model(m0, t1, t2)
+        _, epg_signals = model.sequence(Parameters(m0, t1, t2), states=n_states)
+        torch.testing.assert_close(signal, torch.stack(epg_signals))
+        signals.append(signal)
+    assert not torch.allclose(signals[0], signals[1])
 
 
 def test_cmrf_autodiff(parameter_shape: Sequence[int] = (2, 1, 1, 4, 2)) -> None:

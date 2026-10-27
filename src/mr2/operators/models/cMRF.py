@@ -130,6 +130,6 @@ class CardiacFingerprinting(SignalModel[torch.Tensor, torch.Tensor, torch.Tensor
             directly calling this method. See this PyTorch `discussion <https://discuss.pytorch.org/t/is-model-forward-x-the-same-as-model-call-x/33460/3>`_.
         """
         parameters = Parameters(m0, t1, t2)
-        _, signals = self.sequence(parameters, states=20)
+        _, signals = self.sequence(parameters, states=self.n_states)
         signal = torch.stack(signals, dim=0).broadcast_to(-1, *torch.broadcast_shapes(m0.shape, t1.shape, t2.shape))
         return (signal,)
