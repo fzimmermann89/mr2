@@ -891,7 +891,24 @@ class Dataclass:
             self._mr2_save_to_group(f)
 
     @classmethod
-    def from_mr2(cls, filepath: FileOrPath) -> Self:
+    def from_file(cls, filename: FileOrPath) -> Self:
+        """Load a dataclass from an MR2 file.
+
+        Parameters
+        ----------
+        filename
+            Path or seekable binary file containing MR2 data.
+        """
+        return cls._from_mr2(filename)
+
+    @staticmethod
+    def _is_mr2_file(filename: FileOrPath) -> bool:
+        """Identify MR2 storage in an HDF5 file."""
+        with h5py.File(filename, 'r') as file:
+            return _MR2_ATTR_CLASS_NAME in file.attrs and _MR2_ATTR_PY_MODULE in file.attrs
+
+    @classmethod
+    def _from_mr2(cls, filepath: FileOrPath) -> Self:
         """Load a dataclass from an MR2 file.
 
         Parameters

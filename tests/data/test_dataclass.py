@@ -596,7 +596,7 @@ def test_dataclass_save_as_mr2_roundtrip(tmp_path: Path) -> None:
     filepath = tmp_path / 'dataclass_a.mr2'
 
     dataclass.save_as_mr2(filepath)
-    reloaded = A.from_mr2(filepath)
+    reloaded = A.from_file(filepath)
 
     torch.testing.assert_close(reloaded.floattensor, dataclass.floattensor)
     torch.testing.assert_close(reloaded.floattensor2, dataclass.floattensor2)
@@ -611,7 +611,7 @@ def test_kdata_save_as_mr2_roundtrip(consistently_shaped_kdata: KData, tmp_path:
     filepath = tmp_path / 'kdata.mr2'
 
     consistently_shaped_kdata.save_as_mr2(filepath)
-    reloaded = KData.from_mr2(filepath)
+    reloaded = KData.from_file(filepath)
 
     torch.testing.assert_close(reloaded.data, consistently_shaped_kdata.data)
     torch.testing.assert_close(reloaded.traj.as_tensor(), consistently_shaped_kdata.traj.as_tensor())
@@ -640,7 +640,7 @@ def test_idata_save_as_mr2_roundtrip(random_kheader, random_test_data, tmp_path:
     filepath = tmp_path / 'idata.mr2'
 
     idata.save_as_mr2(filepath)
-    reloaded = IData.from_mr2(filepath)
+    reloaded = IData.from_file(filepath)
 
     torch.testing.assert_close(reloaded.data, idata.data)
     torch.testing.assert_close(reloaded.header.position.z, idata.header.position.z)
@@ -657,4 +657,4 @@ def test_dataclass_from_mr2_wrong_type_raises(tmp_path: Path) -> None:
     dataclass.save_as_mr2(filepath)
 
     with pytest.raises(ValueError, match='does not match requested type'):
-        B.from_mr2(filepath)
+        B.from_file(filepath)

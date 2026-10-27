@@ -430,7 +430,7 @@ zenodo_get.download(
     access_token=os.environ.get('ZENODO_TOKEN'),
 )
 
-idat_dcm = mr2.data.IData.from_dicom_files(data_folder / 'cart_t1_msense_integrated.dcm')
+idat_dcm = mr2.data.IData.from_file(data_folder / 'cart_t1_msense_integrated.dcm')
 show_images(idat_us_sense.rss().squeeze(), torch.fliplr(idat_dcm.rss().squeeze()), titles=['MRtwo', 'Scanner'])
 
 # %% [markdown]

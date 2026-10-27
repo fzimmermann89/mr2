@@ -3,6 +3,7 @@
 from collections.abc import Callable
 from typing import Literal
 
+import h5py
 import ismrmrd
 import numpy as np
 import torch
@@ -131,33 +132,42 @@ class KTrajectory(Dataclass):
         )
 
     @classmethod
-    def from_ismrmrd(
+    def from_file(
         cls,
         filename: FileOrPath,
         dataset_idx: int = -1,
         acquisition_filter_criterion: Callable[[ismrmrd.Acquisition], bool] | None = None,
         normalize: bool = False,
     ) -> Self:
-        """Read a k-space trajectory from an ISMRMRD file.
-
-        The trajectory is extracted from an ISMRMRD file. If the encoding matrix is set in the header,
-        the trajectory is rescaled to fit within the dimensions of the matrix.
+        """Load a trajectory from an MR2 or ISMRMRD HDF5 file.
 
         Parameters
         ----------
         filename
-            The path to the ISMRMRD file.
+            Path or seekable binary file-like object.
         dataset_idx
-            The index of the dataset in the file.
+            ISMRMRD dataset index, defaulting to the last dataset.
         acquisition_filter_criterion
-            A function that takes an ISMRMRD acquisition and returns a boolean.
-            If provided, only acquisitions for which the function returns `True` are included in the trajectory.
-            `None` includes all acquisitions.
+            ISMRMRD acquisition predicate, or None to include all acquisitions.
         normalize
-            Normalize the trajectory to the encoding matrix. Consider enabling for non-cartesian trajectories or
-            non-normalized ISMRMRD trajectories.
+            Normalize an ISMRMRD trajectory to the encoding matrix.
+            MR2 files restore the saved trajectory without normalization.
         """
-        with ismrmrd.File(filename, 'r') as file:
+        if cls._is_mr2_file(filename):
+            return super().from_file(filename)
+        return cls._from_ismrmrd(filename, dataset_idx, acquisition_filter_criterion, normalize)
+
+    @classmethod
+    def _from_ismrmrd(
+        cls,
+        filename: FileOrPath,
+        dataset_idx: int = -1,
+        acquisition_filter_criterion: Callable[[ismrmrd.Acquisition], bool] | None = None,
+        normalize: bool = False,
+    ) -> Self:
+        """Read trajectory samples from an ISMRMRD HDF5 dataset."""
+        with h5py.File(filename, 'r') as hdf5_file:
+            file = ismrmrd.file.Folder(hdf5_file)
             datasets = list(file.keys())
             if not datasets:
                 raise ValueError('No datasets found in the ISMRMRD file.')

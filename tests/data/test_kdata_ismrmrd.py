@@ -13,7 +13,7 @@ import ismrmrd
 import ismrmrd.serialization
 import pytest
 import torch
-from mr2.data import KData, KTrajectory
+from mr2.data import KData, KNoise, KTrajectory
 from mr2.data.acq_filters import is_image_acquisition
 from mr2.data.traj_calculators import KTrajectoryCartesian, KTrajectoryIsmrmrd
 from mr2.data.traj_calculators.KTrajectoryCalculator import DummyTrajectory
@@ -70,7 +70,7 @@ def test_reader_parity(raw_data, trajectory, tmp_path) -> None:
     """Paths, HDF5 BytesIO, open files, serialized streams and objects agree."""
     filename, header, acquisitions = raw_data
     overwrites = {'datetime': datetime.datetime(2020, 1, 2), 'protocol_name': 'overwritten'}
-    expected = KData.from_ismrmrd_hdf5(filename, trajectory, header_overwrites=overwrites)
+    expected = KData._from_ismrmrd_hdf5(filename, trajectory, header_overwrites=overwrites)
     assert_kdata_equal(KData.from_ismrmrd(header, acquisitions, trajectory, header_overwrites=overwrites), expected)
     with filename.open('rb') as file:
         assert_kdata_equal(KData.from_file(file, trajectory, header_overwrites=overwrites), expected)
@@ -79,13 +79,15 @@ def test_reader_parity(raw_data, trajectory, tmp_path) -> None:
     assert_kdata_equal(KData.from_file(buffer, trajectory, header_overwrites=overwrites), expected)
     assert not buffer.closed
     stream = serialize_measurements([(header, acquisitions)])
-    assert_kdata_equal(KData.from_ismrmrd_stream(stream, trajectory, header_overwrites=overwrites), expected)
+    assert_kdata_equal(
+        KData.from_file(stream, trajectory, header_overwrites=overwrites, file_format='ismrmrd-stream'), expected
+    )
     assert not stream.closed
     stream_path = tmp_path / 'serialized.ismrmrd'
     stream_path.write_bytes(stream.getvalue())
     assert_kdata_equal(KData.from_file(stream_path, trajectory, header_overwrites=overwrites), expected)
     with stream_path.open('rb') as file:
-        assert_kdata_equal(KData.from_ismrmrd_stream(file, trajectory, header_overwrites=overwrites), expected)
+        assert_kdata_equal(KData._from_ismrmrd_stream(file, trajectory, header_overwrites=overwrites), expected)
         assert not file.closed
     # HDF5 detection uses content even for an unfamiliar suffix.
     hdf5_path = tmp_path / 'raw.bin'
@@ -104,7 +106,7 @@ def test_multiple_measurements(raw_data, index) -> None:
             acq.data[:] = complex(i + 1, i + 2)
         measurements.append((header, selected))
     stream = serialize_measurements(measurements)
-    result = KData.from_ismrmrd_stream(stream, DummyTrajectory(), dataset_idx=index)
+    result = KData._from_ismrmrd_stream(stream, DummyTrajectory(), dataset_idx=index)
     torch.testing.assert_close(result.data, torch.full_like(result.data, complex(index % 3 + 1, -(index % 3 + 2))))
     if index >= 0 and index < 2:
         assert stream.tell() < len(stream.getvalue()) - 2
@@ -121,7 +123,7 @@ def test_positive_selection_does_not_read_later_payload(raw_data) -> None:
     with ismrmrd.serialization.ProtocolSerializer(next_header) as writer:
         writer.serialize(header)
     truncated = io.BytesIO(prefix + next_header.getvalue()[:-2] + b'\x08\x00')
-    result = KData.from_ismrmrd_stream(truncated, DummyTrajectory(), dataset_idx=0)
+    result = KData._from_ismrmrd_stream(truncated, DummyTrajectory(), dataset_idx=0)
     assert result.data.shape[-2] == 4
     assert truncated.read() == b'\x08\x00'
 
@@ -132,7 +134,7 @@ def test_out_of_range(raw_data, index) -> None:
     _, header, acquisitions = raw_data
     stream = serialize_measurements([(header, acquisitions)] * 3)
     with pytest.raises(IndexError, match='index out of range'):
-        KData.from_ismrmrd_stream(stream, DummyTrajectory(), dataset_idx=index)
+        KData._from_ismrmrd_stream(stream, DummyTrajectory(), dataset_idx=index)
     assert not stream.closed
 
 
@@ -152,7 +154,7 @@ def test_nonseekable(raw_data) -> None:
     """The explicit stream reader needs only sequential reads."""
     _, header, acquisitions = raw_data
     source = Nonseekable(serialize_measurements([(header, acquisitions)]).getvalue())
-    result = KData.from_ismrmrd_stream(source, DummyTrajectory())
+    result = KData.from_file(source, DummyTrajectory(), file_format='ismrmrd-stream')
     assert result.data.shape[-2:] == (4, 4)
     assert not source.closed
 
@@ -169,7 +171,7 @@ def test_invalid_grouping(raw_data, objects, message) -> None:
             writer.serialize(acquisitions[-1])
     stream.seek(0)
     with pytest.raises(ValueError, match=message):
-        KData.from_ismrmrd_stream(stream, DummyTrajectory())
+        KData._from_ismrmrd_stream(stream, DummyTrajectory())
     assert not stream.closed
 
 
@@ -179,7 +181,7 @@ def test_empty_selection(raw_data, empty_group) -> None:
     _, header, acquisitions = raw_data
     stream = serialize_measurements([(header, [] if empty_group else acquisitions)])
     with pytest.raises(ValueError, match='No acquisitions meeting'):
-        KData.from_ismrmrd_stream(stream, DummyTrajectory(), acquisition_filter_criterion=lambda _: False)
+        KData._from_ismrmrd_stream(stream, DummyTrajectory(), acquisition_filter_criterion=lambda _: False)
     assert not stream.closed
 
 
@@ -190,7 +192,7 @@ def test_truncation(raw_data, trim) -> None:
     data = serialize_measurements([(header, acquisitions)]).getvalue()
     stream = io.BytesIO(data[:-trim])
     with pytest.raises((EOFError, ValueError)):
-        KData.from_ismrmrd_stream(stream, DummyTrajectory())
+        KData._from_ismrmrd_stream(stream, DummyTrajectory())
     assert not stream.closed
 
 
@@ -198,7 +200,7 @@ def test_unknown_message() -> None:
     """Unknown protocol IDs are not swallowed as EOF."""
     stream = io.BytesIO(b'\xff\xff')
     with pytest.raises(ValueError, match='Unknown MessageID'):
-        KData.from_ismrmrd_stream(stream, DummyTrajectory())
+        KData._from_ismrmrd_stream(stream, DummyTrajectory())
     assert not stream.closed
 
 
@@ -283,14 +285,14 @@ def test_trailing_selection_releases_old_acquisitions(raw_data, index, monkeypat
         return acq
 
     monkeypatch.setattr(ismrmrd.Acquisition, 'deserialize_from', staticmethod(tracked_deserialize))
-    result = KData.from_ismrmrd_stream(stream, DummyTrajectory(), dataset_idx=index)
+    result = KData._from_ismrmrd_stream(stream, DummyTrajectory(), dataset_idx=index)
     assert result.data.shape[-2] == 1
     assert len(references) == 20
     # The trailing groups, the current group, and the next deserialized acquisition.
     assert peak_retained <= abs(index) + 2
 
 
-@pytest.mark.parametrize('reader', ['from_file', 'from_ismrmrd_hdf5', 'from_ismrmrd_stream', 'from_ismrmrd'])
+@pytest.mark.parametrize('reader', ['from_file', '_from_ismrmrd_hdf5', '_from_ismrmrd_stream', 'from_ismrmrd'])
 def test_custom_filter(raw_data, reader) -> None:
     """All entry points forward a custom predicate and crop data before sorting."""
     filename, header, acquisitions = raw_data
@@ -298,8 +300,8 @@ def test_custom_filter(raw_data, reader) -> None:
     criterion = lambda acq: is_image_acquisition(acq) and acq.idx.kspace_encode_step_1 == image.idx.kspace_encode_step_1  # noqa: E731
     if reader == 'from_ismrmrd':
         result = KData.from_ismrmrd(header, acquisitions, DummyTrajectory(), acquisition_filter_criterion=criterion)
-    elif reader == 'from_ismrmrd_stream':
-        result = KData.from_ismrmrd_stream(
+    elif reader == '_from_ismrmrd_stream':
+        result = KData._from_ismrmrd_stream(
             serialize_measurements([(header, acquisitions)]), DummyTrajectory(), acquisition_filter_criterion=criterion
         )
     else:
@@ -331,7 +333,7 @@ def test_unknown_timestamp_stays_unknown(raw_data) -> None:
     assert first.header.datetime is None
     assert second.header.datetime is None
     stream = serialize_measurements([(header, acquisitions)])
-    assert KData.from_ismrmrd_stream(stream, DummyTrajectory()).header.datetime is None
+    assert KData._from_ismrmrd_stream(stream, DummyTrajectory()).header.datetime is None
 
 
 @pytest.mark.parametrize('header_format', ['parsed', 'xml', 'bytes'])
@@ -410,15 +412,15 @@ class ShortReads(Nonseekable):
         return super().read(3 if size is None or size < 0 else min(size, 3))
 
 
-@pytest.mark.parametrize('reader', ['from_ismrmrd_stream', 'iter_ismrmrd'])
+@pytest.mark.parametrize('reader', ['_from_ismrmrd_stream', 'iter_ismrmrd'])
 def test_short_reads(raw_data, reader) -> None:
     """Chunked nonseekable transports preserve data and report premature EOF."""
     _, header, acquisitions = raw_data
     data = serialize_measurements([(header, acquisitions)]).getvalue()
     stream = ShortReads(data)
-    if reader == 'from_ismrmrd_stream':
+    if reader == '_from_ismrmrd_stream':
         expected = KData.from_ismrmrd(header, acquisitions, DummyTrajectory())
-        assert_kdata_equal(KData.from_ismrmrd_stream(stream, DummyTrajectory()), expected)
+        assert_kdata_equal(KData._from_ismrmrd_stream(stream, DummyTrajectory()), expected)
     else:
         results = list(KData.iter_ismrmrd(stream, DummyTrajectory()))
         imaging = [acq for acq in acquisitions if is_image_acquisition(acq)]
@@ -427,9 +429,9 @@ def test_short_reads(raw_data, reader) -> None:
             assert_kdata_equal(result, KData.from_ismrmrd(header, [acq], DummyTrajectory()))
     assert not stream.closed
     truncated = ShortReads(data[:-1])
-    if reader == 'from_ismrmrd_stream':
+    if reader == '_from_ismrmrd_stream':
         with pytest.raises(EOFError):
-            KData.from_ismrmrd_stream(truncated, DummyTrajectory())
+            KData._from_ismrmrd_stream(truncated, DummyTrajectory())
     else:
         with pytest.raises(EOFError):
             list(KData.iter_ismrmrd(truncated, DummyTrajectory()))
@@ -493,15 +495,26 @@ def test_iter_close_owned_file(raw_data, tmp_path, monkeypatch) -> None:
 
 
 @pytest.mark.parametrize('use_buffer', [False, True])
-def test_from_file_mr2(raw_data, tmp_path, use_buffer) -> None:
-    """Detect MR2 storage by content and restore its stored trajectory."""
+@pytest.mark.parametrize('data_type', ['kdata', 'noise', 'trajectory'])
+def test_from_file_mr2(raw_data, tmp_path, use_buffer, data_type) -> None:
+    """Load saved data through each class's public entry point."""
     _, header, acquisitions = raw_data
     expected = KData.from_ismrmrd(header, acquisitions, KTrajectoryCartesian())
     filename = tmp_path / 'stored.bin'
     expected.header.trajectory = None
-    expected.save_as_mr2(filename)
+    saved = {'kdata': expected, 'noise': KNoise(expected.data), 'trajectory': expected.traj}[data_type]
+    saved.save_as_mr2(filename)
     source = io.BytesIO(filename.read_bytes()) if use_buffer else filename
-    assert_kdata_equal(KData.from_file(source), expected)
+    result = type(saved).from_file(source)
+    if data_type == 'kdata':
+        assert isinstance(result, KData)
+        assert_kdata_equal(result, expected)
+    elif data_type == 'noise':
+        assert isinstance(result, KNoise)
+        torch.testing.assert_close(result.data, expected.data)
+    else:
+        assert isinstance(result, KTrajectory)
+        torch.testing.assert_close(result.as_tensor(), expected.traj.as_tensor())
     if use_buffer:
         assert not source.closed
 

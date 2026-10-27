@@ -129,24 +129,24 @@ class KData(Dataclass):
     @classmethod
     def from_file(
         cls,
-        filename: FileOrPath,
+        filename: FileOrPath | BinaryIO,
         trajectory: KTrajectoryCalculator | KTrajectory | KTrajectoryIsmrmrd | None = None,
         header_overwrites: Mapping[str, object] | None = None,
         dataset_idx: int = -1,
         acquisition_filter_criterion: Callable[[ismrmrd.Acquisition], bool] | None = is_image_acquisition,
+        *,
+        file_format: Literal['mr2', 'ismrmrd-hdf5', 'ismrmrd-stream'] | None = None,
     ) -> Self:
         """Load k-space data from an MR2 or ISMRMRD file.
 
-        Paths are detected by HDF5 content; .h5 and .mrd paths always use the HDF5 reader
-        so damaged HDF5 files retain their original errors. File-like objects retain the
-        HDF5 behavior. Use `from_ismrmrd_stream` explicitly for binary streams, including
-        nonseekable inputs such as sys.stdin.buffer.
+        Detect the format from the file contents. File-like inputs default to HDF5;
+        pass ``file_format='ismrmrd-stream'`` for binary streams such as sys.stdin.buffer.
         MR2 files restore the saved KData; the remaining options apply to ISMRMRD input.
 
         Parameters
         ----------
         filename
-            path to the file or a seekable binary file-like object
+            path or binary file-like object
         trajectory
             Trajectory source for ISMRMRD input. MR2 files contain their own trajectory.
             If a KTrajectory is given, the shape should be `(acquisisions 1 1 k0)` in the same order as the acquisitions
@@ -157,27 +157,37 @@ class KData(Dataclass):
             index of the dataset or serialized measurement to load; defaults to the last
         acquisition_filter_criterion
             function which returns True if an acquisition should be included in KData, or None to disable filtering
+        file_format
+            Explicit input format. If None, detect path formats and assume HDF5 for file-like inputs.
         """
-        is_hdf5 = (
-            not isinstance(filename, (str, PathLike))
-            or Path(filename).suffix.lower() in ('.h5', '.mrd')
-            or h5py.is_hdf5(filename)
+        if file_format == 'mr2':
+            return super().from_file(filename)
+        is_hdf5 = file_format == 'ismrmrd-hdf5' or (
+            file_format is None
+            and (
+                not isinstance(filename, (str, PathLike))
+                or Path(filename).suffix.lower() in ('.h5', '.mrd')
+                or h5py.is_hdf5(filename)
+            )
         )
-        if is_hdf5:
-            with h5py.File(filename, 'r') as file:
-                is_mr2 = 'class_name' in file.attrs and 'py_module' in file.attrs
-            if is_mr2:
-                return cls.from_mr2(filename)
+        if is_hdf5 and cls._is_mr2_file(filename):
+            return super().from_file(filename)
         if trajectory is None:
             raise ValueError('A trajectory source is required for ISMRMRD input.')
-        if not is_hdf5:
-            return cls.from_ismrmrd_stream(
-                cast(str | PathLike, filename), trajectory, header_overwrites, dataset_idx, acquisition_filter_criterion
+        if is_hdf5:
+            return cls._from_ismrmrd_hdf5(
+                filename, trajectory, header_overwrites, dataset_idx, acquisition_filter_criterion
             )
-        return cls.from_ismrmrd_hdf5(filename, trajectory, header_overwrites, dataset_idx, acquisition_filter_criterion)
+        return cls._from_ismrmrd_stream(
+            cast(str | PathLike | BinaryIO, filename),
+            trajectory,
+            header_overwrites,
+            dataset_idx,
+            acquisition_filter_criterion,
+        )
 
     @classmethod
-    def from_ismrmrd_hdf5(
+    def _from_ismrmrd_hdf5(
         cls,
         filename: FileOrPath,
         trajectory: KTrajectoryCalculator | KTrajectory | KTrajectoryIsmrmrd,
@@ -185,23 +195,7 @@ class KData(Dataclass):
         dataset_idx: int = -1,
         acquisition_filter_criterion: Callable[[ismrmrd.Acquisition], bool] | None = is_image_acquisition,
     ) -> Self:
-        """Load k-space data from an ISMRMRD HDF5 file.
-
-        Parameters
-        ----------
-        filename
-            path to the ISMRMRD file or file-like object
-        trajectory
-            KTrajectoryCalculator to calculate the k-space trajectory or an already calculated KTrajectory
-            If a KTrajectory is given, the shape should be `(acquisisions 1 1 k0)` in the same order as the acquisitions
-            retained after filtering, coil selection and readout-length selection.
-        header_overwrites
-            dictionary of key-value pairs to overwrite the header
-        dataset_idx
-            index of the ISMRMRD dataset to load (converter creates dataset, dataset_1, ...)
-        acquisition_filter_criterion
-            function which returns True if an acquisition should be included in KData, or None to disable filtering
-        """
+        """Read a selected ISMRMRD HDF5 dataset."""
         # Can raise FileNotFoundError
         # Open with h5py's file-object driver when needed; ismrmrd.File forces stdio.
         with h5py.File(filename, 'r') as hdf5_file:
@@ -228,7 +222,7 @@ class KData(Dataclass):
         )
 
     @classmethod
-    def from_ismrmrd_stream(
+    def _from_ismrmrd_stream(
         cls,
         filename: str | PathLike | BinaryIO,
         trajectory: KTrajectoryCalculator | KTrajectory | KTrajectoryIsmrmrd,
