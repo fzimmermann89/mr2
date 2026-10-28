@@ -5,11 +5,26 @@ import torch
 from mr2.data.CsmData import CsmData
 from mr2.data.IHeader import IHeader
 from mr2.data.KData import KData
+from mr2.data.SpatialDimension import SpatialDimension
+from mr2.data.traj_calculators.KTrajectoryCartesian import KTrajectoryCartesian
 from mr2.nn.data_consistency.AnalyticCartesianDC import AnalyticCartesianDC
 from mr2.nn.data_consistency.ConjugateGradientDC import ConjugateGradientDC
 from mr2.nn.data_consistency.GradientDescentDC import GradientDescentDC
 from mr2.operators.FourierOp import FourierOp
 from mr2.operators.SensitivityOp import SensitivityOp
+from mr2.phantoms.EllipsePhantom import EllipsePhantom
+from mr2.utils import RandomGenerator
+
+
+@pytest.fixture
+def csm_problem() -> tuple[torch.Tensor, torch.Tensor, KData]:
+    matrix = SpatialDimension(z=1, y=16, x=16)
+    kdata = EllipsePhantom().kdata(KTrajectoryCartesian.fullysampled(matrix), matrix)
+    rng = RandomGenerator(123)
+    image = rng.complex64_tensor((1, 1, 1, 16, 16))
+    csm = rng.complex64_tensor((1, 3, 1, 16, 16), low=0.3, high=1.3)
+    kdata.data = rng.complex64_tensor(csm.shape)
+    return image, csm, kdata
 
 
 @pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])

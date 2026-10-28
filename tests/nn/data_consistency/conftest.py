@@ -1,7 +1,6 @@
 """Test fixtures for data consistency tests."""
 
 import pytest
-import torch
 from mr2.data.KData import KData
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.data.traj_calculators.KTrajectoryCartesian import KTrajectoryCartesian
@@ -45,15 +44,3 @@ def image(kdata: KData):
 def image_us(kdata_us: KData):
     fourier_op = FourierOp.from_kdata(kdata_us)
     return fourier_op.adjoint(kdata_us.data)[0]
-
-
-@pytest.fixture
-def csm_problem() -> tuple[torch.Tensor, torch.Tensor, KData]:
-    """Small multicoil data-consistency problem with explicit sensitivity maps."""
-    matrix = SpatialDimension(z=1, y=16, x=16)
-    kdata = EllipsePhantom().kdata(KTrajectoryCartesian.fullysampled(matrix), matrix)
-    rng = RandomGenerator(123)
-    image = rng.complex64_tensor((1, 1, 1, 16, 16))
-    csm = rng.complex64_tensor((1, 3, 1, 16, 16), low=0.3, high=1.3)
-    kdata.data = rng.complex64_tensor(csm.shape)
-    return image, csm, kdata
