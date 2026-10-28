@@ -27,8 +27,8 @@ class RegularizedIterativeSENSEReconstruction(DirectReconstruction):
     by using a conjugate gradient algorithm to solve
     :math:`H x = b` with :math:`H = A^H A + \lambda B^H B` and :math:`b = A^H y + \lambda B^H x_{reg}` where :math:`A`
     is the acquisition model (coil sensitivity maps, Fourier operator, k-space sampling), :math:`y` is the acquired
-    k-space data, :math:`\lambda` is the strength of the regularization, and :math:`x_{reg}` is the regularization image
-    (i.e. a prior). :math:`B` is a linear operator applied to :math:`x`.
+    k-space data, :math:`\lambda` is the regularization strength, and :math:`x_{reg}` is the target with the same shape
+    as :math:`Bx`. :math:`B` is a linear operator applied to :math:`x`.
 
     For ``regularization_weight=0``, this reduces to the unregularized iterative SENSE problem
     :math:`\min_{x} ||Ax - y||_2^2` [PRU2001]_.
@@ -43,8 +43,8 @@ class RegularizedIterativeSENSEReconstruction(DirectReconstruction):
     n_iterations: int
     """Number of CG iterations."""
 
-    regularization_data: torch.Tensor
-    r"""Regularization data (i.e. prior) :math:`x_{\mathrm{reg}}`."""
+    regularization_data: torch.Tensor | None
+    r"""Regularization target :math:`x_{\mathrm{reg}}`. `None` means a zero target."""
 
     regularization_weight: torch.Tensor
     r"""Strength of the regularization :math:`\lambda`."""
@@ -61,7 +61,7 @@ class RegularizedIterativeSENSEReconstruction(DirectReconstruction):
         dcf: DcfData | DensityCompensationOp | None = None,
         *,
         n_iterations: int = 5,
-        regularization_data: float | torch.Tensor = 0.0,
+        regularization_data: float | torch.Tensor | None = None,
         regularization_weight: float | torch.Tensor = 0.0,
         regularization_op: LinearOperator | None = None,
     ) -> None:
@@ -91,8 +91,9 @@ class RegularizedIterativeSENSEReconstruction(DirectReconstruction):
         n_iterations
             Number of CG iterations.
         regularization_data
-            Regularization data in the range of :math:`B`, e.g. a reference image for the identity operator.
-            A scalar is expanded to the output shape of :math:`B`. Defaults to zero.
+            Regularization target with the output shape of :math:`B`, e.g. a reference image for the identity operator.
+            With the identity operator, a scalar target is broadcast to every pixel.
+            `None` means a zero target, giving the penalty :math:`\lambda ||Bx||_2^2`.
         regularization_weight
             Strength of the regularization (:math:`\lambda`).
         regularization_op
@@ -111,7 +112,9 @@ class RegularizedIterativeSENSEReconstruction(DirectReconstruction):
         """
         super().__init__(kdata, fourier_op, csm, noise, dcf)
         self.n_iterations = n_iterations
-        self.regularization_data = torch.as_tensor(regularization_data)
+        self.register_buffer(
+            'regularization_data', None if regularization_data is None else torch.as_tensor(regularization_data)
+        )
         self.regularization_weight = torch.as_tensor(regularization_weight)
         self.regularization_op = regularization_op if regularization_op is not None else IdentityOp()
 
@@ -139,14 +142,9 @@ class RegularizedIterativeSENSEReconstruction(DirectReconstruction):
 
         if not torch.all(self.regularization_weight == 0):
             operator = operator + self.regularization_weight * self.regularization_op.gram
-            regularization_data = self.regularization_data
-            if regularization_data.numel() == 1:
-                regularization_data = regularization_data.to(right_hand_side.device).expand_as(
-                    self.regularization_op(right_hand_side)[0]
-                )
-            right_hand_side = (
-                right_hand_side + self.regularization_weight * self.regularization_op.H(regularization_data)[0]
-            )
+            if self.regularization_data is not None:
+                (prior,) = self.regularization_op.H(self.regularization_data)
+                right_hand_side = right_hand_side + self.regularization_weight * prior
 
         initial_value = self._iterative_initial_value(acquisition_model, kdata.data, right_hand_side)
         (img_tensor,) = cg(

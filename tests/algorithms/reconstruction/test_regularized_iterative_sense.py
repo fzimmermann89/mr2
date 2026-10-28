@@ -55,7 +55,7 @@ def test_regularized_iterative_sense_with_explicit_dcf(cartesian_kdata: KData) -
 
 
 @pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
-@pytest.mark.parametrize('prior', ['default', 'tensor_zero', 'scalar_nonzero', 'differentiable_zero', 'nonzero'])
+@pytest.mark.parametrize('prior', ['default', 'tensor_zero', 'differentiable_zero', 'nonzero'])
 def test_regularized_iterative_sense_normal_equation(cartesian_kdata: KData, device: str, prior: str) -> None:
     """Check the normal-equation residual for zero and nonzero priors."""
     reconstruction = RegularizedIterativeSENSEReconstruction(
@@ -70,11 +70,10 @@ def test_regularized_iterative_sense_normal_equation(cartesian_kdata: KData, dev
     (right_hand_side,) = acquisition_model.H(kdata.data)
     regularization_op = reconstruction.regularization_op
     (regularization_data,) = regularization_op(torch.zeros_like(right_hand_side))
-    if prior == 'tensor_zero':
-        reconstruction.regularization_data = torch.zeros(1, device=device)
-    elif prior == 'scalar_nonzero':
-        reconstruction.regularization_data = torch.tensor(0.5, device=device)
-        regularization_data.fill_(0.5)
+    if prior == 'default':
+        assert reconstruction.regularization_data is None
+    elif prior == 'tensor_zero':
+        reconstruction.regularization_data = regularization_data
     elif prior == 'differentiable_zero':
         reconstruction.regularization_data = regularization_data.requires_grad_()
     elif prior == 'nonzero':
@@ -90,9 +89,23 @@ def test_regularized_iterative_sense_normal_equation(cartesian_kdata: KData, dev
     residual = data_term + reconstruction.regularization_weight * regularization_term - right_hand_side
     assert residual.norm() / right_hand_side.norm() < 1e-5
     if prior == 'differentiable_zero':
+        assert reconstruction.regularization_data is not None
         (gradient,) = torch.autograd.grad(idata.data.abs().square().sum(), reconstruction.regularization_data)
         assert torch.isfinite(gradient).all()
         assert gradient.norm() > 0
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('prior', [None, 0.0, 0.5])
+def test_regularized_iterative_sense_identity_prior(cartesian_kdata: KData, device: str, prior: float | None) -> None:
+    """Check Tikhonov regularization toward a scalar target with identity operators."""
+    reconstruction = RegularizedIterativeSENSEReconstruction(
+        fourier_op=IdentityOp(), csm=None, n_iterations=1, regularization_weight=0.5, regularization_data=prior
+    ).to(device)
+    kdata = cartesian_kdata.to(device)
+    idata = reconstruction(kdata)
+    expected = (kdata.data + 0.5 * (0.0 if prior is None else prior)) / 1.5
+    torch.testing.assert_close(idata.data, expected)
 
 
 def test_regularized_iterative_sense_zero_prior_jvp(cartesian_kdata: KData) -> None:
