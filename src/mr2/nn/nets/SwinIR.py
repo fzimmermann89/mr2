@@ -166,7 +166,7 @@ class ResidualSwinTransformerBlock(CondMixin, Module):
         return x + self.conv(self.layers(x, cond=cond))
 
 
-class SwinIR(Module):
+class SwinIR(CondMixin, Module):
     """SwinIR architecture.
 
     Implements the SwinIR [LZL21]_ network, which is a Swin Transformer based

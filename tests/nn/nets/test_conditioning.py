@@ -8,6 +8,7 @@ from mr2.nn.FiLM import FiLM
 from mr2.nn.LayerNorm import LayerNorm
 from mr2.nn.nets import DiT, HourglassTransformer, Restormer, SwinIR, Uformer
 from mr2.nn.nets.UNet import AttentionGatedUNet, UNet
+from mr2.nn.Sequential import Sequential
 from mr2.utils import RandomGenerator
 from tests.conftest import maximum_python_313, minimal_torch_26
 from torch.nn import Module
@@ -90,3 +91,23 @@ def test_conditioning_changes_output(net_factory: Callable[[], Module]) -> None:
     assert torch.isfinite(output1).all()
     assert torch.isfinite(output2).all()
     assert not torch.allclose(output1, output2)
+
+
+@torch.no_grad()
+def test_swinir_conditioning_through_sequential() -> None:
+    """Wrapping SwinIR in Sequential preserves its conditioning."""
+    net = SwinIR(
+        2,
+        1,
+        1,
+        n_channels_per_head=4,
+        n_heads=2,
+        window_size=4,
+        n_blocks=1,
+        n_attn_per_block=1,
+        emb_dim=COND_DIM,
+    ).eval()
+    rng = RandomGenerator(seed=0)
+    x = rng.float32_tensor((2, 1, 8, 8))
+    cond = rng.float32_tensor((2, COND_DIM))
+    torch.testing.assert_close(Sequential(net)(x, cond=cond), net(x, cond=cond))
