@@ -40,7 +40,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     if config.getoption('--skip-cuda'):
         for item in items:
             if item.get_closest_marker('cuda'):
-                item.add_marker(pytest.mark.skip(reason='CUDA results are reported separately'), append=False)
+                item.add_marker(pytest.mark.skipif(True, reason='CUDA results are reported separately'), append=False)
 
 
 def generate_random_encodingcounter_properties(rng: RandomGenerator) -> dict[str, Any]:
