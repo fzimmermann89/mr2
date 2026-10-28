@@ -217,6 +217,14 @@ def test_neg_operator_integer(operator):
     torch.testing.assert_close((-operator)(x)[0], -operator(x)[0])
 
 
+def test_sub_operator_integer():
+    """Subtraction uses integer-preserving negation on either side."""
+    operator = DummyOperator(torch.tensor(1))
+    x = torch.tensor([16777217], dtype=torch.int64)
+    torch.testing.assert_close((0 - operator)(x)[0], -operator(x)[0])
+    torch.testing.assert_close((IdentityOp() - operator)(x)[0], x - operator(x)[0])
+
+
 def test_sum_operator_tensor():
     rng = RandomGenerator(0)
     a = DummyOperator(torch.tensor(3.0))

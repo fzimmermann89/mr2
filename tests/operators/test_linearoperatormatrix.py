@@ -180,6 +180,14 @@ def test_linearoperatormatrix_neg_integer():
     torch.testing.assert_close((-matrix)(x), (-x,))
 
 
+def test_linearoperatormatrix_sub_integer():
+    """Subtraction preserves integer values when the matrix is on either side."""
+    matrix = LinearOperatorMatrix([[IdentityOp()]])
+    x = torch.tensor([16777217], dtype=torch.int64)
+    torch.testing.assert_close((ZeroOp() - matrix)(x), (-x,))
+    torch.testing.assert_close((matrix - ZeroOp())(x), (x,))
+
+
 def test_linearoperatormatrix_rmul():
     """Test post multiplication with tensor."""
     rng = RandomGenerator(0)
