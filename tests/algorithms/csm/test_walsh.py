@@ -57,7 +57,7 @@ def test_walsh_pools_extrapolation_confidence(pool_dim: int) -> None:
     """Pooled extrapolation uses signal energy from all echoes in each batch."""
     rng = RandomGenerator(0)
     coils = rng.randn_tensor((2, 4, 1, 8, 8), dtype=torch.complex64)
-    weights = rng.rand_tensor((2, 3, 1, 1, 8, 8), dtype=torch.get_default_dtype())
+    weights = rng.rand_tensor((2, 3, 1, 1, 8, 8), dtype=torch.float32)
     weights[:, 0, ..., 4:] = 0
     weights[..., 6:] = 0
     echoes = coils.unsqueeze(1) * weights
