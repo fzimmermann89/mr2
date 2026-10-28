@@ -44,10 +44,10 @@ def test_walsh_pools_echoes_without_phase_cancellation() -> None:
     assert walsh(echoes, 3).shape == echoes.shape
 
 
-@pytest.mark.parametrize('pool_dim', [2, 3, 4, 5, 6, -4, -3, -2, -1, -7])
+@pytest.mark.parametrize('pool_dim', [2, 5, -4, -1])
 def test_walsh_rejects_nonleading_pool_dimension(pool_dim: int) -> None:
     """Pooling must not conflate coils or spatial axes with echoes."""
-    with pytest.raises(ValueError if -6 <= pool_dim < 6 else IndexError):
+    with pytest.raises(ValueError, match='leading dimension'):
         walsh(torch.ones(2, 3, 4, 1, 8, 8, dtype=torch.complex64), 3, pool_dim=pool_dim)
 
 

@@ -89,9 +89,13 @@ def walsh(
         )
 
     # Pointwise covariance
-    coil_covariance = torch.einsum('... a z y x, ... b z y x -> ... a b z y x', coil_images, coil_images.conj())
-    if pool_dim is not None:
-        coil_covariance = coil_covariance.sum(dim=pool_dim, keepdim=True)
+    if pool_dim is None:
+        coil_covariance = torch.einsum('... a z y x, ... b z y x -> ... a b z y x', coil_images, coil_images.conj())
+    else:
+        pooled = coil_images.movedim(pool_dim, -5)
+        coil_covariance = torch.einsum(
+            '... e a z y x, ... e b z y x -> ... a b z y x', pooled, pooled.conj()
+        ).unsqueeze(pool_dim)
 
     # Smooth covariance
     coil_covariance = uniform_filter(coil_covariance, width=smoothing_width.zyx, dim=(-3, -2, -1))
