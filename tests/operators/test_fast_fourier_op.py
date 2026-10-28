@@ -1,6 +1,7 @@
 """Tests for Fast Fourier Operator class."""
 
 from collections.abc import Sequence
+from math import prod
 
 import numpy as np
 import pytest
@@ -64,6 +65,34 @@ MATRIX_PARAMETERS = pytest.mark.parametrize(
         ((100, 200, 50), (13, 221, 64)),
     ],
 )
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize(
+    ('recon_matrix', 'encoding_matrix'),
+    [
+        ((4,), (5,)),
+        ((5,), (4,)),
+        ((4,), (7,)),
+        ((7,), (4,)),
+        ((4, 5), (5, 4)),
+        ((4, 5, 6), (7, 4, 5)),
+        ((7, 4, 5), (4, 5, 6)),
+    ],
+)
+def test_fast_fourier_op_center_delta(
+    recon_matrix: tuple[int, ...], encoding_matrix: tuple[int, ...], device: str
+) -> None:
+    """A centered delta transforms to constant k-space without a phase ramp."""
+    x = torch.zeros(recon_matrix, dtype=torch.complex64, device=device)
+    x[tuple(size // 2 for size in recon_matrix)] = 1
+    y = torch.full(encoding_matrix, prod(encoding_matrix) ** -0.5, dtype=x.dtype, device=device)
+    op = FastFourierOp(
+        dim=tuple(range(-len(recon_matrix), 0)), recon_matrix=recon_matrix, encoding_matrix=encoding_matrix
+    )
+
+    torch.testing.assert_close(*op(x), y)
+    torch.testing.assert_close(*op.H(y), x)
 
 
 @MATRIX_PARAMETERS

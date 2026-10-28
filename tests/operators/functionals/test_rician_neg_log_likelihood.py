@@ -37,7 +37,13 @@ REFERENCES = [
 
 @pytest.mark.parametrize(
     'device',
-    ['cpu', pytest.param('cuda', marks=pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable'))],
+    [
+        'cpu',
+        pytest.param(
+            'cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+        ),
+    ],
 )
 @pytest.mark.parametrize('dtype', [torch.float32, torch.float64])
 @pytest.mark.parametrize('reference', REFERENCES)
@@ -263,7 +269,13 @@ def test_updated_parameters(name: str, invalid: float) -> None:
 @pytest.mark.parametrize('kind', ['constant', 'parameter'])
 @pytest.mark.parametrize(
     'device',
-    ['cpu', pytest.param('cuda', marks=pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable'))],
+    [
+        'cpu',
+        pytest.param(
+            'cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+        ),
+    ],
 )
 def test_tensor_moves(kind: str, device: str) -> None:
     """Constants move, and learnable Parameters keep receiving optimizer updates."""

@@ -4,7 +4,14 @@ import pytest
 import torch
 from mr2.algorithms.optimizers import pdhg
 from mr2.algorithms.optimizers.pdhg import PDHGStatus
-from mr2.operators import FastFourierOp, IdentityOp, LinearOperatorMatrix, ProximableFunctionalSeparableSum, WaveletOp
+from mr2.operators import (
+    FastFourierOp,
+    IdentityOp,
+    LinearOperatorMatrix,
+    ProximableFunctionalSeparableSum,
+    WaveletOp,
+    ZeroOp,
+)
 from mr2.operators.functionals import L1Norm, L1NormViewAsReal, L2NormSquared, ZeroFunctional
 from mr2.utils import RandomGenerator
 
@@ -195,6 +202,20 @@ def test_f_and_g_None() -> None:
     with pytest.warns(UserWarning, match='constant'):
         (pdhg_solution,) = pdhg(f=f, g=g, operator=operator, initial_values=initial_values, max_iterations=1)
     assert (pdhg_solution == initial_values[0]).all()
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+def test_zero_operator_automatic_steps(device: str) -> None:
+    """Automatic PDHG steps stay finite for a zero operator."""
+    initial = torch.tensor([1.0, -2.0], device=device)
+    (solution,) = pdhg(
+        f=ZeroFunctional(),
+        g=None,
+        operator=ZeroOp(),
+        initial_values=(initial,),
+        max_iterations=2,
+    )
+    torch.testing.assert_close(solution, initial)
 
 
 def test_callback() -> None:

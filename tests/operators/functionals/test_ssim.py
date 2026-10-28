@@ -110,3 +110,28 @@ def test_ssim_stays_finite_in_degenerate_cases() -> None:
     result.backward()
     assert prediction.grad is not None
     assert torch.isfinite(prediction.grad).all()
+
+
+@pytest.mark.cuda
+def test_ssim_cuda_masked_backward_after_move() -> None:
+    """A moved masked SSIM matches CPU and backpropagates finite CUDA gradients."""
+    target = torch.linspace(0.0, 1.0, 7**3).reshape(1, 7, 7, 7)
+    mask = torch.zeros_like(target, dtype=torch.bool)
+    mask[..., 1:-1, 1:-1, 1:-1] = True
+    target = target * (1 + 0.5j)
+    prediction = (target * 0.8 + 0.1).requires_grad_()
+    cpu_op = SSIM(target, mask, window_size=3, data_range=torch.tensor(1.0))
+    expected = cpu_op(prediction)[0]
+
+    moved = cpu_op.cuda()
+    cuda_prediction = prediction.detach().cuda().requires_grad_()
+    actual = moved(cuda_prediction)[0]
+    actual.backward()
+
+    assert actual.is_cuda
+    assert actual > 0
+    torch.testing.assert_close(actual.cpu(), expected)
+    assert cuda_prediction.grad is not None
+    assert cuda_prediction.grad.is_cuda
+    assert torch.isfinite(cuda_prediction.grad).all()
+    assert cuda_prediction.grad.abs().sum() > 0
