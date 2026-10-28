@@ -55,7 +55,7 @@ def test_regularized_iterative_sense_with_explicit_dcf(cartesian_kdata: KData) -
 
 
 @pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
-@pytest.mark.parametrize('prior', ['default', 'tensor_zero', 'differentiable_zero', 'nonzero'])
+@pytest.mark.parametrize('prior', ['default', 'tensor_zero', 'scalar_nonzero', 'differentiable_zero', 'nonzero'])
 def test_regularized_iterative_sense_normal_equation(cartesian_kdata: KData, device: str, prior: str) -> None:
     """Check the normal-equation residual for zero and nonzero priors."""
     reconstruction = RegularizedIterativeSENSEReconstruction(
@@ -72,6 +72,9 @@ def test_regularized_iterative_sense_normal_equation(cartesian_kdata: KData, dev
     (regularization_data,) = regularization_op(torch.zeros_like(right_hand_side))
     if prior == 'tensor_zero':
         reconstruction.regularization_data = torch.zeros(1, device=device)
+    elif prior == 'scalar_nonzero':
+        reconstruction.regularization_data = torch.tensor(0.5, device=device)
+        regularization_data.fill_(0.5)
     elif prior == 'differentiable_zero':
         reconstruction.regularization_data = regularization_data.requires_grad_()
     elif prior == 'nonzero':
