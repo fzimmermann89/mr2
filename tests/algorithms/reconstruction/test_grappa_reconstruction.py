@@ -80,16 +80,25 @@ def test_grappa_batched_volume(fully_sampled_kdata: KData) -> None:
 
 
 @pytest.mark.cuda
-def test_grappa_reconstruction_cuda(grappa_data: tuple[KData, torch.Tensor, KData]) -> None:
-    """Move calibration, sampling and interpolation together with the reconstruction."""
+@pytest.mark.parametrize('explicit_csm', [False, True])
+def test_grappa_reconstruction_cuda(grappa_data: tuple[KData, torch.Tensor, KData], explicit_csm: bool) -> None:
+    """Construct on CPU or CUDA and move calibration, sampling and coil combination together."""
     full, _, data = grappa_data
     data = data.to(torch.complex64)
-    reconstruction = GrappaReconstruction(data, full.data.to(torch.complex64), (1, 3, 3), csm=None)
+    acs = full.data.to(torch.complex64)
+    csm = (
+        CsmData.from_idata_walsh(GrappaReconstruction(data, acs, (1, 3, 3), csm=None)(data)).as_operator()
+        if explicit_csm
+        else CsmData.from_idata_walsh
+    )
+    reconstruction = GrappaReconstruction(data, acs, (1, 3, 3), csm=csm)
     expected = reconstruction(data).data
     actual = reconstruction.cuda()(data.cuda()).data
     assert actual.device.type == 'cuda'
     assert actual.dtype == torch.complex64
     torch.testing.assert_close(actual.cpu(), expected, atol=3e-4, rtol=3e-4)
+    reconstruction = GrappaReconstruction(data.cuda(), acs.cuda(), (1, 3, 3), csm=csm)
+    torch.testing.assert_close(reconstruction(data.cuda()).data.cpu(), expected, atol=3e-4, rtol=3e-4)
     torch.testing.assert_close(reconstruction.cpu()(data).data, expected)
 
 
