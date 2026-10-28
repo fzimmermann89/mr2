@@ -2,6 +2,7 @@
 
 import sys
 import tempfile
+import warnings
 from collections.abc import Sequence
 from typing import Any
 
@@ -30,17 +31,16 @@ maximum_python_313 = pytest.mark.skipif(
 )
 
 
-def pytest_addoption(parser: pytest.Parser) -> None:
-    """Allow CPU CI to report CUDA tests as skipped instead of deselecting them."""
-    parser.addoption('--skip-cuda', action='store_true', help='Collect CUDA tests but skip their execution.')
-
-
-def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Keep CUDA placeholders in the CPU report until GPU results replace them."""
-    if config.getoption('--skip-cuda'):
-        for item in items:
-            if item.get_closest_marker('cuda'):
-                item.add_marker(pytest.mark.skipif(True, reason='CUDA results are reported separately'), append=False)
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Skip CUDA tests when CUDA is unavailable."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            'ignore', message="CUDA initialization:|Can't (initialize NVML|get nvml device count)", category=UserWarning
+        )
+        cuda_skip = pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
+    for item in items:
+        if item.get_closest_marker('cuda'):
+            item.add_marker(cuda_skip, append=False)
 
 
 def generate_random_encodingcounter_properties(rng: RandomGenerator) -> dict[str, Any]:

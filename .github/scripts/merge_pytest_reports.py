@@ -7,7 +7,7 @@ from pathlib import Path
 
 from defusedxml.ElementTree import parse
 
-CUDA_PLACEHOLDER = 'CUDA results are reported separately'
+CUDA_SKIP_REASONS = {'CUDA unavailable', 'CUDA results are reported separately'}
 
 
 def merge_reports(cpu_path: Path, cuda_path: Path, output_path: Path) -> None:
@@ -22,7 +22,7 @@ def merge_reports(cpu_path: Path, cuda_path: Path, output_path: Path) -> None:
     for suite in suites:
         for case in list(suite.findall('testcase')):
             skipped = case.find('skipped')
-            if skipped is None or skipped.get('message') != CUDA_PLACEHOLDER:
+            if skipped is None or skipped.get('message') not in CUDA_SKIP_REASONS:
                 continue
             key = (case.get('classname'), case.get('name'))
             replacements = gpu_cases.pop(key, [])

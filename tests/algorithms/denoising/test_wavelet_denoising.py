@@ -130,7 +130,6 @@ def test_boundary_redundancy() -> None:
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_cuda() -> None:
     """CPU threshold tensors follow the CUDA image device without promoting dtype."""
     image = torch.tensor([3.0, 1.0], device='cuda', dtype=torch.complex64)

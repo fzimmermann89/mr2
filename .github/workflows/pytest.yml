@@ -64,7 +64,7 @@ jobs:
         shell: bash
         run: |
           if [ "${{ matrix.coverage }}" = "true" ]; then
-            python -m pytest --skip-cuda --junitxml=pytest.xml \
+            python -m pytest --junitxml=pytest.xml \
               --cov-report=term-missing:skip-covered --cov=mr2 | tee pytest-coverage.txt
           else
             python -m pytest -m "not cuda"

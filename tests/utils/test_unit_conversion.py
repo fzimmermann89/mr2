@@ -88,10 +88,7 @@ def test_unit_conversion(
     'device',
     [
         'cpu',
-        pytest.param(
-            'cuda',
-            marks=[pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')],
-        ),
+        pytest.param('cuda', marks=pytest.mark.cuda),
     ],
 )
 def test_unit_conversion_tensor(
