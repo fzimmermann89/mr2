@@ -24,7 +24,9 @@ class Jacobian(LinearOperator):
         operator
             operator to linearize
         x0
-            point at which to linearize the operator
+            point at which to linearize the operator.
+            If gradients should propagate through these tensors, move them to the desired device and dtype
+            before constructing the Jacobian.
         """
         super().__init__()
         self._vjp: Callable[[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]] | None = None
