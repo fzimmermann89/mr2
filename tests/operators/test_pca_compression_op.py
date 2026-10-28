@@ -96,6 +96,20 @@ def test_pca_compression_op_unexpanded_batch(batch_shape: tuple[int, ...], adjoi
         (op.H if adjoint else op)(data)
 
 
+@pytest.mark.parametrize('adjoint', [False, True])
+def test_pca_compression_op_checks_before_matmul(adjoint: bool, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Invalid batch expansion must fail before allocating the matrix product."""
+    op = PCACompressionOp(torch.randn(2, 20, 5), 3)
+    data = torch.ones(3 if adjoint else 5)
+
+    def unexpected_matmul(*args: torch.Tensor) -> torch.Tensor:
+        raise AssertionError('Invalid input reached matrix multiplication.')
+
+    monkeypatch.setattr(torch.Tensor, '__matmul__', unexpected_matmul)
+    with pytest.raises(ValueError, match='fully expanded batch dimensions'):
+        (op.H if adjoint else op)(data)
+
+
 def test_pca_compression_op_with_varimax_rotation() -> None:
     """Test PCA compression with Varimax rotation preserves the PCA subspace."""
     rng = RandomGenerator(seed=0)

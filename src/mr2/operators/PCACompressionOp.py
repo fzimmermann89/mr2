@@ -81,6 +81,7 @@ class PCACompressionOp(LinearOperator):
             directly calling this method. See this PyTorch `discussion <https://discuss.pytorch.org/t/is-model-forward-x-the-same-as-model-call-x/33460/3>`_.
         """
         try:
+            self._check_batch_shape(data)
             result = (self._compression_matrix @ data.unsqueeze(-1)).squeeze(-1)
         except RuntimeError as e:
             raise RuntimeError(
@@ -88,8 +89,6 @@ class PCACompressionOp(LinearOperator):
                 f'Matrix {tuple(self._compression_matrix.shape)} on {self._compression_matrix.device} '
                 f'cannot be multiplied with Data {tuple(data.shape)} on {data.device}.'
             ) from e
-        if result.shape[:-1] != data.shape[:-1]:
-            raise ValueError('PCA input must have fully expanded batch dimensions.')
         return (result,)
 
     def adjoint(self, data: torch.Tensor) -> tuple[torch.Tensor,]:
@@ -110,6 +109,7 @@ class PCACompressionOp(LinearOperator):
             Expanded data, with shape `(*other, joint_dim, compression_dim)`.
         """
         try:
+            self._check_batch_shape(data)
             result = (self._compression_matrix.mH @ data.unsqueeze(-1)).squeeze(-1)
         except RuntimeError as e:
             raise RuntimeError(
@@ -117,9 +117,19 @@ class PCACompressionOp(LinearOperator):
                 f'Matrix^H {tuple(self._compression_matrix.mH.shape)} on {self._compression_matrix.device} '
                 f'cannot be multiplied with Data {tuple(data.shape)} on {data.device}.'
             ) from e
-        if result.shape[:-1] != data.shape[:-1]:
-            raise ValueError('PCA adjoint input must have fully expanded batch dimensions.')
         return (result,)
+
+    def _check_batch_shape(self, data: torch.Tensor) -> None:
+        """Reject batch expansion before allocating the matrix product."""
+        matrix_batch = self._compression_matrix.shape[:-2]
+        data_batch = data.shape[:-1]
+        if len(matrix_batch) <= len(data_batch) and all(
+            m == 1 or m == d for m, d in zip(reversed(matrix_batch), reversed(data_batch), strict=False)
+        ):
+            return
+        # Let incompatible shapes raise RuntimeError through the existing error handler.
+        if torch.broadcast_shapes(matrix_batch, data_batch) != data_batch:
+            raise ValueError('PCA input must have fully expanded batch dimensions.')
 
     @property
     def compression_matrix(self) -> torch.Tensor:
