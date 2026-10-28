@@ -24,6 +24,7 @@ def prewhiten_kspace(kdata: KData, knoise: KNoise, scale_factor: float | torch.T
     If the noise data has more samples in the 'other'-dimensions (batch/slice/...),
     the covariance matrix is calculated independently for each sample in these dimensions.
     Singleton leading dimensions in ``knoise`` are broadcast over matching dimensions in ``kdata``.
+    Noise is moved to the k-space device without modifying the supplied noise data.
 
     Parameters
     ----------
@@ -55,7 +56,7 @@ def prewhiten_kspace(kdata: KData, knoise: KNoise, scale_factor: float | torch.T
 def _prewhiten_tensor(data: torch.Tensor, knoise: KNoise) -> torch.Tensor:
     """Apply the inverse noise Cholesky factor to tensors shaped (..., coils, z, y, x)."""
     # Reshape noise to (..., coil, everything else)
-    noise = rearrange(knoise.data, '... coils k2 k1 k0 -> ... coils (k2 k1 k0)')
+    noise = rearrange(knoise.data.to(device=data.device), '... coils k2 k1 k0 -> ... coils (k2 k1 k0)')
 
     # Calculate noise covariance matrix and Cholesky decomposition
     noise_cov = (1.0 / (noise.shape[-1])) * einsum(

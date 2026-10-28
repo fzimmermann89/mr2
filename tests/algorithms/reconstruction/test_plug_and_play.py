@@ -94,8 +94,15 @@ def test_zero_kspace(cartesian_kdata: KData) -> None:
 
 
 @pytest.mark.parametrize('as_operator', [False, True])
-@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
-def test_explicit_csm_whitening(cartesian_kdata: KData, as_operator: bool, device: str) -> None:
+@pytest.mark.parametrize(
+    ('initial_device', 'device'),
+    [
+        ('cpu', 'cpu'),
+        pytest.param('cpu', 'cuda', marks=pytest.mark.cuda),
+        pytest.param('cuda', 'cuda', marks=pytest.mark.cuda),
+    ],
+)
+def test_explicit_csm_whitening(cartesian_kdata: KData, as_operator: bool, initial_device: str, device: str) -> None:
     """Non-diagonal noise transforms both measured data and explicit coil maps."""
     kdata = cartesian_kdata
     maps = CsmData.from_kdata_walsh(kdata)
@@ -109,11 +116,12 @@ def test_explicit_csm_whitening(cartesian_kdata: KData, as_operator: bool, devic
     covariance = mixing @ mixing.mH / n_coils
     factor = torch.linalg.cholesky(covariance)
     expected_maps = torch.linalg.solve_triangular(factor, maps.data.flatten(-3), upper=False).reshape_as(maps.data)
-    fourier = FourierOp.from_kdata(kdata)
-    dcf = DensityCompensationOp(torch.tensor(1.0))
+    fourier = FourierOp.from_kdata(kdata).to(initial_device)
+    dcf = DensityCompensationOp(torch.tensor(1.0, device=initial_device))
+    supplied_maps = maps.to(initial_device)
     reconstruction = PlugAndPlayReconstruction(
         fourier_op=fourier,
-        csm=maps.as_operator() if as_operator else maps,
+        csm=supplied_maps.as_operator() if as_operator else supplied_maps,
         noise=noise,
         dcf=dcf,
         denoiser=lambda x: 0.8 * x,
