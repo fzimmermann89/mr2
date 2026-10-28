@@ -4,6 +4,7 @@ import pytest
 import torch
 from mr2.algorithms.csm import walsh
 from mr2.data import SpatialDimension
+from mr2.utils import RandomGenerator
 from tests import relative_image_difference
 from tests.algorithms.csm.conftest import multi_coil_image
 
@@ -34,8 +35,8 @@ def test_walsh_extrapolates_to_low_signal_regions() -> None:
 
 def test_walsh_pools_echoes_without_phase_cancellation() -> None:
     """Opposite echo phases preserve shared maps and independent slice batches."""
-    torch.manual_seed(0)
-    coils = torch.randn(2, 4, 1, 8, 8, dtype=torch.complex64)
+    rng = RandomGenerator(0)
+    coils = rng.randn_tensor((2, 4, 1, 8, 8), dtype=torch.complex64)
     echoes = torch.stack((coils, -coils, 0.5j * coils), dim=1)
     expected = walsh(coils, smoothing_width=3).unsqueeze(1)
     actual = walsh(echoes, smoothing_width=3, pool_dim=1)
@@ -54,9 +55,9 @@ def test_walsh_rejects_nonleading_pool_dimension(pool_dim: int) -> None:
 @pytest.mark.parametrize('pool_dim', [0, 1, -6, -5])
 def test_walsh_pools_extrapolation_confidence(pool_dim: int) -> None:
     """Pooled extrapolation uses signal energy from all echoes in each batch."""
-    torch.manual_seed(0)
-    coils = torch.randn(2, 4, 1, 8, 8, dtype=torch.complex64)
-    weights = torch.rand(2, 3, 1, 1, 8, 8)
+    rng = RandomGenerator(0)
+    coils = rng.randn_tensor((2, 4, 1, 8, 8), dtype=torch.complex64)
+    weights = rng.rand_tensor((2, 3, 1, 1, 8, 8), dtype=torch.get_default_dtype())
     weights[:, 0, ..., 4:] = 0
     weights[..., 6:] = 0
     echoes = coils.unsqueeze(1) * weights
