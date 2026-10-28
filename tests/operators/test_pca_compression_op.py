@@ -67,11 +67,9 @@ def test_pca_compression_op_forward_mode_autodiff(
     )
 
 
-def test_pca_compression_op_wrong_shapes() -> None:
+@pytest.mark.parametrize(('init_data_shape', 'input_shape'), [((10, 6), (100, 3)), ((2, 10, 6), (3, 20, 6))])
+def test_pca_compression_op_wrong_shapes(init_data_shape: Sequence[int], input_shape: Sequence[int]) -> None:
     """Test if Operator raises error if shape mismatch."""
-    init_data_shape = (10, 6)
-    input_shape = (100, 3)
-
     # Create test data
     rng = RandomGenerator(seed=0)
     data_to_calculate_compression_matrix_from = rng.complex64_tensor(init_data_shape)
@@ -84,6 +82,32 @@ def test_pca_compression_op_wrong_shapes() -> None:
 
     with pytest.raises(RuntimeError, match=r'Matrix\^H'):
         pca_comp_op.adjoint(input_data)
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('batch_shape', [(), (1,), (1, 4)])
+@pytest.mark.parametrize('adjoint', [False, True])
+def test_pca_compression_op_unexpanded_batch(batch_shape: tuple[int, ...], adjoint: bool, device: str) -> None:
+    """Inputs must include all batch entries needed by the compression matrices."""
+    rng = RandomGenerator(seed=0)
+    op = PCACompressionOp(rng.complex64_tensor((2, 20, 5)), 3).to(device)
+    data = rng.complex64_tensor((*batch_shape, 3 if adjoint else 5)).to(device)
+    with pytest.raises(ValueError, match='fully expanded batch dimensions'):
+        (op.H if adjoint else op)(data)
+
+
+@pytest.mark.parametrize('adjoint', [False, True])
+def test_pca_compression_op_checks_before_matmul(adjoint: bool, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Invalid batch expansion must fail before allocating the matrix product."""
+    op = PCACompressionOp(torch.randn(2, 20, 5), 3)
+    data = torch.ones(3 if adjoint else 5)
+
+    def unexpected_matmul(*args: torch.Tensor) -> torch.Tensor:
+        raise AssertionError('Invalid input reached matrix multiplication.')
+
+    monkeypatch.setattr(torch.Tensor, '__matmul__', unexpected_matmul)
+    with pytest.raises(ValueError, match='fully expanded batch dimensions'):
+        (op.H if adjoint else op)(data)
 
 
 def test_pca_compression_op_with_varimax_rotation() -> None:

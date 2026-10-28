@@ -154,7 +154,7 @@ def test_fourier_l2_wavelet_l1_() -> None:
 
     dim = (-3, -2, -1)
     fourier_op = FastFourierOp(dim=dim)
-    wavelet_op = WaveletOp(domain_shape=image_shape, dim=dim)
+    wavelet_op = WaveletOp(domain_shape=image_shape, dim=dim, wavelet_name='haar', level=1)
 
     (data,) = fourier_op(image)
 

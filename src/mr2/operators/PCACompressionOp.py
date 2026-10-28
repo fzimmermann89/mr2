@@ -82,6 +82,7 @@ class PCACompressionOp(LinearOperator):
             directly calling this method. See this PyTorch `discussion <https://discuss.pytorch.org/t/is-model-forward-x-the-same-as-model-call-x/33460/3>`_.
         """
         try:
+            self._check_batch_shape(data)
             result = (self._compression_matrix @ data.unsqueeze(-1)).squeeze(-1)
         except RuntimeError as e:
             raise RuntimeError(
@@ -109,6 +110,7 @@ class PCACompressionOp(LinearOperator):
             Expanded data, with shape `(*other, joint_dim, compression_dim)`.
         """
         try:
+            self._check_batch_shape(data)
             result = (self._compression_matrix.mH @ data.unsqueeze(-1)).squeeze(-1)
         except RuntimeError as e:
             raise RuntimeError(
@@ -117,6 +119,19 @@ class PCACompressionOp(LinearOperator):
                 f'cannot be multiplied with Data {tuple(data.shape)} on {data.device}.'
             ) from e
         return (result,)
+
+    def _check_batch_shape(self, data: torch.Tensor) -> None:
+        """Reject batch expansion before allocating the matrix product."""
+        matrix_batch = self._compression_matrix.shape[:-2]
+        data_batch = data.shape[:-1]
+        offset = len(data_batch) - len(matrix_batch)
+        if offset >= 0 and all(
+            size == 1 or size == data_batch[offset + axis] for axis, size in enumerate(matrix_batch)
+        ):
+            return
+        # Let incompatible shapes raise RuntimeError through the existing error handler.
+        if torch.broadcast_shapes(matrix_batch, data_batch) != data_batch:
+            raise ValueError('PCA input must have fully expanded batch dimensions.')
 
     @property
     def compression_matrix(self) -> torch.Tensor:
