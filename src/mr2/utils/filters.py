@@ -417,7 +417,10 @@ def gaussian_window(coordinate: torch.Tensor, width: float) -> torch.Tensor:
     """
     if not math.isfinite(width) or width <= 0:
         raise ValueError('width must be finite and positive.')
-    return torch.exp(-math.log(2) * (coordinate / (width / 2)).square())
+    # Beyond this bound the Gaussian already underflows to zero.
+    bound = math.sqrt(torch.finfo(coordinate.dtype).max) / 2
+    normalized = (coordinate / (width / 2)).clamp(-bound, bound)
+    return torch.exp(-math.log(2) * normalized.square())
 
 
 def radial_hann_window(coordinates: Sequence[torch.Tensor], widths: Sequence[float]) -> torch.Tensor:
