@@ -76,6 +76,8 @@ class WaveletOp(LinearOperator):
         wavelet = Wavelet(wavelet_name)
         self._domain_shape = domain_shape
         self._wavelet_name = wavelet_name
+        self._dec_len = wavelet.dec_len
+        self._orthogonal = wavelet.orthogonal
         self._dim = dim
         self._level = level
 
@@ -171,7 +173,7 @@ class WaveletOp(LinearOperator):
         if (
             self._domain_shape is None
             and self._level is None
-            and _check_level(x.shape[-len(dim):], (Wavelet(self._wavelet_name).dec_len,) * len(dim), None) == 0
+            and _check_level(x.shape[-len(dim):], (self._dec_len,) * len(dim), None) == 0
         ):
             raise ValueError(
                 'Domain is too small for this wavelet. Choose a shorter wavelet or set level=0 explicitly.'
@@ -239,7 +241,7 @@ class WaveletOp(LinearOperator):
         NotImplementedError
             If the wavelet is biorthogonal and the level is nonzero: reconstruction is not the linear adjoint.
         """
-        if self._level != 0 and not Wavelet(self._wavelet_name).orthogonal:
+        if self._level != 0 and not self._orthogonal:
             raise NotImplementedError('Biorthogonal wavelet reconstruction is not the linear adjoint.')
         if self._domain_shape is None:
             raise ValueError('Adjoint requires to define the domain_shape in init()')

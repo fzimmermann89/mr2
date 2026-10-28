@@ -113,6 +113,7 @@ class CartesianSamplingOp(LinearOperator):
             if torch.all(counts == max_count):
                 inside_encoding_matrix_idx = valid_indices[-1].reshape(*kidx.shape[:-1], max_count).clone()
                 self._inside_encoding_matrix: torch.Tensor | None = None
+                kidx = torch.take_along_dim(kidx, inside_encoding_matrix_idx, dim=-1)
             else:
                 # Pad shorter rows to the longest valid row. Each padding slot uses its own
                 # index to avoid contention when zero contributions are scattered.
@@ -121,14 +122,13 @@ class CartesianSamplingOp(LinearOperator):
                 ranks = inside_encoding_matrix.cumsum(-1)[inside_encoding_matrix] - 1
                 inside_encoding_matrix_idx[(*valid_indices[:-1], ranks)] = valid_indices[-1]
                 self._inside_encoding_matrix = positions < counts
-            self._inside_encoding_matrix_idx: torch.Tensor | None = inside_encoding_matrix_idx
-            kidx = torch.take_along_dim(kidx, inside_encoding_matrix_idx, dim=-1)
-            if self._inside_encoding_matrix is not None:
+                kidx = torch.take_along_dim(kidx, inside_encoding_matrix_idx, dim=-1)
                 kidx = torch.where(
                     self._inside_encoding_matrix,
                     kidx,
                     positions % (sorted_grid_shape.z * sorted_grid_shape.y * sorted_grid_shape.x),
                 )
+            self._inside_encoding_matrix_idx: torch.Tensor | None = inside_encoding_matrix_idx
         else:
             self._inside_encoding_matrix_idx = None
             self._inside_encoding_matrix = None
