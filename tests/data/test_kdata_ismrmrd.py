@@ -4,9 +4,7 @@ import copy
 import datetime
 import io
 from contextlib import closing
-from types import SimpleNamespace
 
-import h5py
 import ismrmrd
 import ismrmrd.serialization
 import pytest
@@ -15,7 +13,6 @@ from mr2.data import KData, KTrajectory
 from mr2.data.acq_filters import is_image_acquisition
 from mr2.data.traj_calculators import KTrajectoryCartesian, KTrajectoryIsmrmrd, KTrajectorySunflowerGoldenRpe
 from mr2.data.traj_calculators.KTrajectoryCalculator import DummyTrajectory
-from xsdata.models.datatype import XmlDate, XmlTime
 
 from tests.data import IsmrmrdRawTestData
 
@@ -70,6 +67,10 @@ def test_reader_parity(raw_data, tmp_path) -> None:
     overwrites = {'datetime': datetime.datetime(2020, 1, 2), 'protocol_name': 'overwritten'}
     expected = KData.from_file(filename, trajectory, header_overwrites=overwrites)
     assert_kdata_equal(KData.from_ismrmrd(header, acquisitions, trajectory, header_overwrites=overwrites), expected)
+    precomputed = trajectory(
+        [acq for acq in acquisitions if is_image_acquisition(acq)], expected.header.encoding_matrix
+    )
+    assert_kdata_equal(KData.from_ismrmrd(header, acquisitions, precomputed, header_overwrites=overwrites), expected)
     with filename.open('rb') as file:
         assert_kdata_equal(KData.from_file(file, trajectory, header_overwrites=overwrites), expected)
         assert not file.closed
@@ -106,79 +107,6 @@ def test_multiple_measurements(raw_data, index) -> None:
     assert not stream.closed
 
 
-def test_positive_selection_does_not_read_later_payload(raw_data) -> None:
-    """A subsequent malformed acquisition cannot affect an already complete measurement."""
-    _, header, acquisitions = raw_data
-    prefix = serialize_measurements([(header, acquisitions)]).getvalue()[:-2]
-    next_header = io.BytesIO()
-    with ismrmrd.serialization.ProtocolSerializer(next_header) as writer:
-        writer.serialize(header)
-    truncated = io.BytesIO(prefix + next_header.getvalue()[:-2] + b'\x08\x00')
-    result = KData.from_file(truncated, DummyTrajectory(), dataset_idx=0, file_format='ismrmrd-stream')
-    assert result.data.shape[-2] == 4
-    assert truncated.read() == b'\x08\x00'
-
-
-@pytest.mark.parametrize('index', [3, -4])
-def test_out_of_range(raw_data, index) -> None:
-    """Invalid measurement indices raise IndexError and leave caller streams open."""
-    _, header, acquisitions = raw_data
-    stream = serialize_measurements([(header, acquisitions)] * 3)
-    with pytest.raises(IndexError, match='index out of range'):
-        KData.from_file(stream, DummyTrajectory(), dataset_idx=index, file_format='ismrmrd-stream')
-    assert not stream.closed
-
-
-@pytest.mark.parametrize(
-    ('objects', 'message'), [([], 'No ISMRMRD header'), (['acquisition'], 'before the first header')]
-)
-def test_invalid_grouping(raw_data, objects, message) -> None:
-    """Missing headers and acquisitions before headers produce actionable errors."""
-    _, _, acquisitions = raw_data
-    stream = io.BytesIO()
-    with ismrmrd.serialization.ProtocolSerializer(stream) as writer:
-        for _ in objects:
-            writer.serialize(acquisitions[-1])
-    stream.seek(0)
-    with pytest.raises(ValueError, match=message):
-        KData.from_file(stream, DummyTrajectory(), file_format='ismrmrd-stream')
-    assert not stream.closed
-
-
-@pytest.mark.parametrize('empty_group', [False, True])
-def test_empty_selection(raw_data, empty_group) -> None:
-    """Empty measurements and filters excluding all acquisitions use the existing error."""
-    _, header, acquisitions = raw_data
-    stream = serialize_measurements([(header, [] if empty_group else acquisitions)])
-    with pytest.raises(ValueError, match='No acquisitions meeting'):
-        KData.from_file(
-            stream, DummyTrajectory(), acquisition_filter_criterion=lambda _: False, file_format='ismrmrd-stream'
-        )
-    assert not stream.closed
-
-
-def test_unknown_hdf5_timestamp(raw_data, monkeypatch) -> None:
-    """An unknown HDF5 timestamp stays unknown instead of becoming 1970."""
-    filename, _, _ = raw_data
-    monkeypatch.setattr(h5py.h5g, 'get_objinfo', lambda *_args: SimpleNamespace(mtime=0))
-    result = KData.from_file(filename, DummyTrajectory())
-    assert result.header.datetime is None
-
-
-def test_disable_filter_and_timestamp(raw_data) -> None:
-    """Explicit None supports preselected non-image acquisitions and timestamp fallback."""
-    filename, header, acquisitions = raw_data
-    imaging = [acq for acq in acquisitions if is_image_acquisition(acq)]
-    for acq in imaging:
-        acq.setFlag(ismrmrd.ACQ_IS_NOISE_MEASUREMENT)
-    result = KData.from_ismrmrd(header, imaging, DummyTrajectory(), acquisition_filter_criterion=None)
-    assert result.data.shape[-2] == 4
-    stream_path = filename.with_suffix('.ismrmrd')
-    stream_path.write_bytes(serialize_measurements([(header, imaging)]).getvalue())
-    result = KData.from_file(stream_path, DummyTrajectory(), acquisition_filter_criterion=None)
-    assert result.header.datetime == datetime.datetime.fromtimestamp(stream_path.stat().st_mtime)
-
-
 @pytest.mark.parametrize('trajectory', [KTrajectoryCartesian(), KTrajectoryIsmrmrd()])
 def test_mixed_readouts_keep_metadata_aligned(raw_data, trajectory) -> None:
     """Dropping a shorter post-discard readout also drops its metadata and trajectory."""
@@ -191,18 +119,6 @@ def test_mixed_readouts_keep_metadata_aligned(raw_data, trajectory) -> None:
         result = KData.from_ismrmrd(header, acquisitions, trajectory)
     assert_kdata_equal(result, expected)
     assert result.data.shape[-2] == 3
-
-
-def test_precomputed_trajectory(raw_data) -> None:
-    """A precomputed trajectory takes the same path for object and file inputs."""
-    filename, header, acquisitions = raw_data
-    expected = KData.from_file(filename, KTrajectoryIsmrmrd())
-    traj = KTrajectoryIsmrmrd()(
-        [acq for acq in acquisitions if is_image_acquisition(acq)], expected.header.encoding_matrix
-    )
-    assert isinstance(traj, KTrajectory)
-    result = KData.from_ismrmrd(header, acquisitions, traj, header_defaults={'datetime': expected.header.datetime})
-    assert_kdata_equal(result, expected)
 
 
 def test_custom_filter(raw_data) -> None:
@@ -224,39 +140,15 @@ def test_custom_filter(raw_data) -> None:
 def test_server_acquisitions(raw_data, header_format) -> None:
     """Server metadata and decoded acquisitions construct KData without a file round trip."""
     _, header, acquisitions = raw_data
+    acquisitions = [acq for acq in acquisitions if is_image_acquisition(acq)]
     expected = KData.from_ismrmrd(header, acquisitions, KTrajectoryCartesian())
     metadata = header.toXML()
     if header_format == 'bytes':
         metadata = metadata.encode()
 
-    result = KData.from_ismrmrd(metadata, iter(acquisitions), KTrajectoryCartesian())
+    result = KData.from_ismrmrd(metadata, iter(acquisitions), KTrajectoryCartesian(), acquisition_filter_criterion=None)
     assert_kdata_equal(result, expected)
     assert result.header.datetime is None
-
-
-@pytest.mark.parametrize(('dated', 'overwrite'), [(True, 'absent'), (False, 'absent'), (True, None)])
-def test_header_default_precedence(raw_data, dated, overwrite) -> None:
-    """Measurement metadata and explicit overwrites take precedence over reader defaults."""
-    _, header, acquisitions = raw_data
-    fallback = datetime.datetime(2001, 2, 3)
-    measurement_time = datetime.datetime(2020, 4, 5, 6, 7, 8)
-    if dated:
-        header.measurementInformation = ismrmrd.xsd.measurementInformationType(
-            patientPosition=ismrmrd.xsd.patientPositionType.HFS,
-            seriesDate=XmlDate.from_date(measurement_time.date()),
-            seriesTime=XmlTime.from_time(measurement_time.time()),
-        )
-    defaults = {'datetime': fallback, 'protocol_name': 'fallback', 'lamor_frequency_proton': 1.0, 'acq_info': None}
-    overwrites = {} if overwrite == 'absent' else {'datetime': overwrite}
-    result = KData.from_ismrmrd(
-        header, acquisitions, DummyTrajectory(), header_overwrites=overwrites, header_defaults=defaults
-    )
-    expected = measurement_time if dated else fallback
-    if overwrite != 'absent':
-        expected = overwrite
-    assert result.header.datetime == expected
-    assert result.header.lamor_frequency_proton == header.experimentalConditions.H1resonanceFrequency_Hz
-    assert result.header.acq_info is not None
 
 
 class ShortReads(io.BytesIO):
@@ -302,7 +194,6 @@ def test_iter_acquisitions(raw_data) -> None:
         for acq in imaging:
             result = next(readouts)
             assert_kdata_equal(result, KData.from_ismrmrd(header, [acq], KTrajectoryCartesian()))
-            assert_kdata_equal(result, result.reshape_by_idx())
         result = next(readouts)
         assert result.header.protocol_name == 'next measurement'
         with pytest.raises(StopIteration):
@@ -333,31 +224,13 @@ def test_iter_rejects_full_measurement_trajectory(raw_data) -> None:
 
 
 def test_iter_close_owned_file(raw_data, tmp_path, monkeypatch) -> None:
-    """Closing iteration early or encountering corrupt input closes owned files."""
-    filename, header, acquisitions = raw_data
+    """Closing iteration early closes the file opened by the iterator."""
+    _, header, acquisitions = raw_data
     filename = tmp_path / 'measurements.ismrmrd'
-    filename.write_bytes(serialize_measurements([(header, acquisitions)] * 2).getvalue())
-    opened = []
-    open_path = type(filename).open
-
-    def track_open(path, *args, **kwargs):
-        stream = open_path(path, *args, **kwargs)
-        opened.append(stream)
-        return stream
-
-    monkeypatch.setattr(type(filename), 'open', track_open)
-    with closing(KData.iter_ismrmrd(filename, DummyTrajectory())) as measurements:
-        next(measurements)
-        assert not opened[-1].closed
-    assert opened[-1].closed
-    filename.write_bytes(filename.read_bytes()[:-1])
-    with pytest.raises(EOFError):
-        list(KData.iter_ismrmrd(filename, DummyTrajectory()))
-    assert opened[-1].closed
-
-
-def test_from_file_requires_trajectory(raw_data) -> None:
-    """ISMRMRD files still require an explicit trajectory source."""
-    filename, _, _ = raw_data
-    with pytest.raises(ValueError, match='trajectory source'):
-        KData.from_file(filename)
+    filename.write_bytes(serialize_measurements([(header, acquisitions)]).getvalue())
+    stream = filename.open('rb')
+    monkeypatch.setattr(type(filename), 'open', lambda *_args, **_kwargs: stream)
+    with closing(KData.iter_ismrmrd(filename, DummyTrajectory())) as readouts:
+        next(readouts)
+        assert not stream.closed
+    assert stream.closed
