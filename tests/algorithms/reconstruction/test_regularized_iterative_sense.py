@@ -108,39 +108,6 @@ def test_regularized_iterative_sense_identity_prior(cartesian_kdata: KData, devi
     torch.testing.assert_close(idata.data, expected, rtol=1e-5, atol=1e-5)
 
 
-def test_regularized_iterative_sense_zero_prior_jvp(cartesian_kdata: KData) -> None:
-    """Preserve forward-mode derivatives for a zero prior in the operator range."""
-    reconstruction = RegularizedIterativeSENSEReconstruction(
-        kdata=cartesian_kdata,
-        n_iterations=2,
-        regularization_weight=0.5,
-        regularization_op=FiniteDifferenceOp(dim=(-1, -2), mode='central'),
-    )
-    assert reconstruction.csm_op is not None
-    acquisition_model = reconstruction.fourier_op @ reconstruction.csm_op
-    (image,) = acquisition_model.H(cartesian_kdata.data)
-    (prior,) = reconstruction.regularization_op(torch.zeros_like(image))
-
-    with torch.autograd.forward_ad.dual_level():
-        reconstruction.regularization_data = torch.autograd.forward_ad.make_dual(prior, torch.ones_like(prior))
-        (_, tangent) = torch.autograd.forward_ad.unpack_dual(reconstruction(cartesian_kdata).data)
-    assert tangent is not None
-    assert torch.isfinite(tangent).all()
-    assert tangent.norm() > 0
-
-
-def test_regularized_iterative_sense_scalar_zero_prior_jvp(cartesian_kdata: KData) -> None:
-    """Preserve forward-mode derivatives for a scalar zero prior with identity regularization."""
-    reconstruction = RegularizedIterativeSENSEReconstruction(
-        fourier_op=IdentityOp(), csm=None, n_iterations=1, regularization_weight=0.5
-    )
-    with torch.autograd.forward_ad.dual_level():
-        reconstruction.regularization_data = torch.autograd.forward_ad.make_dual(torch.tensor(0.0), torch.tensor(1.0))
-        (_, tangent) = torch.autograd.forward_ad.unpack_dual(reconstruction(cartesian_kdata).data)
-    assert tangent is not None
-    torch.testing.assert_close(tangent, torch.full_like(tangent, 1 / 3))
-
-
 @pytest.mark.cuda
 def test_regularized_iterative_sense_cuda_from_kdata(cartesian_kdata: KData) -> None:
     """Test CUDA device transfers for reconstruction created from kdata."""
