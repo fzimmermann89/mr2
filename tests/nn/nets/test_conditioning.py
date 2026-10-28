@@ -1,5 +1,6 @@
 """Tests that all conditioned networks pass the conditioning to every conditioned layer."""
 
+import sys
 from collections.abc import Callable
 
 import pytest
@@ -10,6 +11,7 @@ from mr2.nn.nets import DiT, HourglassTransformer, Restormer, SwinIR, Uformer
 from mr2.nn.nets.UNet import AttentionGatedUNet, UNet
 from mr2.nn.Sequential import Sequential
 from mr2.utils import RandomGenerator
+from packaging.version import parse as parse_version
 from tests.conftest import maximum_python_313, minimal_torch_26
 from torch.nn import Module
 
@@ -40,7 +42,14 @@ NETS: list = [
             2, 1, 1, n_features=(16, 32), depths=1, attention_neighborhood=(3, None), n_heads=1, cond_dim=COND_DIM
         ),
         id='HourglassTransformer',
-        marks=(maximum_python_313, minimal_torch_26),
+        marks=(
+            maximum_python_313,
+            minimal_torch_26,
+            pytest.mark.skipif(
+                sys.platform == 'darwin' and parse_version(torch.__version__).release[:2] == (2, 6),
+                reason='PyTorch 2.6 does not support compiled CPU FlexAttention on macOS',
+            ),
+        ),
     ),
 ]
 
