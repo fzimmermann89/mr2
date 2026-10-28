@@ -52,13 +52,8 @@ class KTrajectoryIsmrmrd:
             trajectory with discarded samples removed.
         """
         traj = torch.stack(
-            [
-                torch.as_tensor(
-                    acq.traj[acq.discard_pre : acq.number_of_samples - acq.discard_post], dtype=torch.float32
-                )
-                for acq in acquisitions
-            ]
-        )
+            [torch.as_tensor(acq.traj[acq.discard_pre : -acq.discard_post or None]) for acq in acquisitions]
+        ).float()
 
         if not traj.numel():
             raise ValueError('No trajectory information available in the ISMRMD file.')

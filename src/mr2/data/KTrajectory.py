@@ -174,27 +174,17 @@ class KTrajectory(Dataclass):
             ]
             if not acquisitions:
                 raise ValueError('No matching acquisitions found in the ISMRMRD file.')
-            shapes = sorted({acq.number_of_samples - acq.discard_pre - acq.discard_post for acq in acquisitions})
+            trajectories = [
+                torch.as_tensor(acq.traj[acq.discard_pre : -acq.discard_post or None]) for acq in acquisitions
+            ]
+            shapes = sorted({len(t) for t in trajectories})
             if len(shapes) > 1:
                 warnings.warn(
                     'Acquisitions have different readout lengths after discarding samples. '
                     f'Keeping only acquisitions with {shapes[-1]} data samples.',
                     stacklevel=2,
                 )
-                acquisitions = [
-                    acq
-                    for acq in acquisitions
-                    if acq.number_of_samples - acq.discard_pre - acq.discard_post == shapes[-1]
-                ]
-            traj = torch.stack(
-                [
-                    torch.as_tensor(
-                        acq.traj[acq.discard_pre : acq.number_of_samples - acq.discard_post], dtype=torch.float32
-                    )
-                    for acq in acquisitions
-                ],
-                dim=0,
-            )
+            traj = torch.stack([t for t in trajectories if len(t) == shapes[-1]]).float()
             if not normalize:
                 scaling_matrix = None
             elif (
