@@ -28,7 +28,6 @@ def test_autodiff_magnitude_operator():
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_magnitude_op_cuda() -> None:
     """Test magnitude operator works on CUDA devices."""
 

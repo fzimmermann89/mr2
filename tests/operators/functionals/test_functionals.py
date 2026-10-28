@@ -391,7 +391,6 @@ def test_functional_has_testcase(functional):
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 @pytest.mark.parametrize('functional', FUNCTIONALS)
 @pytest.mark.parametrize('parameters', ['scalar', 'none', 'tensor'])
 def test_functional_cuda_forward(
@@ -414,7 +413,6 @@ def test_functional_cuda_forward(
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 @pytest.mark.parametrize('parameters', ['scalar', 'none', 'tensor'])
 @pytest.mark.parametrize('functional', PROXIMABLE_FUNCTIONALS)
 def test_functional_cuda_prox(

@@ -295,7 +295,6 @@ class TestDifferentiableDictionaryMatchOp:
             op(y, prior=prior, prior_precision=(torch.ones(2, 2), torch.tensor(1.0)))
 
     @pytest.mark.cuda
-    @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
     def test_cuda(self) -> None:
         """Test differentiable dictionary matching operator works on CUDA devices."""
         rng = RandomGenerator(2)

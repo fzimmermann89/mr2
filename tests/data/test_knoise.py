@@ -12,7 +12,6 @@ def test_knoise_to_complex128(random_test_data) -> None:
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_knoise_cuda(random_test_data) -> None:
     """Move KNois object to CUDA memory."""
     noise = KNoise(data=random_test_data).cuda()
@@ -20,7 +19,6 @@ def test_knoise_cuda(random_test_data) -> None:
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_knoise_cpu(random_test_data) -> None:
     """Move KNoise object to CUDA memory and back to CPU memory."""
     noise_cuda = KNoise(data=random_test_data).cuda()

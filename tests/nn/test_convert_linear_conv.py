@@ -6,14 +6,13 @@ import pytest
 import torch
 from mr2.nn.convert_linear_conv import conv_to_linear, linear_to_conv
 from mr2.utils import RandomGenerator
-from tests.conftest import cuda_marks
 from torch.nn import Conv1d, Conv2d, Conv3d, Linear
 
 DEVICES = pytest.mark.parametrize(
     'device',
     [
         pytest.param('cpu', id='cpu'),
-        pytest.param('cuda', id='cuda', marks=cuda_marks),
+        pytest.param('cuda', id='cuda', marks=pytest.mark.cuda),
     ],
 )
 SHAPES = pytest.mark.parametrize(

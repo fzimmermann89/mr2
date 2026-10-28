@@ -102,7 +102,6 @@ def test_density_compensation_op_forward() -> None:
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_density_compensation_op_cuda() -> None:
     """Test density compensation operator works on CUDA devices."""
 

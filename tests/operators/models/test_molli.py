@@ -65,7 +65,6 @@ def test_autodiff_molli(parameter_shape: Sequence[int] = (2, 5, 10, 10)) -> None
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_molli_cuda(parameter_shape: Sequence[int] = (2, 5, 10, 10, 10)) -> None:
     """Test the molli model works on cuda devices."""
     rng = RandomGenerator(1)

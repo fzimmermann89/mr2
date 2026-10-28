@@ -4,10 +4,9 @@ import pytest
 import torch
 from mr2.data.KData import KData
 from mr2.nn.data_consistency.GradientDescentDC import GradientDescentDC
-from tests.conftest import cuda_marks
 
 
-@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=cuda_marks)])
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
 def test_gradient_descent_dc(
     image_noisy: torch.Tensor, kdata_us: KData, image: torch.Tensor, image_us: torch.Tensor, device: str
 ) -> None:

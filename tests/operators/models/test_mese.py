@@ -43,7 +43,6 @@ def test_mese_autodiff(parameter_shape: Sequence[int] = (2, 1, 3, 4, 2)) -> None
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_mese_cuda(parameter_shape: Sequence[int] = (2,)) -> None:
     """Test the MultiEchoSpinEcho model works on cuda devices."""
     rng = RandomGenerator(8)

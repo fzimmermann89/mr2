@@ -1,7 +1,6 @@
 """Tests for DirectReconstruction."""
 
 import pytest
-import torch
 from mr2.algorithms.reconstruction import DirectReconstruction
 from mr2.data import CsmData, DcfData, KData
 from mr2.operators import DensityCompensationOp, FourierOp, SensitivityOp
@@ -63,7 +62,6 @@ def test_direct_reconstruction_with_explicit_fourier_op(cartesian_kdata: KData) 
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_direct_reconstruction_cuda_from_kdata(cartesian_kdata: KData) -> None:
     """Test CUDA device transfers for reconstruction created from kdata."""
     reconstruction = DirectReconstruction(kdata=cartesian_kdata).cuda()
@@ -83,7 +81,6 @@ def test_direct_reconstruction_cuda_from_kdata(cartesian_kdata: KData) -> None:
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_direct_reconstruction_cuda_explicit_components(cartesian_kdata: KData) -> None:
     """Test CUDA device transfers with explicit FourierOp, CSM, and DCF."""
 

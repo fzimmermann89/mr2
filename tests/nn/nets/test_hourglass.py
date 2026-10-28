@@ -5,7 +5,7 @@ from typing import cast
 import pytest
 import torch
 from mr2.nn.nets import HourglassTransformer
-from tests.conftest import cuda_marks, maximum_python_313, minimal_torch_26
+from tests.conftest import maximum_python_313, minimal_torch_26
 
 
 @maximum_python_313
@@ -16,7 +16,7 @@ from tests.conftest import cuda_marks, maximum_python_313, minimal_torch_26
     'device',
     [
         pytest.param('cpu', id='cpu'),
-        pytest.param('cuda', marks=cuda_marks, id='cuda'),
+        pytest.param('cuda', marks=pytest.mark.cuda, id='cuda'),
     ],
 )
 def test_hourglass_forward(torch_compile: bool, device: str) -> None:
@@ -46,7 +46,6 @@ def test_hourglass_forward(torch_compile: bool, device: str) -> None:
 @maximum_python_313
 @minimal_torch_26
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_hourglass_backward() -> None:
     hourglass = HourglassTransformer(
         n_dim=1,

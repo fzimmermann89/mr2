@@ -28,7 +28,6 @@ def test_autodiff_magnitude_operator():
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_phase_operator_cuda() -> None:
     """Test that PhaseOp works on CUDA devices."""
     # Generate random tensors

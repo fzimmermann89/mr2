@@ -89,7 +89,6 @@ def test_ssim_stays_finite_in_degenerate_cases() -> None:
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_ssim_cuda_masked_backward_after_move() -> None:
     """A moved masked SSIM matches CPU and backpropagates finite CUDA gradients."""
     target = torch.linspace(0.0, 1.0, 7**3).reshape(1, 7, 7, 7)

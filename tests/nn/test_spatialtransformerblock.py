@@ -7,7 +7,7 @@ import pytest
 import torch
 from mr2.nn.attention import SpatialTransformerBlock
 from mr2.utils import RandomGenerator
-from tests.conftest import cuda_marks, maximum_python_313, minimal_torch_26
+from tests.conftest import maximum_python_313, minimal_torch_26
 
 flex_attention_marks = (minimal_torch_26, maximum_python_313)
 
@@ -17,7 +17,7 @@ flex_attention_marks = (minimal_torch_26, maximum_python_313)
     'device',
     [
         pytest.param('cpu', id='cpu'),
-        pytest.param('cuda', id='cuda', marks=cuda_marks),
+        pytest.param('cuda', id='cuda', marks=pytest.mark.cuda),
     ],
 )
 @pytest.mark.parametrize('torch_compile', [True, False], ids=['compiled', 'uncompiled'])
@@ -86,7 +86,7 @@ def test_spatialtransformerblock_backward(
     'device',
     [
         pytest.param('cpu', id='cpu'),
-        pytest.param('cuda', id='cuda', marks=cuda_marks),
+        pytest.param('cuda', id='cuda', marks=pytest.mark.cuda),
     ],
 )
 @pytest.mark.parametrize('torch_compile', [False, True])

@@ -6,14 +6,13 @@ from mr2.algorithms.image_registration.affine_registration import affine_registr
 from mr2.data import SpatialDimension
 from mr2.operators import GridSamplingOp
 from mr2.operators.functionals.NCC import ncc3d
-from tests.conftest import cuda_marks
 
 
 @pytest.mark.parametrize(
     'device',
     [
         pytest.param('cpu', id='cpu'),
-        pytest.param('cuda', marks=cuda_marks, id='cuda'),
+        pytest.param('cuda', marks=pytest.mark.cuda, id='cuda'),
     ],
 )
 def test_affine_registration(device: str, ellipse_phantom) -> None:

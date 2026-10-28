@@ -19,8 +19,6 @@ from xsdata.models.datatype import XmlDate, XmlTime
 from tests.data import IsmrmrdRawTestData
 from tests.phantoms import EllipsePhantomTestData
 
-cuda_marks = (pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable'))
-
 minimal_torch_26 = pytest.mark.xfail(
     parse_version(torch.__version__) < parse_version('2.6'),
     reason='Requires PyTorch >= 2.6',
@@ -38,11 +36,15 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Keep CUDA placeholders in the CPU report until GPU results replace them."""
-    if config.getoption('--skip-cuda'):
-        for item in items:
-            if item.get_closest_marker('cuda'):
-                item.add_marker(pytest.mark.skipif(True, reason='CUDA results are reported separately'), append=False)
+    """Skip CUDA tests when unavailable or when GPU results are reported separately."""
+    skip_cuda = config.getoption('--skip-cuda')
+    cuda_skip = pytest.mark.skipif(
+        skip_cuda or not torch.cuda.is_available(),
+        reason='CUDA results are reported separately' if skip_cuda else 'CUDA unavailable',
+    )
+    for item in items:
+        if item.get_closest_marker('cuda'):
+            item.add_marker(cuda_skip, append=False)
 
 
 def generate_random_encodingcounter_properties(rng: RandomGenerator) -> dict[str, Any]:

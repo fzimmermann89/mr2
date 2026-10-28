@@ -5,7 +5,6 @@ from typing import cast
 import pytest
 import torch
 from mr2.nn.nets import VAE
-from tests.conftest import cuda_marks
 
 
 @pytest.mark.parametrize('torch_compile', [True, False], ids=['compiled', 'uncompiled'])
@@ -13,7 +12,7 @@ from tests.conftest import cuda_marks
     'device',
     [
         pytest.param('cpu', id='cpu'),
-        pytest.param('cuda', marks=cuda_marks, id='cuda'),
+        pytest.param('cuda', marks=pytest.mark.cuda, id='cuda'),
     ],
 )
 def test_vae_forward(torch_compile: bool, device: str) -> None:

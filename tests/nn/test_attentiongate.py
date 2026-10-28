@@ -5,14 +5,13 @@ from collections.abc import Sequence
 import pytest
 from mr2.nn.attention import AttentionGate
 from mr2.utils import RandomGenerator
-from tests.conftest import cuda_marks
 
 
 @pytest.mark.parametrize(
     'device',
     [
         pytest.param('cpu', id='cpu'),
-        pytest.param('cuda', id='cuda', marks=cuda_marks),
+        pytest.param('cuda', id='cuda', marks=pytest.mark.cuda),
     ],
 )
 @pytest.mark.parametrize(

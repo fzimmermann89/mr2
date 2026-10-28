@@ -183,7 +183,6 @@ def test_IData_to_complex128(random_kheader, random_test_data):
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_IData_cuda(random_kheader, random_test_data):
     """Move IData object to CUDA memory."""
     idata = IData.from_tensor_and_kheader(data=random_test_data, header=random_kheader)
@@ -192,7 +191,6 @@ def test_IData_cuda(random_kheader, random_test_data):
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_IData_cpu(random_kheader, random_test_data):
     """Move IData object to CUDA memory and back to CPU memory."""
     idata = IData.from_tensor_and_kheader(data=random_test_data, header=random_kheader)

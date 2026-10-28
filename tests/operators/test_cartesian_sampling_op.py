@@ -213,7 +213,6 @@ def test_cart_sampling_op_repr():
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_cart_sampling_op_cuda() -> None:
     """Move trajectory to CUDA memory."""
 

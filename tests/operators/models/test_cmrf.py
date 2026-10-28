@@ -35,7 +35,6 @@ def test_cmrf_autodiff(parameter_shape: Sequence[int] = (2, 1, 1, 4, 2)) -> None
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_cmrf_cuda(parameter_shape: Sequence[int] = (2,)) -> None:
     """Test the cMRF model works on cuda devices."""
     rng = RandomGenerator(8)

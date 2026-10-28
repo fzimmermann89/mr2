@@ -3,7 +3,6 @@
 import pytest
 import torch
 from mr2.algorithms.dcf import dcf_2d3d_voronoi, dcf_pipe
-from tests.conftest import cuda_marks
 
 
 @pytest.mark.parametrize('dtype', [torch.float32, torch.float64])
@@ -79,7 +78,6 @@ def test_noncartesian_psf(kind: str) -> None:
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 @pytest.mark.parametrize('kind', ['radial', 'spiral'])
 def test_cuda_parity(kind: str) -> None:
     """Compare normalized DCF and PSF, allowing CPU and CUDA kernel differences."""
@@ -116,7 +114,7 @@ def test_invalid_input(k: torch.Tensor, sizes: tuple[int], iterations: int, over
         dcf_pipe(k, sizes, iterations, oversampling)
 
 
-@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=cuda_marks)])
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
 def test_periodic_coordinates(device: str) -> None:
     """Adding encoded periods preserves DCF even outside older backend bounds."""
     k = torch.tensor([[-16.0, -5.25, 0.0, 3.5, 15.0]], dtype=torch.float64, device=device)
@@ -124,7 +122,7 @@ def test_periodic_coordinates(device: str) -> None:
     torch.testing.assert_close(dcf_pipe(k + shifts, (32,)), dcf_pipe(k, (32,)))
 
 
-@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=cuda_marks)])
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
 @pytest.mark.parametrize('dtype', [torch.float32, torch.float64])
 def test_multiple_batch_dimensions(device: str, dtype: torch.dtype) -> None:
     """Leading batch axes preserve independent weights and their normalization."""

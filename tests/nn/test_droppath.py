@@ -4,7 +4,6 @@ import pytest
 import torch
 from mr2.nn.DropPath import DropPath
 from mr2.utils import RandomGenerator
-from tests.conftest import cuda_marks
 
 
 @pytest.mark.parametrize('scale_by_keep', [False, True])
@@ -12,7 +11,7 @@ from tests.conftest import cuda_marks
     'device',
     [
         pytest.param('cpu', id='cpu'),
-        pytest.param('cuda', id='cuda', marks=cuda_marks),
+        pytest.param('cuda', id='cuda', marks=pytest.mark.cuda),
     ],
 )
 def test_droppath_no_drop(device: str, scale_by_keep: bool) -> None:

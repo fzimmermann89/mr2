@@ -4,14 +4,13 @@ import pytest
 import torch
 from mr2.nn import AbsolutePositionEncoding
 from mr2.utils import RandomGenerator
-from tests.conftest import cuda_marks
 
 
 @pytest.mark.parametrize(
     'device',
     [
         pytest.param('cpu', id='cpu'),
-        pytest.param('cuda', marks=cuda_marks, id='cuda'),
+        pytest.param('cuda', marks=pytest.mark.cuda, id='cuda'),
     ],
 )
 def test_absolute_position_encodings(device: str) -> None:

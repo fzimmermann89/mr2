@@ -168,7 +168,6 @@ def test_dataclass_convert(copy: bool, dtype: torch.dtype, attribute: str) -> No
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 @pytest.mark.parametrize('already_moved', [True, False])
 @pytest.mark.parametrize('copy', [True, False])
 def test_dataclass_cuda(already_moved: bool, copy: bool) -> None:

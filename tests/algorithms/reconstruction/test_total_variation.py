@@ -89,7 +89,6 @@ def test_total_variation_with_explicit_dcf(cartesian_kdata: KData) -> None:
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_total_variation_cuda_from_kdata(cartesian_kdata: KData) -> None:
     """Test CUDA device transfers for reconstruction created from kdata."""
     reconstruction = TotalVariationRegularizedReconstruction(
@@ -124,7 +123,6 @@ def test_total_variation_cuda_from_kdata(cartesian_kdata: KData) -> None:
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_total_variation_cuda_explicit_components(cartesian_kdata: KData) -> None:
     """Test CUDA device transfers with explicit FourierOp, CSM, and DCF."""
 

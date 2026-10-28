@@ -51,7 +51,6 @@ def test_optimizer_op_gradcheck() -> None:
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_optimizer_op_cuda_implicit_gradient() -> None:
     """The implicit gradient of a quadratic optimum matches its target gradient."""
     target = torch.tensor([1.25, -0.75], device='cuda', requires_grad=True)

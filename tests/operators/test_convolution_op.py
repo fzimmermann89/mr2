@@ -221,7 +221,6 @@ def test_invalid_axes_and_channels(adjoint: bool) -> None:
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_cuda() -> None:
     """Moving the operator moves its kernel and supports forward and adjoint on CUDA."""
     rng = RandomGenerator(seed=0)
@@ -236,7 +235,6 @@ def test_cuda() -> None:
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_cuda_trainable_kernel_gradient() -> None:
     """A trainable complex kernel gets the expected reflected-boundary gradient on CUDA."""
     rng = RandomGenerator(seed=3)

@@ -171,7 +171,6 @@ def test_l21_autodiff(method: str):
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_l21_cuda():
     """Module conversion moves target and weight; all outputs remain on device."""
     x = torch.tensor([[3j, 4.0]], device='cuda', dtype=torch.complex128)

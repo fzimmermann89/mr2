@@ -88,7 +88,6 @@ def test_einsum_op_invalid(rule: str) -> None:
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_einsum_op_cuda() -> None:
     """Test einsum operator works on cuda devices."""
     tensor_shape = (3, 5, 4, 2)

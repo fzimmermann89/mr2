@@ -100,7 +100,6 @@ def test_symmetrized_gradient_op_forward_mode_autodiff(
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_symmetrized_gradient_op_cuda() -> None:
     """Test symmetrized gradient operator works on CUDA devices."""
     # Set dimensional parameters

@@ -73,7 +73,6 @@ def test_gradients(dtype: torch.dtype, method: str):
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_cuda():
     """CPU targets work with CUDA inputs in all three methods."""
     x = torch.tensor([[3j, 0, 0], [0, 4, 0]], dtype=torch.complex64)

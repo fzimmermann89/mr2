@@ -70,7 +70,6 @@ def test_rearrange_op_invalid() -> None:
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_rearrange_op_cuda() -> None:
     """Test rearrange operator works with CUDA devices."""
     # Generate random tensor

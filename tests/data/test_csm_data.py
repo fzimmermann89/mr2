@@ -42,7 +42,6 @@ def test_CsmData_smoothing_width(
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 @pytest.mark.parametrize('csm_method', [CsmData.from_idata_walsh, CsmData.from_idata_inati])
 def test_CsmData_cuda(csm_method: Callable, ellipse_phantom: EllipsePhantomTestData, random_kheader: KHeader) -> None:
     """CsmData obtained on GPU in CUDA memory."""

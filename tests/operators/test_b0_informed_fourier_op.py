@@ -130,7 +130,6 @@ def test_b0_informed_fourier_op_gradcheck_wrt_b0_map(
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 @pytest.mark.parametrize('operator_type', [MultiFrequencyFourierOp, TimeSegmentedFourierOp, ConjugatePhaseFourierOp])
 def test_b0_informed_fourier_op_cuda(
     operator_type: type[MultiFrequencyFourierOp] | type[TimeSegmentedFourierOp] | type[ConjugatePhaseFourierOp],

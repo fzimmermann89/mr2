@@ -106,7 +106,6 @@ def test_patch_op_invalid() -> None:
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_patch_op_cuda() -> None:
     """Test the cMRF model works on cuda devices."""
 

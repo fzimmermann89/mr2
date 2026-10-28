@@ -14,7 +14,6 @@ from mr2.operators.FourierOp import FourierOp
 from mr2.operators.SensitivityOp import SensitivityOp
 from mr2.phantoms.EllipsePhantom import EllipsePhantom
 from mr2.utils import RandomGenerator
-from tests.conftest import cuda_marks
 
 
 @pytest.fixture
@@ -28,7 +27,7 @@ def csm_problem() -> tuple[torch.Tensor, torch.Tensor, KData]:
     return image, csm, kdata
 
 
-@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=cuda_marks)])
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
 def test_conjugate_gradient_dc(
     image_noisy: torch.Tensor, kdata_us: KData, image: torch.Tensor, image_us: torch.Tensor, device: str
 ) -> None:
@@ -77,7 +76,7 @@ def test_conjugate_gradient_dc_csm(csm_problem: tuple[torch.Tensor, torch.Tensor
     'device',
     [
         pytest.param('cpu', id='cpu'),
-        pytest.param('cuda', id='cuda', marks=cuda_marks),
+        pytest.param('cuda', id='cuda', marks=pytest.mark.cuda),
     ],
 )
 def test_conjugate_gradient_dc_csm_gradients(

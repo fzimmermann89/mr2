@@ -45,7 +45,6 @@ def test_prewhiten_kspace_cpu(random_kheader):
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_prewhiten_kspace_cuda(random_kheader):
     """Prewhitening of k-space data on GPU."""
     _test_prewhiten_kspace(random_kheader, 'cuda')
