@@ -4,7 +4,7 @@ from itertools import product
 
 import pytest
 import torch
-from mr2.algorithms.grappa import grappa_calibration, grappa_interpolation
+from mr2.algorithms.reconstruction import GrappaReconstruction
 from torch.nn.functional import conv3d
 
 
@@ -28,7 +28,7 @@ def test_grappa_calibration_explicit(regularization: float, dtype: torch.dtype) 
         weights = torch.linalg.solve(sources.mH @ sources + ridge * torch.eye(sources.shape[-1]), sources.mH @ targets)
     else:
         weights = torch.linalg.lstsq(sources, targets, driver='gelsd').solution
-    kernel = grappa_calibration(acs, pattern, regularization=regularization)
+    kernel = GrappaReconstruction.calibrate(acs, pattern, regularization=regularization)
     assert kernel.shape == (2, 2, 1, 3, 3)
     actual = kernel.flatten(start_dim=-3)[..., pattern.flatten()].flatten(start_dim=-2).mT
     torch.testing.assert_close(actual, weights, atol=2e-5, rtol=2e-5)
@@ -45,12 +45,12 @@ def test_grappa_interpolation(
     data = torch.randn(2, 3, *shape, generator=generator, dtype=dtype)
     pattern = torch.zeros(kernel_size, dtype=torch.bool)
     pattern[..., 0] = True
-    kernel = grappa_calibration(data[0], pattern)
+    kernel = GrappaReconstruction.calibrate(data[0], pattern)
     expected = conv3d(data, kernel, padding=tuple(k // 2 for k in kernel_size))
-    actual = grappa_interpolation(data, kernel)
+    actual = GrappaReconstruction._interpolate_kernel(data, kernel)
     torch.testing.assert_close(actual, expected)
     locations = torch.arange(1, data[0, 0].numel(), 2)
-    selected = grappa_interpolation(data, kernel, locations)
+    selected = GrappaReconstruction._interpolate_kernel(data, kernel, locations)
     torch.testing.assert_close(selected.flatten(-3)[..., locations], expected.flatten(-3)[..., locations])
     assert torch.equal(selected.flatten(-3)[..., ::2], data.flatten(-3)[..., ::2])
 
@@ -62,14 +62,14 @@ def test_grappa_shared_calibration_and_scale() -> None:
     data = torch.randn(2, 3, 2, 1, 8, 9, generator=generator, dtype=acs.dtype)
     pattern = torch.zeros((1, 3, 3), dtype=torch.bool)
     pattern[..., ::2] = True
-    kernel = grappa_calibration(acs, pattern)
+    kernel = GrappaReconstruction.calibrate(acs, pattern)
     assert kernel.shape[:2] == (1, 3)
-    output = grappa_interpolation(data, kernel)
+    output = GrappaReconstruction._interpolate_kernel(data, kernel)
     for i, j in product(range(2), range(3)):
-        torch.testing.assert_close(output[i, j], grappa_interpolation(data[i, j], kernel[0, j]))
+        torch.testing.assert_close(output[i, j], GrappaReconstruction._interpolate_kernel(data[i, j], kernel[0, j]))
     scale = 3.1 - 2.7j
-    torch.testing.assert_close(grappa_calibration(scale * acs, pattern), kernel)
-    torch.testing.assert_close(grappa_interpolation(scale * data, kernel), scale * output)
+    torch.testing.assert_close(GrappaReconstruction.calibrate(scale * acs, pattern), kernel)
+    torch.testing.assert_close(GrappaReconstruction._interpolate_kernel(scale * data, kernel), scale * output)
 
 
 @pytest.mark.parametrize('regularization', [-1.0, float('nan')])
@@ -77,7 +77,9 @@ def test_grappa_invalid_regularization(regularization: float) -> None:
     """Reject invalid ridge strengths before solving."""
     pattern = torch.tensor([[[True, False, True]]])
     with pytest.raises(ValueError, match='finite and nonnegative'):
-        grappa_calibration(torch.ones(2, 1, 4, 5, dtype=torch.complex64), pattern, regularization=regularization)
+        GrappaReconstruction.calibrate(
+            torch.ones(2, 1, 4, 5, dtype=torch.complex64), pattern, regularization=regularization
+        )
 
 
 @pytest.mark.parametrize(
@@ -90,14 +92,14 @@ def test_grappa_invalid_regularization(regularization: float) -> None:
 def test_grappa_invalid_sources(pattern: torch.Tensor, message: str) -> None:
     """A kernel needs acquired sources and cannot regress its own center."""
     with pytest.raises(ValueError, match=message):
-        grappa_calibration(torch.ones(2, 1, 4, 5, dtype=torch.complex64), pattern)
+        GrappaReconstruction.calibrate(torch.ones(2, 1, 4, 5, dtype=torch.complex64), pattern)
 
 
 def test_grappa_insufficient_acs() -> None:
     """Require at least one complete calibration window."""
     pattern = torch.tensor([[[True, False, True]]])
     with pytest.raises(ValueError, match='too small'):
-        grappa_calibration(torch.ones(4, 1, 1, 2, dtype=torch.complex64), pattern)
+        GrappaReconstruction.calibrate(torch.ones(4, 1, 1, 2, dtype=torch.complex64), pattern)
 
 
 @pytest.mark.parametrize('regularization', [0.0, 0.03])
@@ -111,7 +113,7 @@ def test_grappa_underdetermined_calibration(regularization: float) -> None:
     augmented = torch.cat((sources, ridge.sqrt() * torch.eye(sources.shape[-1], dtype=acs.dtype)))
     right = torch.cat((targets, targets.new_zeros(sources.shape[-1], targets.shape[-1])))
     expected = torch.linalg.lstsq(augmented, right, driver='gelsd').solution
-    kernel = grappa_calibration(acs, pattern, regularization=regularization)
+    kernel = GrappaReconstruction.calibrate(acs, pattern, regularization=regularization)
     actual = kernel.flatten(-3)[..., pattern.flatten()].flatten(-2).mT
     torch.testing.assert_close(actual, expected)
 
@@ -122,7 +124,9 @@ def test_grappa_zero_calibration_batch(regularization: float) -> None:
     acs = torch.randn(2, 2, 1, 4, 5, dtype=torch.complex128, generator=torch.Generator().manual_seed(28))
     acs[0] = 0
     pattern = torch.tensor([[[True, False, True]]])
-    kernels = grappa_calibration(acs, pattern, regularization=regularization)
+    kernels = GrappaReconstruction.calibrate(acs, pattern, regularization=regularization)
     assert torch.isfinite(kernels).all()
     assert torch.count_nonzero(kernels[0]) == 0
-    torch.testing.assert_close(kernels[1], grappa_calibration(acs[1], pattern, regularization=regularization))
+    torch.testing.assert_close(
+        kernels[1], GrappaReconstruction.calibrate(acs[1], pattern, regularization=regularization)
+    )

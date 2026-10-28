@@ -1,13 +1,13 @@
 """Cartesian GRAPPA reconstruction."""
 
 from collections.abc import Callable
-from math import prod
+from math import isfinite, prod
 from typing import Literal
 
 import torch
+from einops import rearrange
 from typing_extensions import Self
 
-from mr2.algorithms.grappa import grappa_calibration, grappa_interpolation
 from mr2.algorithms.reconstruction.Reconstruction import Reconstruction
 from mr2.data.CsmData import CsmData
 from mr2.data.enums import TrajType
@@ -54,7 +54,7 @@ class GrappaReconstruction(Reconstruction):
             for 2D acquisitions. At boundaries, only in-grid acquired sources
             enter the fit. Every missing point needs an acquired neighbor.
         regularization
-            Relative ridge strength passed to `~mr2.algorithms.grappa.grappa_calibration`.
+            Relative ridge strength passed to `calibrate`.
         csm
             Coil combination maps, operator or calculation from completed coil
             images, following `~mr2.algorithms.reconstruction.DirectReconstruction`.
@@ -73,6 +73,92 @@ class GrappaReconstruction(Reconstruction):
             self.csm_op = csm.as_operator() if isinstance(csm, CsmData) else csm
         else:
             self.recalculate_csm(kdata, csm)
+
+    @staticmethod
+    def calibrate(acs: torch.Tensor, source_pattern: torch.Tensor, *, regularization: float = 0.01) -> torch.Tensor:
+        """Fit a GRAPPA kernel from fully sampled Cartesian calibration data.
+
+        Parameters
+        ----------
+        acs
+            Fully sampled ACS, shape ``(..., coils, kz, ky, kx)``, as returned by ``KData.acs()``.
+            Leading batch dimensions are calibrated independently.
+        source_pattern
+            Boolean 3D neighborhood with positive odd widths. True selects an
+            acquired source offset; the center is the target and must be False.
+            Only complete ACS windows are used.
+        regularization
+            Nonnegative ridge strength, relative to the mean diagonal of ``S.H @ S``
+            for source matrix S. Zero uses a minimum-norm pseudoinverse. Batches
+            with zero source energy return zero kernels.
+
+        Returns
+        -------
+            Complex kernel with shape ``(..., coils_out, coils_in, *kernel_size)``.
+            Unused offsets are zero.
+        """
+        kernel_size = tuple(source_pattern.shape)
+        if len(kernel_size) != 3 or any(k % 2 != 1 for k in kernel_size):
+            raise ValueError('source_pattern must have three positive odd widths (use width one for 2D data).')
+        if source_pattern.dtype != torch.bool or source_pattern.flatten()[prod(kernel_size) // 2]:
+            raise ValueError('source_pattern must be boolean and exclude the center.')
+        if not source_pattern.any():
+            raise ValueError('No acquired neighbor within kernel_size; increase the neighborhood widths.')
+        if not isfinite(regularization) or regularization < 0:
+            raise ValueError('regularization must be finite and nonnegative.')
+        n_coils = acs.shape[-4]
+        windows = sliding_window(acs, kernel_size, dim=(-3, -2, -1))
+        cz, cy, cx = (k // 2 for k in kernel_size)
+        targets = rearrange(windows[..., cz, cy, cx], 'z y x ... c -> ... (z y x) c')
+        sources = rearrange(windows[..., source_pattern], 'z y x ... c s -> ... (z y x) (c s)')
+        if regularization == 0:
+            weights = torch.linalg.pinv(sources) @ targets
+        else:
+            gram = sources.mH @ sources
+            energy = gram.diagonal(dim1=-2, dim2=-1).real.mean(-1)
+            # Any positive diagonal selects the zero minimum-norm kernel when S is zero.
+            ridge = torch.where(energy == 0, 1.0, regularization * energy)
+            identity = torch.eye(gram.shape[-1], device=acs.device, dtype=acs.dtype)
+            weights = torch.linalg.solve(gram + ridge[..., None, None] * identity, sources.mH @ targets)
+        kernel = acs.new_zeros(*acs.shape[:-4], n_coils, n_coils, prod(kernel_size))
+        kernel[..., source_pattern.flatten()] = weights.unflatten(-2, (n_coils, -1)).movedim(-1, -3)
+        return kernel.reshape(*acs.shape[:-4], n_coils, n_coils, *kernel_size)
+
+    @staticmethod
+    def _interpolate_kernel(
+        kspace: torch.Tensor, kernel: torch.Tensor, target_indices: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        """Apply a calibrated Cartesian GRAPPA kernel.
+
+        Parameters
+        ----------
+        kspace
+            Zero-filled Cartesian grid, shape ``(..., coils, kz, ky, kx)``.
+        kernel
+            Kernel returned by `calibrate`, shaped ``(..., coils, coils, kz, ky, kx)``,
+            with batch dimensions that broadcast to those of ``kspace``. Out-of-grid sources contribute zero.
+        target_indices
+            Flattened spatial indices to fill, shared across batches and coils.
+            Other entries are preserved exactly. If omitted, evaluate the kernel
+            on the entire grid. Call separately for each source pattern.
+
+        Returns
+        -------
+            Interpolated k-space with the input shape, dtype and device.
+        """
+        kernel_size = kernel.shape[-3:]
+        spatial_shape = kspace.shape[-3:]
+        padded_shape = tuple(n + k - 1 for n, k in zip(spatial_shape, kernel_size, strict=True))
+        windows = sliding_window(pad_or_crop(kspace, padded_shape), kernel_size, dim=(-3, -2, -1))
+        result = kspace.flatten(start_dim=-3).clone()
+        if target_indices is None:
+            target_indices = torch.arange(prod(spatial_shape), device=kspace.device)
+        weights = rearrange(kernel, '... o i kz ky kx -> ... (i kz ky kx) o')
+        for locations in target_indices.split(1024):
+            patches = windows[torch.unravel_index(locations, spatial_shape)]
+            sources = rearrange(patches, 'p ... c kz ky kx -> ... p (c kz ky kx)')
+            result[..., locations] = (sources @ weights).transpose(-1, -2)
+        return result.reshape(kspace.shape)
 
     def recalculate_fourierop(self, kdata: KData) -> Self:
         """Update the Cartesian sampling operators and recalibrate from stored ACS.
@@ -111,7 +197,7 @@ class GrappaReconstruction(Reconstruction):
         neighborhoods = neighborhoods.reshape(-1, prod(self.kernel_size))
         patterns, assignments = torch.unique(neighborhoods[missing_indices], dim=0, return_inverse=True)
         kernels = [
-            grappa_calibration(self.acs, pattern.reshape(self.kernel_size), regularization=self.regularization)
+            self.calibrate(self.acs, pattern.reshape(self.kernel_size), regularization=self.regularization)
             for pattern in patterns
         ]
         fitted_kernels = torch.stack(kernels) if kernels else self.acs.new_empty(0)
@@ -139,7 +225,7 @@ class GrappaReconstruction(Reconstruction):
         (grid,) = self.sampling_op.H(kdata.data)
         for index, kernel in enumerate(self.kernels):
             locations = self.missing_indices[self.assignments == index]
-            grid = grappa_interpolation(grid, kernel, locations)
+            grid = self._interpolate_kernel(grid, kernel, locations)
         return grid
 
     def _coil_images(self, kdata: KData) -> IData:
