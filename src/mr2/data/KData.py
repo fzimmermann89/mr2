@@ -5,6 +5,7 @@ import datetime
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from importlib.metadata import version
+from math import prod
 from types import EllipsisType
 from typing import TYPE_CHECKING, Literal, cast
 from xml.etree import ElementTree as ET
@@ -35,8 +36,10 @@ from mr2.data.KHeader import KHeader
 from mr2.data.KNoise import KNoise
 from mr2.data.KTrajectory import KTrajectory
 from mr2.data.Rotation import Rotation
+from mr2.data.SpatialDimension import SpatialDimension
 from mr2.data.traj_calculators.KTrajectoryCalculator import KTrajectoryCalculator
 from mr2.data.traj_calculators.KTrajectoryIsmrmrd import KTrajectoryIsmrmrd
+from mr2.utils.filters import gaussian_window, hann_window, radial_hann_window
 from mr2.utils.reshape import normalize_index, normalize_indices
 from mr2.utils.summarize import summarize_object
 from mr2.utils.typing import FileOrPath
@@ -602,6 +605,74 @@ class KData(Dataclass):
 
         whitened = prewhiten_kspace(self, knoise, scale_factor)
         return type(self)(whitened.header, whitened.data, whitened.traj)
+
+    def apodize(
+        self,
+        width: float | SpatialDimension[float] | None = None,
+        *,
+        window: Literal['hann', 'gaussian'] = 'hann',
+        radial: bool = False,
+    ) -> Self:
+        """Return a copy with a centered k-space window applied at trajectory coordinates.
+
+        Suppressing high spatial frequencies smooths the reconstructed image and
+        reduces ringing at the cost of spatial resolution. Weights are shared
+        across coils, with unit gain at DC and no energy/noise normalization.
+        Trajectory, header and acquisition metadata are copied unchanged.
+
+        Parameters
+        ----------
+        width
+            Full window width in trajectory units: one unit normally corresponds
+            to one Cartesian encoding step, or ``1 / encoding_fov`` in spatial
+            frequency. A scalar applies to all spatial directions; a
+            `SpatialDimension` specifies z, y and x separately. Defaults to the
+            header's encoding matrix sizes, independent of acquired sample count.
+            All widths must be finite and positive.
+        window
+            ``'hann'`` has compact support of the specified width.
+            ``'gaussian'`` uses width as its full width at half maximum,
+            with no hard cutoff. See :func:`mr2.utils.filters.hann_window` and
+            :func:`mr2.utils.filters.gaussian_window` for the formulas.
+        radial
+            If False, multiply the windows along kz, ky and kx (separable).
+            If True, evaluate one window at the radius formed from coordinates
+            scaled by their respective widths (ellipsoidal support for Hann).
+            Gaussian weights coincide for both choices.
+
+        Returns
+        -------
+            Apodized copy with the same dtype and device. Repeated data dimensions
+            are reduced to singletons following the usual KData convention.
+            Density compensation is not applied or modified.
+        """
+        widths: tuple[float, float, float]
+        if width is None:
+            widths = self.header.encoding_matrix.zyx
+        elif isinstance(width, SpatialDimension):
+            widths = width.zyx
+        else:
+            widths = (width, width, width)
+        coordinates = tuple(
+            coordinate.to(device=self.data.device, dtype=self.data.real.dtype)
+            for coordinate in (self.traj.kz, self.traj.ky, self.traj.kx)
+        )
+        match window, radial:
+            case 'hann', True:
+                weight = radial_hann_window(coordinates, widths)
+            case 'hann', False:
+                weight = prod(
+                    (hann_window(k, w) for k, w in zip(coordinates, widths, strict=True)),
+                    start=self.data.real.new_ones(()),
+                )
+            case 'gaussian', _:
+                weight = prod(
+                    (gaussian_window(k, w) for k, w in zip(coordinates, widths, strict=True)),
+                    start=self.data.real.new_ones(()),
+                )
+            case _:
+                raise ValueError("window must be 'hann' or 'gaussian'.")
+        return type(self)(self.header.clone(), self.data * weight, self.traj.clone())
 
     def remove_readout_os(self: Self) -> Self:
         """Remove any oversampling along the readout direction.

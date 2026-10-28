@@ -12,6 +12,9 @@ from mr2.utils.filters import (
     filter_separable,
     gabor_filters_2d,
     gaussian_filter,
+    gaussian_window,
+    hann_window,
+    radial_hann_window,
     uniform_filter,
 )
 from scipy.fft import dct, dctn
@@ -218,3 +221,22 @@ def test_fft_filters(kernel_size: tuple[int, ...], dtype: torch.dtype) -> None:
     assert filters.shape == (size, *kernel_size)
     assert filters.dtype == dtype
     torch.testing.assert_close(coefficients, expected)
+
+
+def test_apodization_windows() -> None:
+    """Check continuous Hann support, Gaussian FWHM and finite radial DC gradients."""
+    coordinate = torch.tensor([0.0, 0.5, 1.0, 2.0], dtype=torch.float64, requires_grad=True)
+    expected = torch.tensor([1.0, (2 + 2**0.5) / 4, 0.5, 0.0], dtype=torch.float64)
+    torch.testing.assert_close(hann_window(coordinate, 4), expected)
+    torch.testing.assert_close(gaussian_window(coordinate[[0, 3]], 4), torch.tensor([1.0, 0.5], dtype=torch.float64))
+    radial = radial_hann_window((coordinate,), (4.0,))
+    torch.testing.assert_close(radial, expected)
+    radial.sum().backward()
+    gradient = -torch.pi / 4 * torch.sin(torch.pi * coordinate.detach() / 2)
+    gradient[-1] = 0
+    assert coordinate.grad is not None
+    torch.testing.assert_close(coordinate.grad, gradient)
+    outside = torch.tensor([60000.0], dtype=torch.float16, requires_grad=True)
+    (hann_window(outside, 2) + radial_hann_window((outside,), (2.0,)) + gaussian_window(outside, 2)).sum().backward()
+    assert outside.grad is not None
+    torch.testing.assert_close(outside.grad, torch.zeros_like(outside))

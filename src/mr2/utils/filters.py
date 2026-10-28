@@ -377,3 +377,77 @@ def fft_filters(
     )
 
     return filters
+
+
+def hann_window(coordinate: torch.Tensor, width: float) -> torch.Tensor:
+    """Evaluate a continuous Hann window with unit gain at the origin.
+
+    Parameters
+    ----------
+    coordinate
+        Real floating-point coordinates, centered at zero.
+    width
+        Finite positive full support width in coordinate units. Weights are
+        ``(1 + cos(2*pi*coordinate/width)) / 2`` inside the support and zero outside.
+
+    Returns
+    -------
+        Real weights with the coordinate shape, dtype and device, without energy normalization.
+    """
+    if not math.isfinite(width) or width <= 0:
+        raise ValueError('width must be finite and positive.')
+    normalized = coordinate / (width / 2)
+    return torch.where(normalized.abs() < 1, (1 + torch.cos(torch.pi * normalized.clamp(-1, 1))) / 2, 0)
+
+
+def gaussian_window(coordinate: torch.Tensor, width: float) -> torch.Tensor:
+    """Evaluate a continuous Gaussian window with unit gain at the origin.
+
+    Parameters
+    ----------
+    coordinate
+        Real floating-point coordinates, centered at zero.
+    width
+        Finite positive full width at half maximum in coordinate units.
+        Weights are ``exp(-4*log(2)*(coordinate/width)**2)`` without a hard cutoff.
+
+    Returns
+    -------
+        Real weights with the coordinate shape, dtype and device, without energy normalization.
+    """
+    if not math.isfinite(width) or width <= 0:
+        raise ValueError('width must be finite and positive.')
+    # Beyond this bound the Gaussian already underflows to zero.
+    bound = math.sqrt(torch.finfo(coordinate.dtype).max) / 2
+    normalized = (coordinate / (width / 2)).clamp(-bound, bound)
+    return torch.exp(-math.log(2) * normalized.square())
+
+
+def radial_hann_window(coordinates: Sequence[torch.Tensor], widths: Sequence[float]) -> torch.Tensor:
+    """Evaluate a Hann window on the radius of scaled continuous coordinates.
+
+    Parameters
+    ----------
+    coordinates
+        Nonempty sequence of broadcastable real floating-point coordinate tensors
+        with the same dtype and device, one per spatial direction.
+    widths
+        Finite positive full support widths in the corresponding coordinate units.
+        Must have the same length as coordinates; unequal widths give ellipsoidal support.
+
+    Returns
+    -------
+        Real weights with the broadcast coordinate shape, unit gain and zero
+        coordinate gradient at the origin, without energy normalization.
+    """
+    if not coordinates or len(coordinates) != len(widths):
+        raise ValueError('Must provide nonempty coordinates and matching length widths.')
+    if any(not math.isfinite(width) or width <= 0 for width in widths):
+        raise ValueError('width must be finite and positive in every direction.')
+    radius_squared = coordinates[0].new_zeros(())
+    for coordinate, width in zip(coordinates, widths, strict=True):
+        normalized = (coordinate / (width / 2)).clamp(-1, 1)
+        radius_squared = radius_squared + normalized.square()
+    at_dc = radius_squared == 0
+    radius = torch.where(at_dc, 1, radius_squared).sqrt()
+    return torch.where(at_dc, 1, hann_window(radius, 2))
