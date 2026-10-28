@@ -167,7 +167,6 @@ def ncc3d(
         raise ValueError('weight contains negative values')
 
     if weight is not None:
-        weight = weight.to(device=prediction.device)
         target, prediction, weight = torch.broadcast_tensors(target, prediction, weight)
     else:
         target, prediction = torch.broadcast_tensors(target, prediction)

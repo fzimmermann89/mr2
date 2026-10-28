@@ -75,10 +75,10 @@ def test_functional_cuda_scalar_parameters(
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 @pytest.mark.parametrize('functional', [SSIM, NCC, RicianNegLogLikelihood])
 @pytest.mark.parametrize('scalar_weight', [False, True])
-def test_nonproximable_functional_cuda_scalar_parameters(
+def test_nonproximable_functional_cuda(
     functional: type[SSIM | NCC | RicianNegLogLikelihood], scalar_weight: bool
 ) -> None:
-    """Check default and CPU scalar parameters of the remaining functionals on CUDA."""
+    """Move user-supplied tensor parameters; Python scalar defaults need no move."""
     rng = RandomGenerator(0)
     x = rng.float32_tensor((2, 1, 9, 9))
     f: SSIM | NCC | RicianNegLogLikelihood
@@ -91,9 +91,38 @@ def test_nonproximable_functional_cuda_scalar_parameters(
         f = SSIM(target, weight=weight) if functional is SSIM else NCC(target, weight=weight)
         expected = f(x)[0]
         f.target = target.cuda()
+        if scalar_weight:
+            f = f.cuda()
     result = f(x.cuda())[0]
     assert result.device.type == 'cuda'
     torch.testing.assert_close(result.cpu(), expected)
+
+
+@pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
+@pytest.mark.parametrize('functional', [SSIM, NCC])
+@pytest.mark.parametrize('weight_shape', [(), (1, 9, 9)])
+def test_similarity_cuda_weight_requires_move(functional: type[SSIM | NCC], weight_shape: tuple[int, ...]) -> None:
+    """Explicit tensor weights, including scalar tensors, follow the operator device."""
+    target = RandomGenerator(0).float32_tensor((1, 9, 9))
+    f = functional(target, torch.ones(weight_shape))
+    expected = f(target)[0]
+    f.target = target.cuda()
+    with pytest.raises(RuntimeError, match='device'):
+        f(target.cuda())
+    torch.testing.assert_close(f.cuda()(target.cuda())[0].cpu(), expected)
+
+
+@pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
+def test_l1_cuda_tensor_weight_requires_move() -> None:
+    """L1 conjugate prox must not silently copy a tensor weight array to CUDA."""
+    x = torch.tensor([-2.0, 0.5, 3.0])
+    f = L1Norm(weight=torch.ones_like(x))
+    expected = f.prox_convex_conj(x)[0]
+    with pytest.raises(RuntimeError, match='device'):
+        f.prox_convex_conj(x.cuda())
+    torch.testing.assert_close(f.cuda().prox_convex_conj(x.cuda())[0].cpu(), expected)
 
 
 @pytest.mark.parametrize('shape', [[1, 2, 3], ()])

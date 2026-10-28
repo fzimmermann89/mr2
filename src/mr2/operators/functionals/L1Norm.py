@@ -105,6 +105,6 @@ class L1Norm(ElementaryProximableFunctional):
         throw_if_negative_or_complex(sigma)
         diff = x - sigma * self.target
         threshold = self._divide_by_n(self.weight.abs(), torch.broadcast_shapes(x.shape, self.weight.shape))
-        x_out = torch.sgn(diff) * torch.clamp_max(diff.abs(), threshold.abs().to(device=x.device))
+        x_out = torch.sgn(diff) * torch.minimum(diff.abs(), threshold.abs())
         x_out = x_out.to(torch.result_type(threshold, x_out))
         return (x_out,)

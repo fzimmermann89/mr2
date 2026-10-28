@@ -83,7 +83,6 @@ def ssim3d(
     if weight is not None:
         if (weight < 0).any():
             raise ValueError('Mask contains negative values')
-        weight = weight.to(device=prediction.device)
         target, prediction, weight = cast(
             tuple[torch.Tensor, torch.Tensor, torch.Tensor], torch.broadcast_tensors(target, prediction, weight)
         )

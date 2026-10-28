@@ -18,22 +18,25 @@ from mr2.utils import RandomGenerator
 
 @pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
 @pytest.mark.parametrize('explicit_steps', [False, True])
-def test_pdhg_default_functionals(device: str, explicit_steps: bool) -> None:
+@pytest.mark.parametrize('batched', [False, True])
+def test_pdhg_default_functionals(device: str, explicit_steps: bool, batched: bool) -> None:
     """PDHG and its callback objective work with unmoved default functionals."""
     if device == 'cuda' and not torch.cuda.is_available():
         pytest.skip('CUDA unavailable')
     initial = torch.tensor([-3.0, 0.0, 4.0], device=device)
+    if batched:
+        initial = initial.expand(2, -1).clone()
     objectives = []
 
     def callback(status: PDHGStatus) -> None:
         objective = status['objective'](*status['solution'])
         assert objective.device == initial.device
-        assert torch.isfinite(objective)
+        assert torch.isfinite(objective).all()
         objectives.append(objective)
 
     (result,) = pdhg(
-        f=L1Norm(),
-        g=None,
+        f=L1Norm(dim=-1) if batched else L1Norm(),
+        g=ZeroFunctional(dim=-1) if batched else None,
         operator=None,
         initial_values=(initial,),
         primal_stepsize=0.5 if explicit_steps else None,
