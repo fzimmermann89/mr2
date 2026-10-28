@@ -63,7 +63,8 @@ class ConjugateGradientDC(Module):
         Parameters
         ----------
         image
-            Current image estimate.
+            Current image estimate. If csm is provided, this must be a coil-combined image
+            with a singleton coil dimension.
         data
             k-space data.
         fourier_op
@@ -72,7 +73,8 @@ class ConjugateGradientDC(Module):
             This operator can already include the coil sensitivity weighting, if gradients wrt the coil sensitivity maps
             NOT required. Otherwise, they should be given as an additional argument.
         csm
-            Coil sensitivity maps. If None, no coil sensitivity weighting is applied.
+            Coil sensitivity maps. If provided, the result is coil-combined.
+            If None, no additional coil sensitivity weighting is applied.
 
         Returns
         -------
