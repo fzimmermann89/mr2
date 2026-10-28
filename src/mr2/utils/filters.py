@@ -443,7 +443,8 @@ def radial_hann_window(coordinates: Sequence[torch.Tensor], widths: Sequence[flo
         raise ValueError('width must be finite and positive in every direction.')
     radius_squared = coordinates[0].new_zeros(())
     for coordinate, width in zip(coordinates, widths, strict=True):
-        radius_squared = radius_squared + (coordinate / (width / 2)).square()
+        normalized = (coordinate / (width / 2)).clamp(-1, 1)
+        radius_squared = radius_squared + normalized.square()
     at_dc = radius_squared == 0
     radius = torch.where(at_dc, 1, radius_squared).sqrt()
     return torch.where(at_dc, 1, hann_window(radius, 2))
