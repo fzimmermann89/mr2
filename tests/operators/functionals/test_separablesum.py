@@ -151,3 +151,25 @@ def test_separablesum_registered_members():
         id(b.target),
         id(b.weight),
     }
+
+
+def test_separablesum_replace_members():
+    """Replacing the public tuple updates evaluation and registered state together."""
+    summed = Dummy() | Dummy()
+    a = L2NormSquared(target=torch.ones(3), weight=torch.nn.Parameter(torch.full((3,), 2.0)))
+    b = L1Norm(target=torch.zeros(3))
+    summed.functionals = (a, b)
+
+    assert tuple(summed) == (a, b)
+    assert {id(parameter) for parameter in summed.parameters()} == {id(a.weight)}
+    assert {id(tensor) for tensor in summed.state_dict(keep_vars=True).values()} == {
+        id(a.target),
+        id(a.weight),
+        id(b.target),
+        id(b.weight),
+    }
+    summed.to(torch.float64)
+    assert all(tensor.dtype == torch.float64 for tensor in summed.state_dict().values())
+    x = torch.arange(3, dtype=torch.float64)
+    torch.testing.assert_close(summed(x, x), (a(x)[0] + b(x)[0],))
+    torch.testing.assert_close(summed.prox(x, x), (a.prox(x)[0], b.prox(x)[0]))
