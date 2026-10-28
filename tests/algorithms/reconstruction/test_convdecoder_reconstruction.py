@@ -9,7 +9,7 @@ from mr2.operators import FourierOp, SensitivityOp
 
 
 @pytest.fixture
-def convdecoder_acquisition(random_kheader: KHeader) -> tuple[KData, FourierOp, SensitivityOp]:
+def convdecoder_kdata_and_operators(random_kheader: KHeader) -> tuple[KData, FourierOp, SensitivityOp]:
     """Create undersampled multicoil data with three time points and three z planes."""
     size = SpatialDimension(3, 5, 7)
     header = random_kheader
@@ -35,10 +35,12 @@ def convdecoder_acquisition(random_kheader: KHeader) -> tuple[KData, FourierOp, 
     [((2, 2), torch.complex64), ((2, 2, 2), torch.complex128), ((2, 2, 2, 2), torch.complex64)],
 )
 def test_reconstruction(
-    convdecoder_acquisition: tuple[KData, FourierOp, SensitivityOp], latent_shape: tuple[int, ...], dtype: torch.dtype
+    convdecoder_kdata_and_operators: tuple[KData, FourierOp, SensitivityOp],
+    latent_shape: tuple[int, ...],
+    dtype: torch.dtype,
 ) -> None:
     """Test ND fitting, complex layout, fresh initialization and fixed acquisition gradients."""
-    kdata, fourier, csm = convdecoder_acquisition
+    kdata, fourier, csm = convdecoder_kdata_and_operators
     kdata = kdata.to(dtype=dtype)
     maps = csm.csm_tensor.to(dtype=dtype).detach().requires_grad_()
     csm = SensitivityOp(maps * 1.0)
@@ -68,9 +70,9 @@ def test_automatic(cartesian_kdata: KData) -> None:
     assert reconstruction.csm_op is not None
 
 
-def test_callback(convdecoder_acquisition: tuple[KData, FourierOp, SensitivityOp]) -> None:
+def test_callback(convdecoder_kdata_and_operators: tuple[KData, FourierOp, SensitivityOp]) -> None:
     """Test stopping with the current image after an update."""
-    kdata, fourier, csm = convdecoder_acquisition
+    kdata, fourier, csm = convdecoder_kdata_and_operators
     statuses: list[OptimizerStatus] = []
 
     def callback(status: OptimizerStatus) -> bool:
@@ -86,9 +88,9 @@ def test_callback(convdecoder_acquisition: tuple[KData, FourierOp, SensitivityOp
     torch.testing.assert_close(result.data, statuses[0]['solution'][0])
 
 
-def test_independent_slices(convdecoder_acquisition: tuple[KData, FourierOp, SensitivityOp]) -> None:
+def test_independent_slices(convdecoder_kdata_and_operators: tuple[KData, FourierOp, SensitivityOp]) -> None:
     """Changing one batch entry's intensity leaves the others unchanged."""
-    kdata, fourier, csm = convdecoder_acquisition
+    kdata, fourier, csm = convdecoder_kdata_and_operators
     recon = ConvDecoderReconstruction(
         fourier_op=fourier, csm=csm, n_features=4, n_levels=1, latent_shape=(2, 2), max_iterations=3
     )
@@ -102,9 +104,9 @@ def test_independent_slices(convdecoder_acquisition: tuple[KData, FourierOp, Sen
 
 
 @pytest.mark.cuda
-def test_cuda(convdecoder_acquisition: tuple[KData, FourierOp, SensitivityOp]) -> None:
+def test_cuda(convdecoder_kdata_and_operators: tuple[KData, FourierOp, SensitivityOp]) -> None:
     """Test reconstruction on CUDA."""
-    kdata, fourier, csm = convdecoder_acquisition
+    kdata, fourier, csm = convdecoder_kdata_and_operators
     recon = ConvDecoderReconstruction(
         fourier_op=fourier, csm=csm, n_features=4, n_levels=1, latent_shape=(2, 2), max_iterations=1
     ).cuda()
