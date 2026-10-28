@@ -5,18 +5,10 @@ import torch
 from mr2.algorithms.optimizers import bicg
 from mr2.algorithms.optimizers.bicg import BiCGStatus
 from mr2.operators import EinsumOp, MultiIdentityOp
+from tests.conftest import cuda_marks
 
 
-@pytest.mark.parametrize(
-    'device',
-    [
-        'cpu',
-        pytest.param(
-            'cuda',
-            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
-        ),
-    ],
-)
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=cuda_marks)])
 def test_initial_convergence(device: str) -> None:
     """An exact initial solution returns without iterating at zero tolerance."""
     rhs = torch.tensor([1.0, 2.0], device=device)
@@ -27,16 +19,7 @@ def test_initial_convergence(device: str) -> None:
     assert not statuses
 
 
-@pytest.mark.parametrize(
-    'device',
-    [
-        'cpu',
-        pytest.param(
-            'cuda',
-            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
-        ),
-    ],
-)
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=cuda_marks)])
 @pytest.mark.parametrize('preconditioned', [False, True])
 def test_alpha_convergence(preconditioned: bool, device: str) -> None:
     """An exact alpha step skips stabilization and reports the completed iteration."""

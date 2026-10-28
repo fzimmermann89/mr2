@@ -5,6 +5,7 @@ import scipy.linalg
 import torch
 from mr2.algorithms import rovir
 from mr2.utils import RandomGenerator
+from tests.conftest import cuda_marks
 
 
 def test_rovir_returns_operator_with_expected_shape() -> None:
@@ -23,16 +24,7 @@ def test_rovir_returns_operator_with_expected_shape() -> None:
     torch.testing.assert_close(gram, torch.eye(2, dtype=img.dtype), atol=1e-5, rtol=1e-5)
 
 
-@pytest.mark.parametrize(
-    'device',
-    [
-        'cpu',
-        pytest.param(
-            'cuda',
-            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
-        ),
-    ],
-)
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=cuda_marks)])
 @pytest.mark.parametrize('dtype', [torch.float32, torch.float64, torch.complex64, torch.complex128])
 def test_rovir_energy_ratio_matches_generalized_eigenvector(device: str, dtype: torch.dtype) -> None:
     """ROVir matches the optimal ROI/background energy ratio for real and complex coil images."""

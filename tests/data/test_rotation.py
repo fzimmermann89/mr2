@@ -49,6 +49,8 @@ from mr2.data.Rotation import AXIS_ORDER
 from mr2.utils import RandomGenerator
 from scipy.stats import special_ortho_group
 
+from tests.conftest import cuda_marks
+
 
 def _norm(x):
     return torch.linalg.norm(x.float(), dim=-1, keepdim=True)
@@ -627,16 +629,7 @@ def test_as_euler_degenerate_symmetric_axes(seq_tuple: Sequence[str], intrinsic:
 @pytest.mark.parametrize('intrinsic', [False, True])
 @pytest.mark.parametrize('symmetric', [False, True])
 @pytest.mark.parametrize('dtype', [torch.float32, torch.float64])
-@pytest.mark.parametrize(
-    'device',
-    [
-        'cpu',
-        pytest.param(
-            'cuda',
-            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
-        ),
-    ],
-)
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=cuda_marks)])
 def test_as_euler_roundtrip(
     seq_tuple: Sequence[str], intrinsic: bool, symmetric: bool, dtype: torch.dtype, device: str
 ) -> None:

@@ -7,6 +7,7 @@ from mr2.data import SpatialDimension
 from mr2.operators import GridSamplingOp
 from mr2.utils import RandomGenerator
 from tests import relative_image_difference
+from tests.conftest import cuda_marks
 
 
 def test_register_images(ellipse_phantom) -> None:
@@ -65,16 +66,7 @@ def test_register_images(ellipse_phantom) -> None:
     assert recovered_difference < initial_difference
 
 
-@pytest.mark.parametrize(
-    'device',
-    [
-        'cpu',
-        pytest.param(
-            'cuda',
-            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
-        ),
-    ],
-)
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=cuda_marks)])
 def test_register_images_nonuniform_displacement(device: str, blob_image: torch.Tensor) -> None:
     """The spline pyramid must recover a deformation that affine registration cannot fit."""
     moving = blob_image.to(device)

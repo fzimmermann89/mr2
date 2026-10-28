@@ -7,17 +7,14 @@ from mr2.data import SpatialDimension
 from mr2.operators import GridSamplingOp
 from mr2.operators.functionals.NCC import ncc3d
 from mr2.utils import RandomGenerator
+from tests.conftest import cuda_marks
 
 
 @pytest.mark.parametrize(
     'device',
     [
         pytest.param('cpu', id='cpu'),
-        pytest.param(
-            'cuda',
-            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
-            id='cuda',
-        ),
+        pytest.param('cuda', marks=cuda_marks, id='cuda'),
     ],
 )
 def test_spline_registration(device: str, ellipse_phantom) -> None:
@@ -60,16 +57,7 @@ def test_spline_registration(device: str, ellipse_phantom) -> None:
 
 
 @pytest.mark.parametrize('downsampling_factor', [1, 2])
-@pytest.mark.parametrize(
-    'device',
-    [
-        'cpu',
-        pytest.param(
-            'cuda',
-            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
-        ),
-    ],
-)
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=cuda_marks)])
 def test_spline_registration_translation(device: str, downsampling_factor: int, blob_image: torch.Tensor) -> None:
     """A downsampled fit must recover the displacement in full-resolution voxels."""
     moving = blob_image.to(device)

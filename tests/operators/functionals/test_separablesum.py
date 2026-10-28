@@ -5,6 +5,8 @@ from mr2.operators.Functional import ScaledProximableFunctional
 from mr2.operators.functionals import L1Norm, L2NormSquared
 from mr2.utils import RandomGenerator
 
+from tests.conftest import cuda_marks
+
 
 class Dummy(ProximableFunctional):
     """Only for testing purposes."""
@@ -109,16 +111,7 @@ def test_summedfunctionls_len():
 
 @pytest.mark.parametrize('shorthand', [False, True])
 @pytest.mark.parametrize('dtype', [torch.float32, torch.float64])
-@pytest.mark.parametrize(
-    'device',
-    [
-        'cpu',
-        pytest.param(
-            'cuda',
-            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
-        ),
-    ],
-)
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=cuda_marks)])
 def test_separablesum_to(shorthand: bool, dtype: torch.dtype, device: str):
     """Device and dtype conversions reach every member, including scaled functionals."""
     a = L2NormSquared(target=torch.ones(3), weight=torch.full((3,), 2.0))

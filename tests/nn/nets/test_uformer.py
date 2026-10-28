@@ -6,6 +6,7 @@ import pytest
 import torch
 from mr2.nn.LayerNorm import LayerNorm
 from mr2.nn.nets.Uformer import LeWinTransformerBlock, Uformer
+from tests.conftest import cuda_marks
 
 
 def test_lewin_transformer_block_structure() -> None:
@@ -56,11 +57,7 @@ def test_lewin_periodic_modulator(shape: tuple[int, ...], window_size: int, shif
     'device',
     [
         pytest.param('cpu', id='cpu'),
-        pytest.param(
-            'cuda',
-            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
-            id='cuda',
-        ),
+        pytest.param('cuda', marks=cuda_marks, id='cuda'),
     ],
 )
 def test_uformer_forward(shape: tuple[int, int], torch_compile: bool, device: str) -> None:

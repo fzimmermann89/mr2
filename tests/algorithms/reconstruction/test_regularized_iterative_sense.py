@@ -6,6 +6,7 @@ from mr2.algorithms.reconstruction import RegularizedIterativeSENSEReconstructio
 from mr2.data import CsmData, DcfData, KData
 from mr2.operators import FiniteDifferenceOp, FourierOp, IdentityOp
 from mr2.utils import RandomGenerator
+from tests.conftest import cuda_marks
 
 
 def test_regularized_iterative_sense_automatic(cartesian_kdata: KData) -> None:
@@ -54,16 +55,7 @@ def test_regularized_iterative_sense_with_explicit_dcf(cartesian_kdata: KData) -
     assert reconstruction.dcf_op is not None
 
 
-@pytest.mark.parametrize(
-    'device',
-    [
-        'cpu',
-        pytest.param(
-            'cuda',
-            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
-        ),
-    ],
-)
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=cuda_marks)])
 @pytest.mark.parametrize('prior', ['default', 'tensor_zero', 'differentiable_zero', 'nonzero'])
 def test_regularized_iterative_sense_normal_equation(cartesian_kdata: KData, device: str, prior: str) -> None:
     """Check the normal-equation residual for zero and nonzero priors."""
@@ -104,16 +96,7 @@ def test_regularized_iterative_sense_normal_equation(cartesian_kdata: KData, dev
         assert gradient.norm() > 0
 
 
-@pytest.mark.parametrize(
-    'device',
-    [
-        'cpu',
-        pytest.param(
-            'cuda',
-            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
-        ),
-    ],
-)
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=cuda_marks)])
 @pytest.mark.parametrize('prior', [None, 0.0, 0.5])
 def test_regularized_iterative_sense_identity_prior(cartesian_kdata: KData, device: str, prior: float | None) -> None:
     """Check Tikhonov regularization toward a scalar target with identity operators."""
@@ -126,16 +109,7 @@ def test_regularized_iterative_sense_identity_prior(cartesian_kdata: KData, devi
     torch.testing.assert_close(idata.data, expected, rtol=1e-5, atol=1e-5)
 
 
-@pytest.mark.parametrize(
-    'device',
-    [
-        'cpu',
-        pytest.param(
-            'cuda',
-            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
-        ),
-    ],
-)
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=cuda_marks)])
 def test_regularized_iterative_sense_parameter_prior(cartesian_kdata: KData, device: str) -> None:
     """Keep a trainable prior registered as a parameter and preserve its gradient."""
     prior = torch.nn.Parameter(torch.tensor(0.5, device=device))

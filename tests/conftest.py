@@ -19,6 +19,8 @@ from xsdata.models.datatype import XmlDate, XmlTime
 from tests.data import IsmrmrdRawTestData
 from tests.phantoms import EllipsePhantomTestData
 
+cuda_marks = (pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable'))
+
 minimal_torch_26 = pytest.mark.xfail(
     parse_version(torch.__version__) < parse_version('2.6'),
     reason='Requires PyTorch >= 2.6',

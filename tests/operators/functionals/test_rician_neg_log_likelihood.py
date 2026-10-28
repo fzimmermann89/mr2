@@ -5,6 +5,7 @@ import torch
 from mr2.operators.functionals import RicianNegLogLikelihood
 
 from tests import autodiff_test
+from tests.conftest import cuda_marks
 
 # 80-digit mpmath evaluation of the defining I0/I1 expressions, rounded to double.
 # fmt: off
@@ -35,16 +36,7 @@ REFERENCES = [
 # fmt: on
 
 
-@pytest.mark.parametrize(
-    'device',
-    [
-        'cpu',
-        pytest.param(
-            'cuda',
-            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
-        ),
-    ],
-)
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=cuda_marks)])
 @pytest.mark.parametrize('dtype', [torch.float32, torch.float64])
 @pytest.mark.parametrize('reference', REFERENCES)
 def test_reference(reference: tuple[float, ...], dtype: torch.dtype, device: str) -> None:
@@ -267,16 +259,7 @@ def test_updated_parameters(name: str, invalid: float) -> None:
 
 
 @pytest.mark.parametrize('kind', ['constant', 'parameter'])
-@pytest.mark.parametrize(
-    'device',
-    [
-        'cpu',
-        pytest.param(
-            'cuda',
-            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
-        ),
-    ],
-)
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=cuda_marks)])
 def test_tensor_moves(kind: str, device: str) -> None:
     """Constants move, and learnable Parameters keep receiving optimizer updates."""
     values = [torch.tensor([1.0, 2.0]) for _ in range(3)]

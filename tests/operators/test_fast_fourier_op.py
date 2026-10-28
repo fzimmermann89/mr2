@@ -15,6 +15,7 @@ from tests import (
     forward_mode_autodiff_of_linear_operator_test,
     gradient_of_linear_operator_test,
 )
+from tests.conftest import cuda_marks
 
 
 def create_fast_fourier_op_and_range_domain(
@@ -67,16 +68,7 @@ MATRIX_PARAMETERS = pytest.mark.parametrize(
 )
 
 
-@pytest.mark.parametrize(
-    'device',
-    [
-        'cpu',
-        pytest.param(
-            'cuda',
-            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
-        ),
-    ],
-)
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=cuda_marks)])
 @pytest.mark.parametrize(
     ('recon_matrix', 'encoding_matrix'),
     [

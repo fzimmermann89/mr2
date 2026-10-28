@@ -4,6 +4,7 @@ from mr2.operators import Jacobian
 from mr2.operators.functionals import L2NormSquared
 from mr2.utils import RandomGenerator
 
+from tests.conftest import cuda_marks
 from tests.helper import dotproduct_adjointness_test
 
 
@@ -85,16 +86,7 @@ def test_jacobian_cache_is_cleared_when_cast() -> None:
     torch.testing.assert_close(actual, x0.double())
 
 
-@pytest.mark.parametrize(
-    'device',
-    [
-        'cpu',
-        pytest.param(
-            'cuda',
-            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
-        ),
-    ],
-)
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=cuda_marks)])
 def test_jacobian_differentiable_point_moved_before_construction(device: str) -> None:
     """A point moved before construction preserves gradients to its source."""
     source = torch.tensor([1.0, 2.0], requires_grad=True)

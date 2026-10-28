@@ -11,6 +11,7 @@ from tests import (
     forward_mode_autodiff_of_linear_operator_test,
     gradient_of_linear_operator_test,
 )
+from tests.conftest import cuda_marks
 
 
 def create_zero_pad_op_and_domain_range(
@@ -42,16 +43,7 @@ def test_zero_pad_op_content() -> None:
     torch.testing.assert_close(original_data[:, 10:20, :, 5:35, :, :], padded_data[:, :, :, :, 15:65, :])
 
 
-@pytest.mark.parametrize(
-    'device',
-    [
-        'cpu',
-        pytest.param(
-            'cuda',
-            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
-        ),
-    ],
-)
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=cuda_marks)])
 @pytest.mark.parametrize(
     ('original_shape', 'padded_shape'),
     [

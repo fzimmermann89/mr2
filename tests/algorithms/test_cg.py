@@ -11,18 +11,10 @@ from mr2.algorithms.optimizers import bicg, cg
 from mr2.algorithms.optimizers.cg import CGStatus
 from mr2.operators import EinsumOp, LinearOperator, LinearOperatorMatrix
 from mr2.utils import RandomGenerator
+from tests.conftest import cuda_marks
 
 
-@pytest.mark.parametrize(
-    'device',
-    [
-        'cpu',
-        pytest.param(
-            'cuda',
-            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
-        ),
-    ],
-)
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=cuda_marks)])
 def test_cg_exact_convergence(device: str) -> None:
     """CG stops at an exact solution even with zero tolerance."""
     rhs = torch.ones(2, device=device)

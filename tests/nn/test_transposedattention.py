@@ -7,17 +7,14 @@ import torch
 from einops import rearrange
 from mr2.nn.attention import TransposedAttention
 from mr2.utils import RandomGenerator
+from tests.conftest import cuda_marks
 
 
 @pytest.mark.parametrize(
     'device',
     [
         pytest.param('cpu', id='cpu'),
-        pytest.param(
-            'cuda',
-            id='cuda',
-            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
-        ),
+        pytest.param('cuda', id='cuda', marks=cuda_marks),
     ],
 )
 @pytest.mark.parametrize(

@@ -4,18 +4,10 @@ import pytest
 import torch
 from mr2.data.KData import KData
 from mr2.nn.data_consistency.AnalyticCartesianDC import AnalyticCartesianDC
+from tests.conftest import cuda_marks
 
 
-@pytest.mark.parametrize(
-    'device',
-    [
-        'cpu',
-        pytest.param(
-            'cuda',
-            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
-        ),
-    ],
-)
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=cuda_marks)])
 def test_analytic_cartesian_dc(
     image_noisy: torch.Tensor, kdata_us: KData, image: torch.Tensor, image_us: torch.Tensor, device: str
 ) -> None:

@@ -7,6 +7,7 @@ import torch
 from mr2.nn.nets import DiT
 from mr2.nn.nets.DiT import DiTBlock
 from mr2.utils import RandomGenerator
+from tests.conftest import cuda_marks
 
 
 @pytest.mark.parametrize('torch_compile', [True, False], ids=['compiled', 'uncompiled'])
@@ -14,11 +15,7 @@ from mr2.utils import RandomGenerator
     'device',
     [
         pytest.param('cpu', id='cpu'),
-        pytest.param(
-            'cuda',
-            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
-            id='cuda',
-        ),
+        pytest.param('cuda', marks=cuda_marks, id='cuda'),
     ],
 )
 def test_ditblock_forward(torch_compile: bool, device: str) -> None:
@@ -56,11 +53,7 @@ def test_ditblock_backward() -> None:
     'device',
     [
         pytest.param('cpu', id='cpu'),
-        pytest.param(
-            'cuda',
-            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
-            id='cuda',
-        ),
+        pytest.param('cuda', marks=cuda_marks, id='cuda'),
     ],
 )
 @pytest.mark.parametrize('input_size', [(16, 32), (4, 8, 16)], ids=['2d', '3d'])

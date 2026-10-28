@@ -3,10 +3,10 @@
 from collections.abc import Sequence
 
 import pytest
-import torch
 from mr2.nn import FiLM, Sequential
 from mr2.operators import FastFourierOp, MagnitudeOp
 from mr2.utils import RandomGenerator
+from tests.conftest import cuda_marks
 from torch.nn import Linear
 
 
@@ -14,11 +14,7 @@ from torch.nn import Linear
     'device',
     [
         pytest.param('cpu', id='cpu'),
-        pytest.param(
-            'cuda',
-            id='cuda',
-            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
-        ),
+        pytest.param('cuda', id='cuda', marks=cuda_marks),
     ],
 )
 @pytest.mark.parametrize(

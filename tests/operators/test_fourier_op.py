@@ -17,7 +17,7 @@ from tests import (
     forward_mode_autodiff_of_linear_operator_test,
     gradient_of_linear_operator_test,
 )
-from tests.conftest import COMMON_MR_TRAJECTORIES, create_traj
+from tests.conftest import COMMON_MR_TRAJECTORIES, create_traj, cuda_marks
 
 AtLeast3Ints: TypeAlias = tuple[int, int, int, Unpack[tuple[int, ...]]]
 
@@ -88,16 +88,8 @@ class NufftTrajektory(KTrajectory):
     ('device', 'dtype'),
     [
         ('cpu', torch.float64),
-        pytest.param(
-            'cuda',
-            torch.float32,
-            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
-        ),
-        pytest.param(
-            'cuda',
-            torch.float64,
-            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
-        ),
+        pytest.param('cuda', torch.float32, marks=cuda_marks),
+        pytest.param('cuda', torch.float64, marks=cuda_marks),
     ],
 )
 def test_fourier_op_cached_gram_after_to(
@@ -215,16 +207,7 @@ def test_fourier_op_gram(
     torch.testing.assert_close(actual, expected, rtol=1e-3, atol=1e-3)
 
 
-@pytest.mark.parametrize(
-    'device',
-    [
-        'cpu',
-        pytest.param(
-            'cuda',
-            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
-        ),
-    ],
-)
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=cuda_marks)])
 @pytest.mark.parametrize('encoding_offset', [0, 1])
 @pytest.mark.parametrize(
     ('recon_shape', 'cartesian_axis'),
