@@ -671,38 +671,25 @@ class KData(Dataclass):
         *,
         n_iterations: int = 10,
     ) -> Self:
-        """Complete one Cartesian partial Fourier direction and return a copy.
+        """Complete one Cartesian partial Fourier direction using trajectory-derived support.
 
-        Acquisition support is derived from the trajectory, including acquired
-        zeros. Both methods return k-space on the full encoded Cartesian grid.
-        POCS restores every acquired value exactly; homodyne applies ramp
-        weighting and signed phase correction without exact data consistency.
+        Requires separable Cartesian axes with shared sampling across batches
+        and a contiguous acquired interval touching either edge.
 
         Parameters
         ----------
         dim
-            Partial Fourier data axis, one of the last three dimensions
-            ``(k2, k1, k0)``. Positive indices are also accepted.
+            Partial Fourier axis within ``(k2, k1, k0)``; accepts positive or negative indices.
         method
-            ``'pocs'`` for iterative phase projection or ``'homodyne'`` for
-            ramp-weighted phase correction.
+            ``'pocs'`` preserves acquired values; ``'homodyne'`` uses ramp weighting.
         n_iterations
-            Number of POCS iterations; unused for homodyne.
+            POCS iteration count; unused for homodyne.
 
         Returns
         -------
-            Copy with completed data, a sorted Cartesian trajectory and updated
-            encoding indices. Other acquisition metadata for synthesized
-            lines is copied from the nearest acquired line; these values do not
-            describe new physical acquisitions. Input data and header are unchanged.
-
-        Notes
-        -----
-        Supports separable integer Cartesian coordinates aligned with
-        ``(k2, k1, k0)``, shared across batches, with no repeated coordinates.
-        Missing samples must form one edge interval along ``dim``. All other
-        axes must cover their encoded grid. Phase must be sufficiently smooth;
-        no coil combination or oversampling removal is performed.
+            KData with completed k-space, a full Cartesian trajectory and updated
+            encoding indices. Metadata for synthesized lines inherits the nearest
+            acquired line's values. The input is unchanged.
         """
         from mr2.algorithms.partial_fourier import homodyne, pocs
         from mr2.data.enums import TrajectoryType

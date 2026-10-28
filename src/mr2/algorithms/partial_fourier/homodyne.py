@@ -11,11 +11,7 @@ from mr2.utils.reshape import normalize_index, normalize_indices
 def _partial_fourier_center(
     acquired_mask: torch.Tensor, axis: int, dtype: torch.dtype
 ) -> tuple[torch.Tensor, int, int]:
-    """Return the symmetric center taper, calibration radius and acquired side (-1 or +1).
-
-    The mask must vary only along ``axis`` and contain one contiguous interval
-    touching either edge. The even-grid Nyquist sample is excluded from calibration.
-    """
+    """Return the symmetric center taper, radius and acquired side (-1 or +1)."""
     lines = acquired_mask.movedim(axis, -1)
     support = lines[(0,) * (lines.ndim - 1)]
     if not torch.all(lines == support):
@@ -47,48 +43,27 @@ def homodyne(
     dim: Sequence[int],
     partial_fourier_dim: int,
 ) -> torch.Tensor:
-    r"""Complete k-space using homodyne ramp weighting and phase correction.
+    r"""Complete Cartesian k-space using homodyne ramp weighting.
 
-    Forms the signed image :math:`a = \operatorname{Re}(\overline{p} F^H(w k))`,
-    then returns :math:`F(p a)`. The unit phase :math:`p` uses the same tapered
-    symmetric center as `~mr2.algorithms.partial_fourier.pocs`. The real amplitude
-    may be negative; no magnitude or nonnegative constraint is applied.
+    Return :math:`F(p\operatorname{Re}(\overline{p}F^H(wk)))`, with phase :math:`p`
+    estimated from a tapered symmetric center and linear ramp weights :math:`w`.
 
     Parameters
     ----------
     kspace
-        Complex data on the full encoded Cartesian grid, with DC at ``size // 2``.
-        Unacquired values are ignored. Batch and coil images are independent.
-        For trajectory data, use `~mr2.operators.CartesianSamplingOp` to place
-        measurements and an explicit acquisition mask on this grid first.
+        Complex data on the full centered Cartesian grid.
     acquired_mask
-        Boolean mask broadcastable to ``kspace``, on the same device. Supports
-        the same single contiguous interval touching either edge as POCS, shared
-        across batches, coils and lines. All other axes must be fully sampled.
-        Partial sampling requires DC and at least one acquired conjugate pair.
+        Boolean acquisition mask; see `~mr2.algorithms.partial_fourier.pocs`.
     dim
-        Transform axes, using `~mr2.operators.FastFourierOp` centered orthonormal
-        conventions. Must include ``partial_fourier_dim``.
+        Centered orthonormal FFT axes, including ``partial_fourier_dim``.
     partial_fourier_dim
-        Partial Fourier axis, including readout for partial echo. Positive and
-        negative indices, either acquisition side and odd/even grids are supported.
+        Partial Fourier axis. Positive and negative indices are accepted.
 
     Returns
     -------
-        Completed k-space on the full encoded grid, with the input shape, dtype
-        and device. Fully sampled data is returned unchanged. Unlike POCS,
-        homodyne does not enforce exact acquired-data consistency. Use
-        ``FastFourierOp(dim).H`` to obtain the phase-restored complex image.
-
-    Notes
-    -----
-    The ramp is one at DC, rises to two toward the acquired outer region and
-    falls to zero at the opposite edge of the symmetric calibration interval.
-    Conjugate weights sum to two. An acquired even-grid Nyquist bin has weight
-    one; a missing Nyquist bin cannot be recovered by homodyne. No extra FFT
-    scaling is applied. Phase calibration is tapered only along the partial
-    Fourier axis. Accuracy depends on smooth phase and sufficient calibration.
-    No coil combination, cropping or oversampling removal is performed.
+        Phase-restored k-space with the input shape, dtype and device. Signed
+        image amplitudes are retained. Acquired values may change; fully
+        sampled data is unchanged.
     """
     if acquired_mask.dtype != torch.bool or acquired_mask.device != kspace.device:
         raise ValueError('acquired_mask must be boolean and on the same device as kspace.')
