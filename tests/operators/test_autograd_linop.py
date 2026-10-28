@@ -2,7 +2,8 @@
 
 import pytest
 import torch
-from mr2.operators import LinearOperator
+from mr2.data import KTrajectory, SpatialDimension
+from mr2.operators import DownSamplingOp, FourierOp, LinearOperator, NonUniformFastFourierOp
 from mr2.utils import RandomGenerator
 from torch.autograd.gradcheck import GradcheckError
 
@@ -89,3 +90,61 @@ def test_linop_autograd_differentiable_gradgrad():
     # as it should be using the forward
     x = torch.tensor(1.0, requires_grad=True, dtype=torch.float64)
     torch.autograd.gradgradcheck(diff, x)
+
+
+@pytest.mark.parametrize(
+    'operator_name', ['cartesian', 'noncartesian', 'nufft', 'gram', 'subspace_gram', 'downsampling']
+)
+@pytest.mark.parametrize('dtype', [torch.float64, torch.complex128], ids=['real', 'complex'])
+@pytest.mark.parametrize('adjoint', [False, True], ids=['forward', 'adjoint'])
+def test_linop_autograd_input_dtype(operator_name, dtype, adjoint, monkeypatch):
+    """Check real and complex gradients for every adjoint-as-backward operator."""
+    rng = RandomGenerator(seed=0)
+    zeros = torch.zeros(1, 1, 1, 1, 1, dtype=torch.float64)
+    kx = torch.tensor([-1.8, -0.9, 0.1, 1.2], dtype=torch.float64)
+    trajectory = KTrajectory(kz=zeros, ky=zeros, kx=kx.reshape(1, 1, 1, 1, 4))
+    matrix = SpatialDimension(1, 1, 4)
+    nufft = NonUniformFastFourierOp((-1,), matrix, matrix, trajectory).double()
+    operator: LinearOperator
+    input_shape = (1, 1, 1, 1, 4)
+    match operator_name:
+        case 'cartesian':
+            trajectory = KTrajectory(kz=zeros, ky=zeros, kx=torch.arange(-2, 2).reshape(1, 1, 1, 1, 4))
+            operator = FourierOp(matrix, matrix, trajectory).double()
+        case 'noncartesian':
+            operator = FourierOp(matrix, matrix, trajectory).double()
+        case 'nufft':
+            operator = nufft
+        case 'gram':
+            operator = nufft.gram
+        case 'subspace_gram':
+            basis = torch.tensor([[1, 1j]], dtype=torch.complex128)
+            operator = nufft.toeplitz(subspace=basis)
+            input_shape = (2, 1, 1, 1, 4)
+        case 'downsampling':
+            operator = DownSamplingOp(-1, (4,), (2,))
+            if adjoint:
+                input_shape = (1, 1, 1, 1, 2)
+        case _:
+            raise ValueError(f'Unknown operator: {operator_name}')
+
+    x = rng.randn_tensor(input_shape, dtype=dtype).requires_grad_()
+    function = operator.adjoint if adjoint else operator
+    torch.autograd.gradcheck(function, x, fast_mode=True, atol=1e-5, rtol=1e-4)
+    torch.autograd.gradgradcheck(function, x, fast_mode=True, atol=1e-5, rtol=1e-4)
+
+    # The Gram implementations use out= and in-place operations, so their
+    # derivatives are checked numerically above rather than through autograd.
+    if operator_name in ('gram', 'subspace_gram'):
+        return
+    (output,) = function(x)
+    grad_output = rng.randn_like(output)
+    (actual,) = torch.autograd.grad(output, x, grad_output)
+    with monkeypatch.context() as patch:
+        # FourierOp can contain a wrapped NUFFT. Bypass that wrapper as well.
+        for method in ('forward', 'adjoint'):
+            patch.setattr(NonUniformFastFourierOp, method, getattr(NonUniformFastFourierOp, f'_saved_{method}'))
+        (reference,) = getattr(operator, '_saved_adjoint' if adjoint else '_saved_forward')(x)
+        (expected,) = torch.autograd.grad(reference, x, grad_output)
+    assert actual.dtype == x.dtype
+    torch.testing.assert_close(actual, expected)

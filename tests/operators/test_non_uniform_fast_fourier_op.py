@@ -49,6 +49,18 @@ def create_time_varying_2d_nufft_op(
     )
 
 
+def test_non_uniform_fast_fourier_op_real_input() -> None:
+    """Real inputs give the same result as explicitly promoted complex inputs."""
+    rng = RandomGenerator(seed=0)
+    operator = create_time_varying_2d_nufft_op(n_timepoints=1, image_shape=(4, 4))
+    x = rng.float32_tensor((1, 1, 1, 4, 4))
+    for function in (operator, operator.adjoint):
+        (actual,) = function(x)
+        (expected,) = function(x.to(torch.complex64))
+        assert actual.dtype == torch.complex64
+        torch.testing.assert_close(actual, expected)
+
+
 @COMMON_MR_TRAJECTORIES
 def test_non_uniform_fast_fourier_op_fwd_adj_property(
     img_shape, k_shape, nkx, nky, nkz, type_kx, type_ky, type_kz, type_k0, type_k1, type_k2
