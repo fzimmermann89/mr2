@@ -249,7 +249,14 @@ def test_grid_sampling_op_errormsg_complexgrid() -> None:
 
 @pytest.mark.parametrize(
     ('value', 'error_message'),
-    [(1.0001, 'values outside range'), (-1.0001, 'values outside range'), (1.0, None), (-1.0, None)],
+    [
+        (1.0001, 'values outside range'),
+        (-1.0001, 'values outside range'),
+        (1.0, None),
+        (-1.0, None),
+        pytest.param(1.0 + torch.finfo(torch.float32).eps, None, id='positive-roundoff'),
+        pytest.param(-1.0 - torch.finfo(torch.float32).eps, None, id='negative-roundoff'),
+    ],
 )
 def test_grid_sampling_op_warning_gridrange(value: float, error_message: str | None) -> None:
     """Test if warning for grid values outside [-1,1] is raised"""
