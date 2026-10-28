@@ -53,20 +53,15 @@ def test_jacobian_value_at_x0() -> None:
 
 
 @pytest.mark.cuda
-@pytest.mark.parametrize(('requires_grad', 'grad_enabled'), [(False, True), (True, True), (True, False)])
-def test_jacobian_cache_is_cleared_when_moved(requires_grad: bool, grad_enabled: bool) -> None:
+def test_jacobian_cache_is_cleared_when_moved() -> None:
     """Cached values and VJPs follow the Jacobian across device moves."""
-    x0 = torch.tensor([1.0, 2.0], requires_grad=requires_grad)
+    x0 = torch.tensor([1.0, 2.0])
     jacobian = Jacobian(L2NormSquared(), x0)
     jacobian.adjoint(torch.tensor(0.5))
     assert jacobian.value_at_x0[0].device.type == 'cpu'
 
-    with torch.set_grad_enabled(grad_enabled):
-        jacobian.cuda()
+    jacobian.cuda()
     torch.testing.assert_close(jacobian.value_at_x0[0], x0.cuda().square().sum())
-    if requires_grad and grad_enabled:
-        (gradient,) = torch.autograd.grad(jacobian.value_at_x0[0], x0)
-        torch.testing.assert_close(gradient, 2 * x0)
     (actual,) = jacobian.adjoint(torch.tensor(0.5, device='cuda'))
     torch.testing.assert_close(actual, x0.cuda())
 
@@ -76,19 +71,28 @@ def test_jacobian_cache_is_cleared_when_moved(requires_grad: bool, grad_enabled:
     torch.testing.assert_close(actual, x0)
 
 
-@pytest.mark.parametrize(('requires_grad', 'grad_enabled'), [(False, True), (True, True), (True, False)])
-def test_jacobian_cache_is_cleared_when_cast(requires_grad: bool, grad_enabled: bool) -> None:
+def test_jacobian_cache_is_cleared_when_cast() -> None:
     """Cached values and VJPs follow the Jacobian dtype after a cast."""
-    x0 = torch.tensor([1.0, 2.0], requires_grad=requires_grad)
+    x0 = torch.tensor([1.0, 2.0])
     jacobian = Jacobian(L2NormSquared(), x0)
     jacobian.adjoint(torch.tensor(0.5))
-    with torch.set_grad_enabled(grad_enabled):
-        jacobian.double()
+    jacobian.double()
     torch.testing.assert_close(jacobian.value_at_x0[0], x0.double().square().sum())
-    if requires_grad and grad_enabled:
-        (gradient,) = torch.autograd.grad(jacobian.value_at_x0[0], x0)
-        torch.testing.assert_close(gradient, 2 * x0)
 
     (actual,) = jacobian.adjoint(torch.tensor(0.5, dtype=torch.float64))
     assert actual.dtype == torch.float64
     torch.testing.assert_close(actual, x0.double())
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+def test_jacobian_differentiable_point_moved_before_construction(device: str) -> None:
+    """A point moved before construction preserves gradients to its source."""
+    source = torch.tensor([1.0, 2.0], requires_grad=True)
+    x0 = (2 * source).to(device=device, dtype=torch.float64)
+    jacobian = Jacobian(L2NormSquared().to(device=device, dtype=torch.float64), x0)
+
+    torch.testing.assert_close(jacobian.value_at_x0[0], x0.square().sum())
+    (actual,) = jacobian.adjoint(torch.tensor(0.5, device=device, dtype=torch.float64))
+    torch.testing.assert_close(actual, x0)
+    (gradient,) = torch.autograd.grad(actual.sum(), source)
+    torch.testing.assert_close(gradient, torch.full_like(source, 2))

@@ -35,13 +35,8 @@ class Jacobian(LinearOperator):
         self._f_x0: tuple[torch.Tensor, ...] | None = None
 
     def _apply(self, fn: Callable[[torch.Tensor], torch.Tensor], recurse: bool = True) -> 'Jacobian':
-        """Move linearization points and discard cached values tied to their old device or dtype."""
+        """Discard cached values after converting registered tensors."""
         result = super()._apply(fn, recurse=recurse)
-        if recurse:
-            # TensorList leaves gradient-requiring tensors as ordinary attributes.
-            for index, x0 in enumerate(self._x0):
-                if str(index) in vars(self._x0):
-                    setattr(self._x0, str(index), fn(x0))
         self._vjp = None
         self._f_x0 = None
         return result
