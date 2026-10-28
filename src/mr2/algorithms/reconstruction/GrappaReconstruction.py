@@ -163,8 +163,6 @@ class GrappaReconstruction(Reconstruction):
     def recalculate_fourierop(self, kdata: KData) -> Self:
         """Update the Cartesian sampling operators and recalibrate from stored ACS.
 
-        Recalculate coil sensitivities separately with `recalculate_csm` if the image geometry changes.
-
         Parameters
         ----------
         kdata
