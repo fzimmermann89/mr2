@@ -66,4 +66,3 @@ def test_swinir_backward() -> None:
     for name, parameter in swinir.named_parameters():
         assert parameter.grad is not None, f'{name}.grad is None'
         assert not parameter.grad.isnan().any(), f'{name}.grad is NaN'
-
