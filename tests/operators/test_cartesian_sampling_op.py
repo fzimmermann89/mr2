@@ -320,6 +320,27 @@ def test_cartesian_duplicates(device: str) -> None:
     dotproduct_adjointness_test(op, x, y)
 
 
+@pytest.mark.parametrize('assign', [False, True])
+@pytest.mark.parametrize('nested', [False, True])
+def test_cartesian_load_state_after_adjoint(assign: bool, nested: bool) -> None:
+    """Loading duplicate indices invalidates a warmed unique-map optimization."""
+    trajectory = KTrajectory(
+        kz=torch.zeros(1, 1, 1, 1, 1),
+        ky=torch.zeros(1, 1, 1, 1, 1),
+        kx=torch.tensor([-1.0, -2.0, 0.0, 1.0]).reshape(1, 1, 1, 1, 4),
+    )
+    op = CartesianSamplingOp(SpatialDimension(1, 1, 4), trajectory)
+    duplicate_trajectory = KTrajectory(kz=trajectory.kz, ky=trajectory.ky, kx=trajectory.kx.clone())
+    duplicate_trajectory.kx[..., 1] = -1
+    replacement = CartesianSamplingOp(SpatialDimension(1, 1, 4), duplicate_trajectory)
+    y = torch.tensor([3.0, 7.0, 11.0, 13.0]).reshape(1, 1, 1, 1, 4)
+    op.H(y)
+    target = torch.nn.ModuleList([op]) if nested else op
+    source = torch.nn.ModuleList([replacement]) if nested else replacement
+    target.load_state_dict(source.state_dict(), assign=assign)
+    torch.testing.assert_close(op.H(y)[0].flatten(), torch.tensor([0.0, 10.0, 11.0, 13.0]))
+
+
 @pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
 @pytest.mark.parametrize(
     'coordinates',

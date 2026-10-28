@@ -142,9 +142,14 @@ class CartesianSamplingOp(LinearOperator):
             or self._inside_encoding_matrix_idx is not None
         )
         self._has_repeated_indices: bool | None = None
+        self.register_load_state_dict_post_hook(self._reset_index_cache)
 
         self._trajectory_shape = traj.shape
         self._sorted_grid_shape = sorted_grid_shape
+
+    def _reset_index_cache(self, _module: torch.nn.Module, _incompatible_keys: object) -> None:
+        """Reset derived index information after registered buffers are loaded."""
+        self._has_repeated_indices = None
 
     def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor,]:
         """Forward operator which selects acquired k-space data from k-space.
