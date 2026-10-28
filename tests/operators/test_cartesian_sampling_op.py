@@ -341,6 +341,46 @@ def test_cartesian_load_state_after_adjoint(assign: bool, nested: bool) -> None:
     torch.testing.assert_close(op.H(y)[0].flatten(), torch.tensor([0.0, 10.0, 11.0, 13.0]))
 
 
+@pytest.mark.parametrize('update', ['replace', 'inplace', 'functional'])
+def test_cartesian_changed_indices_after_adjoint(update: str) -> None:
+    """Buffer replacements and mutations cannot reuse a stale unique-map result."""
+    trajectory = KTrajectory(
+        kz=torch.zeros(1, 1, 1, 1, 1),
+        ky=torch.zeros(1, 1, 1, 1, 1),
+        kx=torch.tensor([-1.0, -2.0, 0.0, 1.0]).reshape(1, 1, 1, 1, 4),
+    )
+    op = CartesianSamplingOp(SpatialDimension(1, 1, 4), trajectory)
+    y = torch.tensor([3.0, 7.0, 11.0, 13.0]).reshape(1, 1, 1, 1, 4)
+    original = op.H(y)[0]
+    indices = op._fft_idx.clone()
+    indices[..., 1] = indices[..., 0]
+    if update == 'functional':
+        actual = torch.func.functional_call(op.H, {'_operator._fft_idx': indices}, (y,))[0]
+        torch.testing.assert_close(op.H(y)[0], original)
+    else:
+        if update == 'replace':
+            op._fft_idx = indices
+        else:
+            op._fft_idx.copy_(indices)
+        actual = op.H(y)[0]
+    torch.testing.assert_close(actual.flatten(), torch.tensor([0.0, 10.0, 11.0, 13.0]))
+
+
+def test_cartesian_inference_indices_after_adjoint() -> None:
+    """Inference-mode buffers without mutation counters still sum duplicate samples."""
+    with torch.inference_mode():
+        trajectory = KTrajectory(
+            kz=torch.zeros(1, 1, 1, 1, 1),
+            ky=torch.zeros(1, 1, 1, 1, 1),
+            kx=torch.tensor([-1.0, -2.0, 0.0, 1.0]).reshape(1, 1, 1, 1, 4),
+        )
+        op = CartesianSamplingOp(SpatialDimension(1, 1, 4), trajectory)
+        y = torch.tensor([3.0, 7.0, 11.0, 13.0]).reshape(1, 1, 1, 1, 4)
+        op.H(y)
+        op._fft_idx[..., 1] = op._fft_idx[..., 0]
+        torch.testing.assert_close(op.H(y)[0].flatten(), torch.tensor([0.0, 10.0, 11.0, 13.0]))
+
+
 @pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
 @pytest.mark.parametrize(
     'coordinates',

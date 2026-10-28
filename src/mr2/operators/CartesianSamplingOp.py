@@ -141,15 +141,10 @@ class CartesianSamplingOp(LinearOperator):
             or traj.shape[-3:] != sorted_grid_shape.zyx
             or self._inside_encoding_matrix_idx is not None
         )
-        self._has_repeated_indices: bool | None = None
-        self.register_load_state_dict_post_hook(self._reset_index_cache)
+        self._index_cache: tuple[torch.Tensor, int, bool] | None = None
 
         self._trajectory_shape = traj.shape
         self._sorted_grid_shape = sorted_grid_shape
-
-    def _reset_index_cache(self, _module: torch.nn.Module, _incompatible_keys: object) -> None:
-        """Reset derived index information after registered buffers are loaded."""
-        self._has_repeated_indices = None
 
     def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor,]:
         """Forward operator which selects acquired k-space data from k-space.
@@ -224,16 +219,23 @@ class CartesianSamplingOp(LinearOperator):
         if self._inside_encoding_matrix is not None:
             y_kflat = y_kflat.masked_fill(~self._inside_encoding_matrix, 0)
 
-        # Non-accumulating scatter is faster on CPU. Check once, without adding
-        # a large sorting allocation when constructing an operator on CUDA.
-        if y.is_cpu and self._has_repeated_indices is None:
-            self._has_repeated_indices = bool(torch.any(torch.diff(self._fft_idx.sort().values) == 0))
+        # Cache the cheaper CPU scatter choice against both buffer identity and mutation.
+        # CUDA and inference tensors use accumulation without a sorting allocation.
+        accumulate = True
+        if y.is_cpu and not self._fft_idx.is_inference():
+            cached = self._index_cache
+            version = self._fft_idx._version
+            if cached is None or cached[0] is not self._fft_idx or cached[1] != version:
+                repeated = bool(torch.any(torch.diff(self._fft_idx.sort().values) == 0))
+                cached = self._fft_idx, version, repeated
+                self._index_cache = cached
+            accumulate = cached[2]
 
         y_scattered = self._broadcast_and_scatter_along_last_dim(
             y_kflat,
             self._sorted_grid_shape.z * self._sorted_grid_shape.y * self._sorted_grid_shape.x,
             self._fft_idx,
-            accumulate=self._has_repeated_indices is not False,
+            accumulate=accumulate,
         )
 
         # reshape to  ..., other, coils, k2_enc, k1_enc, k0_enc
