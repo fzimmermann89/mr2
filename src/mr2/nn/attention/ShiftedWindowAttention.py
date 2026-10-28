@@ -1,7 +1,6 @@
 """Shifted Window Attention."""
 
 import warnings
-from itertools import product
 from types import EllipsisType
 
 import torch
@@ -109,9 +108,10 @@ class ShiftedWindowAttention(Module):
         spatial_shape = x.shape[-self.n_dim - 1 : -1]
         spatial_dims = tuple(range(-self.n_dim - 1, -1))
         padding = [-size % self.window_size for size in spatial_shape]
-        # Zero-pad to a multiple of the window size. Padded tokens are masked as keys below.
-        pad = [p for size in reversed(padding) for p in (0, size)]
-        x_padded = torch.nn.functional.pad(x, (0, 0, *pad)) if any(padding) else x
+        x_padded = x
+        for dim, size, n_pad in zip(spatial_dims, spatial_shape, padding, strict=True):
+            if n_pad:
+                x_padded = x_padded.index_select(dim, torch.arange(size + n_pad, device=x.device) % size)
         padded_shape = x_padded.shape[-self.n_dim - 1 : -1]
         apply_shift = self.shifted and all(size > self.window_size for size in padded_shape)
         shift = self.window_size // 2
@@ -129,53 +129,21 @@ class ShiftedWindowAttention(Module):
             qkv=3,
         )
         bias = rearrange(self.relative_position_bias_table[self.rel_position_index], 'wd1 wd2 heads -> 1 heads wd1 wd2')
-        if apply_shift or any(padding):
-            # Tokens may only attend to non-padded tokens of the same region within their window.
-            # Regions separate tokens that were wrapped around by the cyclic shift.
+        if apply_shift:
             region_mask = torch.zeros(padded_shape, device=x.device, dtype=torch.int64)
-            valid_mask = torch.ones(padded_shape, device=x.device, dtype=torch.bool)
-            for dim, (size, n_pad) in enumerate(zip(padded_shape, padding, strict=True)):
+            for dim, size in enumerate(padded_shape):
                 coordinate = torch.arange(size, device=x.device)
+                region = (coordinate >= size - self.window_size).to(torch.int64)
+                region += (coordinate >= size - shift).to(torch.int64)
                 shape = [1] * self.n_dim
                 shape[dim] = size
-                valid_mask = valid_mask & (coordinate < size - n_pad).reshape(shape)
-                if apply_shift:
-                    region = (coordinate >= size - self.window_size).to(torch.int64)
-                    region += (coordinate >= size - shift).to(torch.int64)
-                    region_mask += region.reshape(shape) * 3**dim
-            if apply_shift:
-                valid_mask = torch.roll(valid_mask, (-shift,) * self.n_dim, dims=tuple(range(self.n_dim)))
-            windowed_region, windowed_valid = (
-                sliding_window(
-                    mask, window_shape=self.window_size, stride=self.window_size, dim=range(self.n_dim)
-                ).flatten(-self.n_dim)
-                for mask in (region_mask, valid_mask)
-            )
-            if apply_shift:
-                allowed = (windowed_region[..., :, None] == windowed_region[..., None, :]) & windowed_valid[
-                    ..., None, :
-                ]
-                # Padded queries are cropped; leave their rows unmasked to keep backward finite.
-                allowed = allowed | ~windowed_valid[..., :, None]
-                bias = torch.where(allowed[..., None, None, :, :], bias, float('-inf'))
-                attention = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=bias)
-            else:
-                # Interior windows and windows on the same padded edges share a validity pattern.
-                # Keep their bias broadcast across the grid instead of allocating one per window.
-                groups = [
-                    (slice(0, -1), slice(-1, None)) if n_pad and size > self.window_size else (slice(None),)
-                    for size, n_pad in zip(padded_shape, padding, strict=True)
-                ]
-                attention = torch.empty_like(q)
-                for group in product(*groups):
-                    valid = windowed_valid[tuple(part.start or 0 for part in group)]
-                    allowed = valid[None, :] | ~valid[:, None]
-                    group_bias = torch.where(allowed, bias, float('-inf'))
-                    attention[group] = torch.nn.functional.scaled_dot_product_attention(
-                        q[group], k[group], v[group], attn_mask=group_bias
-                    )
-        else:
-            attention = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=bias)
+                region_mask += region.reshape(shape) * 3**dim
+            windowed_mask = sliding_window(
+                region_mask, window_shape=self.window_size, stride=self.window_size, dim=range(self.n_dim)
+            ).flatten(-self.n_dim)
+            allowed = windowed_mask[..., :, None] == windowed_mask[..., None, :]
+            bias = torch.where(allowed[..., None, None, :, :], bias, float('-inf'))
+        attention = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=bias)
         attention = rearrange(attention, '... head sequence channels->... sequence (head channels)')
         attention = attention.unflatten(-2, windowed.shape[-self.n_dim - 1 : -1])
         # The window-grid axes precede batch; interleave only grid and within-window axes.

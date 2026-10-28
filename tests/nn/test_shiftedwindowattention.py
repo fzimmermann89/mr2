@@ -1,7 +1,6 @@
 """Tests for ShiftedWindowAttention module."""
 
 from collections.abc import Sequence
-from unittest.mock import patch
 
 import pytest
 import torch
@@ -80,11 +79,14 @@ def test_shifted_window_attention_single_window_dimension() -> None:
 def shifted_window_attention_reference(swin: ShiftedWindowAttention, x: torch.Tensor) -> torch.Tensor:
     """Brute-force (shifted) window attention over all tokens with an explicit window mask.
 
-    Windows tile the unpadded input, starting at the origin. If shifted, the window boundaries are offset by
+    Windows tile the circularly padded input, starting at the origin. If shifted, the window boundaries are offset by
     `window_size // 2` without wrapping around, as in the Swin Transformer.
     """
     window_size, n_dim = swin.window_size, swin.n_dim
     spatial_shape = x.shape[2:]
+    padded_shape = [-(-s // window_size) * window_size for s in spatial_shape]
+    for dim, (size, target) in enumerate(zip(spatial_shape, padded_shape, strict=True), start=2):
+        x = x.index_select(dim, torch.arange(target, device=x.device) % size)
     query, key, value = rearrange(
         swin.to_qkv(x.moveaxis(1, -1).flatten(1, -2)),
         'batch sequence (qkv heads channels) -> qkv batch heads sequence channels',
@@ -92,9 +94,8 @@ def shifted_window_attention_reference(swin: ShiftedWindowAttention, x: torch.Te
         heads=swin.n_heads,
     )
     coords = torch.stack(
-        torch.meshgrid(*[torch.arange(s, device=x.device) for s in spatial_shape], indexing='ij'), -1
+        torch.meshgrid(*[torch.arange(s, device=x.device) for s in padded_shape], indexing='ij'), -1
     ).flatten(0, -2)
-    padded_shape = [-(-s // window_size) * window_size for s in spatial_shape]
     shifted = swin.shifted and all(s > window_size for s in padded_shape)
     offset = window_size - window_size // 2 if shifted else 0
     window = (coords + offset) // window_size
@@ -105,7 +106,8 @@ def shifted_window_attention_reference(swin: ShiftedWindowAttention, x: torch.Te
     bias = bias.masked_fill(~same_window, float('-inf'))
     out = torch.nn.functional.scaled_dot_product_attention(query, key, value, attn_mask=bias)
     out = swin.to_out(rearrange(out, 'batch heads sequence channels -> batch sequence (heads channels)'))
-    return out.unflatten(1, spatial_shape).moveaxis(-1, 1)
+    out = out.unflatten(1, padded_shape).moveaxis(-1, 1)
+    return out[(slice(None), slice(None), *(slice(0, s) for s in spatial_shape))]
 
 
 @pytest.mark.parametrize(
@@ -148,7 +150,7 @@ def test_shifted_window_attention_reference(
 @pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
 @pytest.mark.parametrize('dtype', [torch.float32, torch.float16])
 def test_shifted_window_attention_padded_backward(shifted: bool, device: str, dtype: torch.dtype) -> None:
-    """Padded queries must not introduce non-finite gradients into valid tokens or parameters."""
+    """Circularly padded inputs produce finite outputs and gradients."""
     rng = RandomGenerator(13)
     x = rng.float32_tensor((2, 4, 5, 9)).to(device=device, dtype=dtype).requires_grad_(True)
     swin = ShiftedWindowAttention(2, 4, 4, 2, window_size=4, shifted=shifted).to(device=device, dtype=dtype)
@@ -185,16 +187,3 @@ def test_shifted_window_attention_large_scores(device: str) -> None:
     for parameter in swin.parameters():
         assert parameter.grad is not None
         assert torch.isfinite(parameter.grad).all()
-
-
-@torch.no_grad()
-def test_unshifted_padding_bias_memory() -> None:
-    """Padding bias stays bounded by one window per head, independent of the window grid."""
-    swin = ShiftedWindowAttention(3, 4, 4, 2, window_size=4, shifted=False)
-    x = RandomGenerator(13).float32_tensor((1, 4, 9, 10, 11))
-    sdpa = torch.nn.functional.scaled_dot_product_attention
-    with patch('torch.nn.functional.scaled_dot_product_attention', wraps=sdpa) as attention:
-        output = swin(x)
-    for call in attention.call_args_list:
-        assert call.kwargs['attn_mask'].numel() <= swin.n_heads * swin.window_size ** (2 * swin.n_dim)
-    torch.testing.assert_close(output, shifted_window_attention_reference(swin, x))

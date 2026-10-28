@@ -47,9 +47,10 @@ def test_lewin_periodic_modulator(shape: tuple[int, ...], window_size: int, shif
     modulator: torch.Tensor = block.modulator
     normalized = block.norm1(x)
     for dim, size in enumerate(shape, start=1):
-        positions = torch.arange(size)
+        positions = torch.arange(((size + window_size - 1) // window_size) * window_size)
         modulator = modulator.index_select(dim, positions % window_size)
-    attended = x + block.attn(normalized + modulator)
+        normalized = normalized.index_select(dim + 1, positions % size)
+    attended = x + block.attn(normalized + modulator)[tuple(slice(0, size) for size in x.shape)]
     expected = attended + block.ff(block.norm2(attended))
     actual = block(x)
     torch.testing.assert_close(actual, expected, rtol=0, atol=0)

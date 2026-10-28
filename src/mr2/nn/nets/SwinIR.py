@@ -207,7 +207,7 @@ class SwinIR(CondMixin, Module):
         n_heads
             The number of attention heads.
         window_size
-            The size of the attention window. Partial windows are zero-padded and padded keys are masked.
+            The size of the attention window. Partial windows are padded circularly.
         n_blocks
             The number of residual blocks.
         n_attn_per_block
