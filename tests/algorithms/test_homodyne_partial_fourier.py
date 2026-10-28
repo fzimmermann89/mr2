@@ -19,8 +19,9 @@ def test_homodyne_ramp(size: int, side: str) -> None:
     (kspace,) = fft(image)
     mask = torch.arange(size) >= 4 if side == 'high' else torch.arange(size) < size - 4
     measured = torch.where(mask, kspace, torch.nan)
-    corrected = homodyne(measured, mask, (0,), -1)
-    restored = homodyne(measured, mask, (0,), 0, restore_phase=True)
+    completed = homodyne(measured, mask, (0,), -1)
+    (restored,) = fft.H(completed)
+    corrected = (phase.conj() * restored).real
     torch.testing.assert_close(corrected, amplitude)
     torch.testing.assert_close(restored, image)
     assert corrected.min() < 0
@@ -40,7 +41,8 @@ def test_homodyne_smooth_phase(size: int, axis: int, side: str) -> None:
     support = torch.arange(size) >= size // 4 if side == 'high' else torch.arange(size) < size - size // 4
     mask = support[:, None] if axis == 0 else support[None, :]
     measured = torch.where(mask, kspace, 0)
-    restored = homodyne(measured, mask, (0, -1), axis, restore_phase=True)
+    completed = homodyne(measured, mask, (0, -1), axis)
+    (restored,) = fft.H(completed)
     (zero_fill,) = fft.H(measured)
     assert torch.linalg.vector_norm(restored - image) < 0.7 * torch.linalg.vector_norm(zero_fill - image)
     assert restored.dtype == image.dtype
@@ -49,17 +51,14 @@ def test_homodyne_smooth_phase(size: int, axis: int, side: str) -> None:
 def test_homodyne_full_and_batched() -> None:
     """Full sampling has unit scale, while partial sampling preserves batch/device conventions."""
     kspace = torch.ones(2, 3, 16, dtype=torch.complex64)
-    fft = FastFourierOp((-1,))
-    (image,) = fft.H(kspace)
     full = torch.tensor(True)
-    torch.testing.assert_close(homodyne(kspace, full, (-1,), -1), image.abs())
-    torch.testing.assert_close(homodyne(kspace, full, (-1,), -1, restore_phase=True), image)
+    assert torch.equal(homodyne(kspace, full, (-1,), -1), kspace)
     mask = torch.arange(16) >= 4
     batched = homodyne(kspace, mask, (-1,), -1)
     single = homodyne(kspace[0, 0], mask, (0,), 0)
     torch.testing.assert_close(batched, single.expand_as(batched))
     assert batched.device == kspace.device
-    assert batched.dtype == kspace.real.dtype
+    assert batched.dtype == kspace.dtype
 
 
 def test_homodyne_linear_transition() -> None:
@@ -72,20 +71,19 @@ def test_homodyne_linear_transition() -> None:
     phase = torch.exp(1j * low_resolution.angle())
     weight = kspace.real.new_tensor([1, 0, 0, 0.5, 1, 1.5, 2, 2])
     (weighted,) = fft.H(kspace * weight)
-    expected = (phase.conj() * weighted).real
+    (expected,) = fft(phase * (phase.conj() * weighted).real)
     torch.testing.assert_close(homodyne(kspace, mask, (0,), 0), expected)
 
 
 @pytest.mark.cuda
 def test_homodyne_cuda() -> None:
-    """CUDA phase correction matches CPU for signed real and phase-restored complex output."""
+    """CUDA homodyne completion matches CPU and preserves dtype/device."""
     kspace = torch.tensor([0, 0, 2j, 1, 5, 1j, 2, -1j], dtype=torch.complex64)
     mask = torch.arange(8) >= 2
     data = kspace.cuda()
     acquired = mask.cuda()
-    for restore_phase in (False, True):
-        expected = homodyne(kspace, mask, (0,), 0, restore_phase=restore_phase)
-        actual = homodyne(data, acquired, (0,), 0, restore_phase=restore_phase)
-        torch.testing.assert_close(actual.cpu(), expected)
-        assert actual.device == data.device
-        assert actual.dtype == expected.dtype
+    expected = homodyne(kspace, mask, (0,), 0)
+    actual = homodyne(data, acquired, (0,), 0)
+    torch.testing.assert_close(actual.cpu(), expected)
+    assert actual.device == data.device
+    assert actual.dtype == expected.dtype

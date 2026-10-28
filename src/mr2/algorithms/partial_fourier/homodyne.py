@@ -14,15 +14,13 @@ def homodyne(
     acquired_mask: torch.Tensor,
     dim: Sequence[int],
     partial_fourier_dim: int,
-    *,
-    restore_phase: bool = False,
 ) -> torch.Tensor:
-    r"""Reconstruct an image using homodyne ramp weighting and phase correction.
+    r"""Complete k-space using homodyne ramp weighting and phase correction.
 
-    Returns :math:`\operatorname{Re}(\overline{p} F^H(w k))`, where :math:`p`
-    is the unit phase estimated from the same tapered symmetric center as
-    `~mr2.algorithms.partial_fourier.pocs`. With ``restore_phase=True``, multiply
-    this signed real image by :math:`p`. For partial sampling, neither output takes a magnitude.
+    Forms the signed image :math:`a = \operatorname{Re}(\overline{p} F^H(w k))`,
+    then returns :math:`F(p a)`. The unit phase :math:`p` uses the same tapered
+    symmetric center as `~mr2.algorithms.partial_fourier.pocs`. The real amplitude
+    may be negative; no magnitude or nonnegative constraint is applied.
 
     Parameters
     ----------
@@ -42,16 +40,13 @@ def homodyne(
     partial_fourier_dim
         Partial Fourier axis, including readout for partial echo. Positive and
         negative indices, either acquisition side and odd/even grids are supported.
-    restore_phase
-        If false, return a signed phase-corrected real image with the input's
-        real dtype. If true, return a phase-restored complex image with the input
-        dtype. This image does not enforce acquired k-space consistency.
 
     Returns
     -------
-        Image on the full encoded grid, with the input shape and device.
-        Fully sampled data uses unit weights and its full-resolution image phase:
-        the real output is its amplitude and phase restoration returns its inverse FFT.
+        Completed k-space on the full encoded grid, with the input shape, dtype
+        and device. Fully sampled data is returned unchanged. Unlike POCS,
+        homodyne does not enforce exact acquired-data consistency. Use
+        ``FastFourierOp(dim).H`` to obtain the phase-restored complex image.
 
     Notes
     -----
@@ -72,8 +67,7 @@ def homodyne(
     mask = torch.broadcast_to(acquired_mask, kspace.shape)
     fourier_op = FastFourierOp(dim)
     if mask.all():
-        (image,) = fourier_op.H(kspace)
-        return image if restore_phase else image.abs()
+        return kspace.clone()
     center, radius, side = _partial_fourier_center(mask, axis, kspace.real.dtype)
     measured = torch.where(mask, kspace, 0)
     (low_resolution,) = fourier_op.H(measured * center)
@@ -87,4 +81,5 @@ def homodyne(
     shape[axis] = size
     (weighted_image,) = fourier_op.H(measured * weight.reshape(shape))
     corrected = (phase.conj() * weighted_image).real
-    return phase * corrected if restore_phase else corrected
+    (completed,) = fourier_op(phase * corrected)
+    return completed

@@ -664,6 +664,116 @@ class KData(Dataclass):
 
         return type(self)(header, cropped_data, cropped_traj)
 
+    def partial_fourier(
+        self: Self,
+        dim: int = -2,
+        method: Literal['pocs', 'homodyne'] = 'pocs',
+        *,
+        n_iterations: int = 10,
+    ) -> Self:
+        """Complete one Cartesian partial Fourier direction and return a copy.
+
+        Acquisition support is derived from the trajectory, including acquired
+        zeros. Both methods return k-space on the full encoded Cartesian grid.
+        POCS restores every acquired value exactly; homodyne applies ramp
+        weighting and signed phase correction without exact data consistency.
+
+        Parameters
+        ----------
+        dim
+            Partial Fourier data axis, one of the last three dimensions
+            ``(k2, k1, k0)``. Positive indices are also accepted.
+        method
+            ``'pocs'`` for iterative phase projection or ``'homodyne'`` for
+            ramp-weighted phase correction.
+        n_iterations
+            Number of POCS iterations; unused for homodyne.
+
+        Returns
+        -------
+            Copy with completed data, a sorted Cartesian trajectory and updated
+            encoding indices. Other acquisition metadata for synthesized
+            lines is copied from the nearest acquired line; these values do not
+            describe new physical acquisitions. Input data and header are unchanged.
+
+        Notes
+        -----
+        Supports separable integer Cartesian coordinates aligned with
+        ``(k2, k1, k0)``, shared across batches, with no repeated coordinates.
+        Missing samples must form one edge interval along ``dim``. All other
+        axes must cover their encoded grid. Phase must be sufficiently smooth;
+        no coil combination or oversampling removal is performed.
+        """
+        from mr2.algorithms.partial_fourier import homodyne, pocs
+        from mr2.data.enums import TrajectoryType
+        from mr2.operators.CartesianSamplingOp import CartesianSamplingOp
+
+        data = self.data.expand(torch.broadcast_shapes(self.data.shape, self.traj.shape))
+        axis = normalize_index(data.ndim, dim) - data.ndim
+        if axis not in (-3, -2, -1):
+            raise ValueError('dim must select one of the last three KData dimensions.')
+        if method not in ('pocs', 'homodyne'):
+            raise ValueError("method must be 'pocs' or 'homodyne'.")
+
+        # Align metadata with the sorted grid, extending edge metadata to missing lines.
+        indices = []
+        coordinates = []
+        for d, coord, size in zip(
+            (-3, -2, -1), (self.traj.kz, self.traj.ky, self.traj.kx), self.header.encoding_matrix.zyx, strict=True
+        ):
+            if coord.numel() != coord.shape[d] or coord.shape[d] != data.shape[d]:
+                raise ValueError('Trajectory must be separable and aligned with the Cartesian data axes.')
+            values = coord.reshape(-1)
+            if not torch.allclose(values, values.round(), atol=self.traj.grid_detection_tolerance, rtol=0):
+                raise ValueError('Trajectory must lie on the integer Cartesian grid.')
+            values = values.round()
+            grid = torch.arange(size, device=coord.device, dtype=coord.dtype) - size // 2
+            if values.min() < grid[0] or values.max() > grid[-1]:
+                raise ValueError('Trajectory lies outside the encoding matrix.')
+            sorted_values, order = values.sort()
+            if (sorted_values.diff() == 0).any():
+                raise ValueError('Repeated Cartesian coordinates are unsupported.')
+            source = torch.searchsorted(sorted_values, grid).clamp(max=values.numel() - 1)
+            indices.append(order[source])
+            shape = [1] * data.ndim
+            shape[d] = size
+            coordinates.append(grid.reshape(shape))
+
+        sampling = CartesianSamplingOp(self.header.encoding_matrix, self.traj)
+        (grid_data,) = sampling.H(data)
+        (mask,) = sampling.H(torch.ones_like(data.real[..., :1, :, :, :]))
+        mask = mask.bool()
+        if method == 'pocs':
+            completed = pocs(grid_data, mask, (-3, -2, -1), axis, n_iterations=n_iterations)
+        else:
+            completed = homodyne(grid_data, mask, (-3, -2, -1), axis)
+        if completed.shape[-3:] != self.header.encoding_matrix.zyx:
+            raise ValueError('Trajectory must cover every non-partial encoded Cartesian axis.')
+
+        header = copy.deepcopy(self.header)
+
+        def extend_metadata(field: object) -> object:
+            if isinstance(field, torch.Tensor | Rotation):
+                for d, index in zip((-3, -2, -1), indices, strict=True):
+                    if field.shape[d] > 1:
+                        indexer: list[slice | torch.Tensor] = [slice(None)] * len(field.shape)
+                        indexer[d] = index.to(field.device)
+                        field = field[tuple(indexer)]
+            return field
+
+        header.acq_info.apply_(extend_metadata)
+        header.trajectory_type = TrajectoryType.CARTESIAN
+        for d, label in ((-3, 'k2'), (-2, 'k1')):
+            size = completed.shape[d]
+            shape = [1] * data.ndim
+            shape[d] = size
+            setattr(header.acq_info.idx, label, torch.arange(size, device=data.device).reshape(shape))
+        trajectory = KTrajectory(coordinates[0], coordinates[1], coordinates[2])
+        result = type(self)(header, completed, trajectory)
+        # Keep measured values exact rather than reducing nearly repeated data axes.
+        result.data = completed
+        return result
+
     def select_other_subset(
         self: Self,
         subset_idx: torch.Tensor,
