@@ -46,8 +46,8 @@ class GrappaReconstruction(Reconstruction):
             Cartesian acquisition defining the encoding grid and sampling pattern.
             All batches must share the same pattern. Samples must not repeat.
         acs
-            Fully sampled calibration tensor ``(..., coils, kz, ky, kx)``, e.g.
-            ``kdata.acs(size)``. Must use the same coil basis and frequency spacing
+            Fully sampled Cartesian calibration tensor ``(..., coils, kz, ky, kx)``.
+            Must use the same coil basis and frequency spacing
             as ``kdata``; its batch dimensions broadcast to the acquired data.
         kernel_size
             Positive odd neighborhood widths in z, y, x. Use a z width of one
@@ -81,7 +81,7 @@ class GrappaReconstruction(Reconstruction):
         Parameters
         ----------
         acs
-            Fully sampled ACS, shape ``(..., coils, kz, ky, kx)``, as returned by ``KData.acs()``.
+            Fully sampled Cartesian ACS, shape ``(..., coils, kz, ky, kx)``.
             Leading batch dimensions are calibrated independently.
         source_pattern
             Boolean 3D neighborhood with positive odd widths. True selects an
@@ -194,8 +194,9 @@ class GrappaReconstruction(Reconstruction):
         missing_indices = (~acquired).flatten().nonzero().flatten()
         padded_shape = tuple(n + k - 1 for n, k in zip(acquired.shape, self.kernel_size, strict=True))
         neighborhoods = sliding_window(pad_or_crop(acquired, padded_shape), self.kernel_size)
-        neighborhoods = neighborhoods.reshape(-1, prod(self.kernel_size))
-        patterns, assignments = torch.unique(neighborhoods[missing_indices], dim=0, return_inverse=True)
+        neighborhoods = neighborhoods[torch.unravel_index(missing_indices, acquired.shape)]
+        neighborhoods = neighborhoods.reshape(missing_indices.numel(), prod(self.kernel_size))
+        patterns, assignments = torch.unique(neighborhoods, dim=0, return_inverse=True)
         kernels = [
             self.calibrate(self.acs, pattern.reshape(self.kernel_size), regularization=self.regularization)
             for pattern in patterns

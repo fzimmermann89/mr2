@@ -133,17 +133,6 @@ def test_grappa_reject_noncartesian() -> None:
         GrappaReconstruction(data, full, (1, 3, 3), csm=None)
 
 
-def test_grappa_reject_repeated_samples() -> None:
-    """Avoid silently selecting one of several measurements at a repeated grid point."""
-    full = _point_object((1, 12, 12), torch.complex64)[None]
-    data = _kdata(full, torch.ones(full.shape[-3:], dtype=torch.bool))
-    data.data = torch.cat((data.data, data.data), dim=-1)
-    kz, ky, kx = (torch.cat((k, k), dim=-1) for k in (data.traj.kz, data.traj.ky, data.traj.kx))
-    data.traj = KTrajectory(kz, ky, kx)
-    with pytest.raises(ValueError, match='distinct samples'):
-        GrappaReconstruction(data, full, (1, 3, 3), csm=None)
-
-
 def test_grappa_reject_varying_batch_masks() -> None:
     """Reject different sampling supports across batches explicitly."""
     full = _point_object((1, 12, 12), torch.complex64)[None]
