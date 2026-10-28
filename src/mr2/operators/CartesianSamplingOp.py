@@ -174,7 +174,7 @@ class CartesianSamplingOp(LinearOperator):
         idx = unsqueeze_left(self._fft_idx, x_kflat.ndim - self._fft_idx.ndim)
         x_indexed = torch.take_along_dim(x_kflat, idx, dim=-1)
         if self._padding_mask is not None:
-            x_indexed = x_indexed.masked_fill(self._padding_mask, 0)
+            x_indexed.masked_fill_(self._padding_mask, 0)
         if self._inside_encoding_matrix_idx is not None:
             x_indexed = self._broadcast_and_scatter_along_last_dim(
                 x_indexed,
@@ -212,7 +212,7 @@ class CartesianSamplingOp(LinearOperator):
             idx = unsqueeze_left(self._inside_encoding_matrix_idx, y_kflat.ndim - self._inside_encoding_matrix_idx.ndim)
             y_kflat = torch.take_along_dim(y_kflat, idx, dim=-1)
         if self._padding_mask is not None:
-            y_kflat = y_kflat.masked_fill(self._padding_mask, 0)
+            y_kflat.masked_fill_(self._padding_mask, 0)
 
         y_scattered = self._broadcast_and_scatter_along_last_dim(
             y_kflat,

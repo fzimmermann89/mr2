@@ -81,8 +81,6 @@ class PCACompressionOp(LinearOperator):
             directly calling this method. See this PyTorch `discussion <https://discuss.pytorch.org/t/is-model-forward-x-the-same-as-model-call-x/33460/3>`_.
         """
         try:
-            if torch.broadcast_shapes(self._compression_matrix.shape[:-2], data.shape[:-1]) != data.shape[:-1]:
-                raise ValueError('PCA input must have fully expanded batch dimensions.')
             result = (self._compression_matrix @ data.unsqueeze(-1)).squeeze(-1)
         except RuntimeError as e:
             raise RuntimeError(
@@ -90,6 +88,8 @@ class PCACompressionOp(LinearOperator):
                 f'Matrix {tuple(self._compression_matrix.shape)} on {self._compression_matrix.device} '
                 f'cannot be multiplied with Data {tuple(data.shape)} on {data.device}.'
             ) from e
+        if result.shape[:-1] != data.shape[:-1]:
+            raise ValueError('PCA input must have fully expanded batch dimensions.')
         return (result,)
 
     def adjoint(self, data: torch.Tensor) -> tuple[torch.Tensor,]:
@@ -110,8 +110,6 @@ class PCACompressionOp(LinearOperator):
             Expanded data, with shape `(*other, joint_dim, compression_dim)`.
         """
         try:
-            if torch.broadcast_shapes(self._compression_matrix.shape[:-2], data.shape[:-1]) != data.shape[:-1]:
-                raise ValueError('PCA adjoint input must have fully expanded batch dimensions.')
             result = (self._compression_matrix.mH @ data.unsqueeze(-1)).squeeze(-1)
         except RuntimeError as e:
             raise RuntimeError(
@@ -119,6 +117,8 @@ class PCACompressionOp(LinearOperator):
                 f'Matrix^H {tuple(self._compression_matrix.mH.shape)} on {self._compression_matrix.device} '
                 f'cannot be multiplied with Data {tuple(data.shape)} on {data.device}.'
             ) from e
+        if result.shape[:-1] != data.shape[:-1]:
+            raise ValueError('PCA adjoint input must have fully expanded batch dimensions.')
         return (result,)
 
     @property
