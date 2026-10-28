@@ -108,6 +108,16 @@ def test_wavelet_op_mismatch_dim_domain_shape() -> None:
         WaveletOp(domain_shape=(10, 20), dim=(-2,))
 
 
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('dim', [(-1,), (-2, -1), (-3, -2, -1)])
+def test_wavelet_op_input_shape_mismatch(dim: tuple, device: str) -> None:
+    """Configured coefficient shapes require matching input dimensions."""
+    op = WaveletOp((16,) * len(dim), dim=dim, wavelet_name='db4')
+    shape = (16,) * (len(dim) - 1) + (12,)
+    with pytest.raises(ValueError, match='domain_shape'):
+        op(torch.ones(shape, device=device))
+
+
 def test_wavelet_op_error_for_odd_domain_shape() -> None:
     with pytest.raises(NotImplementedError, match='ptwt only supports wavelet transforms for tensors with even'):
         WaveletOp(domain_shape=(11, 20), dim=(-2, -1))

@@ -66,6 +66,8 @@ def test_averaging_adjoint_invalid_groups(
     group: list[int] | tuple[int, ...] | slice | torch.Tensor, device: str
 ) -> None:
     """Empty groups and repeated indices cannot silently produce an invalid adjoint."""
+    if isinstance(group, torch.Tensor):
+        group = group.to(device)
     op = AveragingOp(-1, [group], domain_size=2).to(device)
     with pytest.raises(ValueError, match='nonempty groups without repeated indices'):
         op.H(torch.ones(1, device=device))
@@ -91,6 +93,8 @@ def test_averaging_adjoint_sequence_group(
     group: tuple[int, ...] | list[bool] | torch.Tensor | slice, device: str
 ) -> None:
     """Sequence groups count the selected entries, including boolean masks."""
+    if isinstance(group, torch.Tensor):
+        group = group.to(device)
     op = AveragingOp(-1, [group], domain_size=3)
     x = torch.tensor([2.0, 3.0, 4.0], device=device)
     y = torch.tensor([3.0], device=device)

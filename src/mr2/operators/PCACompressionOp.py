@@ -123,8 +123,9 @@ class PCACompressionOp(LinearOperator):
         """Reject batch expansion before allocating the matrix product."""
         matrix_batch = self._compression_matrix.shape[:-2]
         data_batch = data.shape[:-1]
-        if len(matrix_batch) <= len(data_batch) and all(
-            m == 1 or m == d for m, d in zip(reversed(matrix_batch), reversed(data_batch), strict=False)
+        offset = len(data_batch) - len(matrix_batch)
+        if offset >= 0 and all(
+            size == 1 or size == data_batch[offset + axis] for axis, size in enumerate(matrix_batch)
         ):
             return
         # Let incompatible shapes raise RuntimeError through the existing error handler.

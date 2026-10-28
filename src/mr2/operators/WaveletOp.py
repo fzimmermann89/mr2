@@ -170,6 +170,8 @@ class WaveletOp(LinearOperator):
 
         # move axes where wavelets are calculated to the end
         x = x.moveaxis(dim, list(range(-len(self._dim), 0)))
+        if self._domain_shape is not None and x.shape[-len(dim):] != tuple(self._domain_shape):
+            raise ValueError('Input dimensions do not match domain_shape.')
         if (
             self._domain_shape is None
             and self._level is None
