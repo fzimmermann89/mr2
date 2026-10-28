@@ -396,6 +396,48 @@ def test_spatial_dimension_eq_tensor() -> None:
     assert torch.equal(comp, torch.tensor([False, True]))
 
 
+@pytest.mark.parametrize('component', ['z', 'y', 'x'])
+def test_spatial_dimension_ne_tensor(component: str) -> None:
+    """Tensor inequality is the elementwise complement of equality."""
+    original = SpatialDimension(*(torch.arange(3).reshape(3, 1) for _ in range(3)))
+    copy = original.clone()
+    equal = original == copy
+    unequal = original != copy
+    assert_type(equal, torch.Tensor)
+    assert_type(unequal, torch.Tensor)
+    assert torch.equal(equal, torch.ones(3, 1, dtype=torch.bool))
+    assert torch.equal(unequal, ~equal)
+    setattr(copy, component, torch.arange(2).reshape(1, 2))
+    assert torch.equal(original != copy, ~(original == copy))
+    assert (original != copy).shape == (3, 2)
+
+
+def test_spatial_dimension_ne_scalar() -> None:
+    """Scalar inequality returns a boolean and handles unrelated objects."""
+    original = SpatialDimension(1, 2, 3)
+    unequal = original != original.clone()
+    assert_type(unequal, bool)
+    assert not unequal
+    assert original != SpatialDimension(1, 2, 4)
+    assert original != object()
+    assert original.__ne__(object()) is NotImplemented
+
+
+def test_spatial_dimension_eq_ne_mixed() -> None:
+    """Scalar and tensor comparisons return tensor masks in either order."""
+    scalar = SpatialDimension(1, 2, 3)
+    tensor = SpatialDimension(torch.tensor([0, 1]), torch.tensor([2]), torch.tensor([3]))
+    assert_type(scalar == tensor, torch.Tensor)
+    assert_type(tensor == scalar, torch.Tensor)
+    assert_type(scalar != tensor, torch.Tensor)
+    assert_type(tensor != scalar, torch.Tensor)
+    expected = torch.tensor([False, True])
+    torch.testing.assert_close(scalar == tensor, expected)
+    torch.testing.assert_close(tensor == scalar, expected)
+    torch.testing.assert_close(scalar != tensor, ~expected)
+    torch.testing.assert_close(tensor != scalar, ~expected)
+
+
 def test_spatial_dimension_comp_scalar() -> None:
     """Test equality of SpatialDimension."""
     assert SpatialDimension(1, 2, 3) > SpatialDimension(0, 0, 0)

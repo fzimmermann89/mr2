@@ -8,6 +8,7 @@ from mr2.data import KData, KTrajectory, SpatialDimension
 from mr2.data.enums import TrajType
 from mr2.data.traj_calculators import KTrajectoryCartesian
 from mr2.operators import FourierOp
+from mr2.operators.LinearOperatorMatrix import LinearOperatorMatrix
 from mr2.utils import RandomGenerator
 from typing_extensions import Unpack
 
@@ -79,6 +80,48 @@ class NufftTrajektory(KTrajectory):
         true_types = super()._traj_types(tolerance)
         modified = tuple(tuple(t & (~TrajType.ONGRID) for t in ts) for ts in true_types)
         return cast(tuple[tuple[TrajType, TrajType, TrajType], tuple[TrajType, TrajType, TrajType]], modified)
+
+
+@pytest.mark.parametrize('as_matrix', [False, True], ids=['fourier', 'matrix'])
+@pytest.mark.parametrize('trajectory_type', ['uniform', 'non-uniform'], ids=['cartesian', 'nufft'])
+@pytest.mark.parametrize(
+    ('device', 'dtype'),
+    [
+        ('cpu', torch.float64),
+        pytest.param('cuda', torch.float32, marks=pytest.mark.cuda),
+        pytest.param('cuda', torch.float64, marks=pytest.mark.cuda),
+    ],
+)
+def test_fourier_op_cached_gram_after_to(
+    as_matrix: bool, trajectory_type: str, device: str, dtype: torch.dtype
+) -> None:
+    """Rebuild Fourier and matrix grams after device or dtype conversion."""
+    fourier_op, image, _ = create_fourier_op_and_range_domain(
+        (1, 1, 1, 8, 8),
+        (1, 1, 1, 8, 8),
+        (1, 1, 1, 1, 8),
+        (1, 1, 1, 8, 1),
+        (1, 1, 1, 1, 1),
+        trajectory_type,
+        trajectory_type,
+        'zero',
+    )
+    operator = LinearOperatorMatrix([[fourier_op, 2 * fourier_op]]) if as_matrix else fourier_op
+    cached_gram = operator.gram
+    assert operator.gram is cached_gram
+    operator.to(device=device, dtype=dtype)
+    image = image.to(device=device, dtype=dtype.to_complex())
+    inputs = (image, image) if as_matrix else (image,)
+
+    actual = operator.gram(*inputs)
+    expected = (operator.H @ operator)(*inputs)
+    torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-5)
+    assert operator.gram is not cached_gram
+    assert operator.gram is operator.gram
+    assert all(buffer.device.type == device for buffer in operator.gram.buffers())
+    # Cartesian masks are always constructed in float32, regardless of the operator's dtype.
+    if trajectory_type == 'non-uniform':
+        assert all(buffer.dtype == dtype for buffer in operator.gram.buffers() if buffer.is_floating_point())
 
 
 @COMMON_MR_TRAJECTORIES
@@ -162,6 +205,59 @@ def test_fourier_op_gram(
     (expected,) = (fourier_op.H @ fourier_op)(img)
     (actual,) = fourier_op.gram(img)
     torch.testing.assert_close(actual, expected, rtol=1e-3, atol=1e-3)
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('encoding_offset', [0, 1])
+@pytest.mark.parametrize(
+    ('recon_shape', 'cartesian_axis'),
+    [
+        ((1, 1, 8), None),
+        ((1, 1, 9), None),
+        ((1, 8, 8), None),
+        ((1, 9, 9), None),
+        ((1, 8, 9), None),
+        ((1, 9, 8), None),
+        ((4, 6, 8), None),
+        ((5, 7, 9), None),
+        ((5, 6, 8), None),
+        ((4, 7, 8), None),
+        ((4, 6, 9), None),
+        ((5, 6, 9), 0),
+        ((5, 6, 9), 1),
+        ((5, 6, 9), 2),
+    ],
+)
+def test_fourier_op_gram_centering(
+    recon_shape: tuple[int, int, int], cartesian_axis: int | None, encoding_offset: int, device: str
+) -> None:
+    """Toeplitz Gram agrees with H @ F for odd, even and mixed axis sizes."""
+    rng = RandomGenerator(seed=0)
+    encoding_shape = tuple(size + encoding_offset if size > 1 else 1 for size in recon_shape)
+    sample_shape = [5 if size > 1 else 1 for size in recon_shape]
+    if cartesian_axis is not None:
+        sample_shape[cartesian_axis] = encoding_shape[cartesian_axis]
+    nonuniform_shape = [1 if axis == cartesian_axis else size for axis, size in enumerate(sample_shape)]
+    coordinates = []
+    for axis, size in enumerate(encoding_shape):
+        if size == 1:
+            coordinate = torch.zeros(1, 1, 1, 1, 1)
+        elif axis == cartesian_axis:
+            shape = [1] * 5
+            shape[axis + 2] = size
+            coordinate = (torch.arange(size, dtype=torch.float32) - size // 2).reshape(shape)
+        else:
+            coordinate = rng.float32_tensor((1, 1, *nonuniform_shape), low=-size / 2, high=size / 2)
+        coordinates.append(coordinate.to(device))
+
+    kz, ky, kx = coordinates
+    trajectory = KTrajectory(kz, ky, kx)
+    op = FourierOp(SpatialDimension(*recon_shape), SpatialDimension(*encoding_shape), trajectory).to(device)
+    x = rng.complex64_tensor((1, 2, *recon_shape)).to(device)
+    (expected,) = (op.H @ op)(x)
+    (actual,) = op.gram(x)
+
+    torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-4)
 
 
 def test_fourier_op_cartesian_sorting(ismrmrd_cart) -> None:

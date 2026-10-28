@@ -30,6 +30,19 @@ maximum_python_313 = pytest.mark.skipif(
 )
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Allow CPU CI to report CUDA tests as skipped instead of deselecting them."""
+    parser.addoption('--skip-cuda', action='store_true', help='Collect CUDA tests but skip their execution.')
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Keep CUDA placeholders in the CPU report until GPU results replace them."""
+    if config.getoption('--skip-cuda'):
+        for item in items:
+            if item.get_closest_marker('cuda'):
+                item.add_marker(pytest.mark.skipif(True, reason='CUDA results are reported separately'), append=False)
+
+
 def generate_random_encodingcounter_properties(rng: RandomGenerator) -> dict[str, Any]:
     return {
         'kspace_encode_step_1': rng.uint16(),

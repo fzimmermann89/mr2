@@ -118,6 +118,28 @@ def test_callback() -> None:
     assert callback_was_called
 
 
+@pytest.mark.cuda
+def test_cuda_backtracking_solution() -> None:
+    """Backtracking PGD recovers the soft-thresholded CUDA solution."""
+    data = torch.tensor([[-1 + 0.3j, -0.2j, 0.4, 1.5 - 0.5j]], device='cuda')
+    regularization_parameter = 0.25
+    f = 0.5 * L2NormSquared(target=data, divide_by_n=False)
+    g = regularization_parameter * L1NormViewAsReal(divide_by_n=False)
+    expected = torch.view_as_complex(torch.nn.functional.softshrink(torch.view_as_real(data), regularization_parameter))
+
+    (solution,) = pgd(
+        f=f,
+        g=g,
+        initial_value=torch.zeros_like(data),
+        stepsize=10.0,
+        backtrack_factor=0.5,
+        max_iterations=64,
+    )
+
+    assert solution.is_cuda
+    torch.testing.assert_close(solution, expected, atol=1e-4, rtol=1e-4)
+
+
 def test_callback_early_stop() -> None:
     """Check that when the callback function returns False the optimizer is stopped."""
     callback_check = 0
