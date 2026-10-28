@@ -226,6 +226,8 @@ class NonUniformFastFourierOp(LinearOperator, adjoint_as_backward=True):
                 raise ValueError('Only oversampling 1.25 and 2.0 are supported on CPU')
             elif x.device.type not in ('cuda', 'cpu'):
                 raise ValueError('Only CPU and CUDA are supported')
+            if not x.is_complex():
+                x = x.to(x.dtype.to_complex())
             # We rearrange x into (sep_dims, joint_dims, nufft_directions)
             sep_dims_zyx, permute_zyx, _, permute_210 = self._separate_joint_dimensions(x.ndim)
             unpermute_210 = torch.tensor(permute_210).argsort().tolist()
@@ -266,6 +268,8 @@ class NonUniformFastFourierOp(LinearOperator, adjoint_as_backward=True):
                 raise ValueError('Only oversampling 1.25 and 2.0 are supported on CPU')
             elif x.device.type not in ('cuda', 'cpu'):
                 raise ValueError('Only CPU and CUDA are supported')
+            if not x.is_complex():
+                x = x.to(x.dtype.to_complex())
             # We rearrange x into (sep_dims, joint_dims, nufft_directions)
             _, permute_zyx, sep_dims_210, permute_210 = self._separate_joint_dimensions(x.ndim)
             unpermute_zyx = torch.tensor(permute_zyx).argsort().tolist()

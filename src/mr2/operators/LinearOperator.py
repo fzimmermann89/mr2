@@ -36,12 +36,17 @@ class _AutogradWrapper(torch.autograd.Function):
         inputs: tuple[Callable[[torch.Tensor], torch.Tensor], Callable[[torch.Tensor], torch.Tensor], torch.Tensor],
         _output: torch.Tensor,
     ) -> None:
-        ctx.fw, ctx.bw, _ = inputs
+        ctx.fw, ctx.bw, x = inputs
+        ctx.input_is_complex = x.is_complex()
         return None
 
     @staticmethod
     def backward(ctx: Any, *grad_output: torch.Tensor) -> tuple[None, None, torch.Tensor]:  # noqa: ANN401
-        return None, None, _AutogradWrapper.apply(ctx.bw, ctx.fw, grad_output[0])
+        grad_input = _AutogradWrapper.apply(ctx.bw, ctx.fw, grad_output[0])
+        # A real input only receives the real part of the complex adjoint.
+        if not ctx.input_is_complex:
+            grad_input = grad_input.real
+        return None, None, grad_input
 
     @staticmethod
     def jvp(ctx: Any, *grad_inputs: Any) -> torch.Tensor:  # noqa: ANN401
