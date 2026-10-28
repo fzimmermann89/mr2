@@ -16,39 +16,26 @@ from mr2.operators import DensityCompensationOp, LinearOperator, SensitivityOp
 
 
 class ConvDecoderReconstruction(DirectReconstruction):
-    r"""Fit an untrained ConvDecoder prior to acquired complex k-space.
+    r"""Reconstruct MRI data with an untrained convolutional decoder.
 
-    Minimize :math:`\|A G_\theta(z)-y\|_2^2` over generator weights, with
-    :math:`A=FS` the existing Fourier/sampling and sensitivity operators. The
-    random latent :math:`z` stays fixed. Each call starts fresh generators and
-    Adam states; each spatial patch has its own weights. The number of entries
-    in `latent_shape` selects the generator dimensionality. Remaining image dimensions
-    (including leading batch dimensions) are fitted with separate generators.
-    No fitted network is retained and this reconstruction is not
-    differentiable through the optimization. Calls inside ``torch.no_grad()``
-    are supported; ``torch.inference_mode()`` must be disabled while fitting.
+    Fits generator weights :math:`\theta` by minimizing
+    :math:`\|A G_\theta(z)-y\|_2^2`, where :math:`A=FS` combines Fourier
+    sampling and coil sensitivities, :math:`y` is acquired complex k-space,
+    and :math:`z` is fixed random noise.
 
-    The `~mr2.nn.nets.ConvDecoder` variant uses nearest upsampling, 3-tap
-    convolutions, ReLU, stateless affine InstanceNorm, an additional block at
-    full resolution, and a linear 1-tap output. The authors' network uses BatchNorm
-    [DARESTANI2021]_. Two real channels represent one complex object; sensitivity
-    maps enter the forward model rather than generating separate coil images.
-    The paper describes both output formulations. This is not a reproduction
-    of all of its fitting and postprocessing choices.
+    Each call fits fresh `~mr2.nn.nets.ConvDecoder` networks with Adam.
+    `latent_shape` selects the spatial dimensions modeled jointly; remaining
+    dimensions use independent generators. Two real output channels form one
+    complex object image. Fitting uses adjoint RMS scaling and returns an
+    image in the input units. The callback and iteration budget control stopping.
 
-    Each acquisition batch entry is scaled by its adjoint image RMS during fitting,
-    and the returned image is restored to the input units. The adjoint is not
-    used as the network input.
-
-    The iteration budget and callback control stopping. A decreasing acquired
-    k-space loss does not protect against noise overfitting.
+    This variant uses InstanceNorm instead of the authors' BatchNorm
+    [DARESTANI2021]_. Optimization is not differentiable through the iterations.
 
     References
     ----------
     .. [DARESTANI2021] Darestani MZ, Heckel R (2021). Accelerated MRI with
-       Un-trained Neural Networks. IEEE Transactions on Computational Imaging,
-       7, 724-733. https://doi.org/10.1109/TCI.2021.3097596
-       Architecture and MRI formulations: https://arxiv.org/abs/2007.02471
+       Un-trained Neural Networks. https://doi.org/10.1109/TCI.2021.3097596
     """
 
     def __init__(
@@ -98,20 +85,14 @@ class ConvDecoderReconstruction(DirectReconstruction):
         n_levels
             Number of nearest-neighbor upsampling stages.
         latent_shape
-            Spatial shape of the fixed uniform random input; its length selects
-            the generator dimensionality. Two entries fit each
-            2D slice independently; three fit each volume with a 3D generator.
-            Further entries include leading acquisition axes, such as time, in
-            one dense ND generator. The singleton coil axis is excluded.
-            Must fit inside the corresponding output dimensions. The first upsampling
-            stage must contain more than one pixel for InstanceNorm.
+            Shape of the fixed random input, excluding channels. Its length selects
+            the generator dimensionality (e.g. two for slices, four for time/volume).
+            The coil axis is excluded. Must fit inside the output dimensions.
         seed
-            Seed for a local generator, reset on each call without changing global
-            RNG state. Reproducible on the same device with deterministic kernels.
+            Random initialization seed, reset on each call.
         callback
             Called after each update with zero-based `iteration_number` and
-            `solution=(image,)`, a detached copy in physical units and mr2 layout.
-            Return `False` to stop. The returned image includes that update.
+            `solution=(image,)` in mr2 layout. Return `False` to stop.
         """
         if max_iterations < 0:
             raise ValueError('max_iterations must be nonnegative.')
@@ -157,15 +138,14 @@ class ConvDecoderReconstruction(DirectReconstruction):
             scale = adjoint.squeeze(-4).abs().square().mean(dim=scale_dims, keepdim=True).sqrt().unsqueeze(-4)
             scale = scale.clamp_min(torch.finfo(data.real.dtype).eps)
         rng = torch.Generator(device=data.device).manual_seed(self.seed)
-        models = nn.ModuleList()
-        for _ in range(math.prod(object_shape[:-n_dim])):
-            # Avoid consuming global RNG state in the network constructors.
-            with torch.device('meta'):
-                decoder = ConvDecoder(n_dim, self.n_features, 2, image_shape, self.n_features, self.n_levels)
-            decoder.to(dtype=data.real.dtype)
-            decoder.to_empty(device=data.device)
-            decoder.reset_parameters(generator=rng)
-            models.append(ComplexAsChannel(decoder))
+        with torch.random.fork_rng(devices=[]):
+            torch.random.default_generator.manual_seed(self.seed)
+            models = nn.ModuleList(
+                ComplexAsChannel(
+                    ConvDecoder(n_dim, self.n_features, 2, image_shape, self.n_features, self.n_levels)
+                ).to(device=data.device, dtype=data.real.dtype)
+                for _ in range(math.prod(object_shape[:-n_dim]))
+            )
         latents = [
             torch.rand(
                 (1, self.n_features, *self.latent_shape), generator=rng, device=data.device, dtype=data.real.dtype

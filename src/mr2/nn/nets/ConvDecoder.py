@@ -16,23 +16,15 @@ from mr2.utils.interpolate import interpolate
 class ConvDecoder(nn.Module):
     """Generate spatial data by progressively upsampling a latent tensor.
 
-    Each stage applies nearest-neighbor interpolation, a 3-tap convolution,
-    ReLU and stateless affine instance normalization, in that order. A further
-    convolution/ReLU/normalization block at full resolution precedes a linear
-    1-tap output convolution. This variant uses instance normalization instead
-    of the BatchNorm in [DARESTANI2021]_.
+    Stages apply nearest interpolation, dense ``torchnd.ConvNd`` convolution,
+    ReLU and affine instance normalization. A full-resolution block and linear
+    output follow. This ND variant uses InstanceNorm instead of the BatchNorm
+    in [DARESTANI2021]_.
 
-    Dense convolutions over all spatial axes use ``torchnd.ConvNd``. Above
-    three dimensions, instance normalization over all spatial axes is implemented
-    by one group per channel. This extends the published 2D architecture to ND.
+    Input and output use real ``(batch, channels, *spatial)`` layout.
+    Use `~mr2.nn.ComplexAsChannel` for complex output, and save network,
+    optimizer and latent state to resume fitting.
 
-    Input and output use real channels in ``(batch, channels, *spatial)`` layout.
-    Use `~mr2.nn.ComplexAsChannel` for complex output. The caller owns the latent
-    and optimizer; save these together with ``state_dict()`` to resume fitting.
-    Loading weights never reinitializes them or changes the latent.
-
-    References
-    ----------
     .. [DARESTANI2021] Darestani MZ, Heckel R (2021). Accelerated MRI with
        Un-trained Neural Networks. https://doi.org/10.1109/TCI.2021.3097596
     """
@@ -88,26 +80,6 @@ class ConvDecoder(nn.Module):
             for level in range(n_levels + 1)
         )
         self.output = convolution(n_features, n_channels_out, 1)
-
-    def reset_parameters(self, generator: torch.Generator | None = None) -> None:
-        """Reset weights with PyTorch defaults, optionally using a local generator.
-
-        Parameters
-        ----------
-        generator
-            Random generator on the parameters' device. If provided, global RNG
-            state is unchanged. Useful after construction on meta and `to_empty`.
-        """
-        with torch.no_grad():
-            for module in self.modules():
-                if isinstance(module, ConvNd):
-                    nn.init.kaiming_uniform_(module.weight, a=math.sqrt(5), generator=generator)
-                    if module.bias is not None:
-                        bound = 1 / math.sqrt(module.weight[0].numel())
-                        nn.init.uniform_(module.bias, -bound, bound, generator=generator)
-                elif isinstance(module, nn.InstanceNorm1d | nn.InstanceNorm2d | nn.InstanceNorm3d | nn.GroupNorm):
-                    nn.init.ones_(module.weight)
-                    nn.init.zeros_(module.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Decode real latent channels into real output channels."""

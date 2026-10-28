@@ -94,50 +94,6 @@ or a new optimizer using pytorch functions can be created.
 
 See for examples  :doc:`_notebooks/cartesian_reconstruction`, :doc:`_notebooks/direct_reconstruction`, and :doc:`_notebooks/iterative_sense_reconstruction_radial2D`
 
-Untrained ConvDecoder reconstruction
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-`~mr2.algorithms.reconstruction.ConvDecoderReconstruction` fits a randomly initialized
-convolutional generator directly to acquired complex k-space, using the existing Fourier
-and sensitivity operators. For example, with ``kdata`` and estimated ``csm``:
-
-.. code-block:: python
-
-    reconstruction = mr2.algorithms.reconstruction.ConvDecoderReconstruction(
-        kdata, csm=csm, max_iterations=1000, seed=0
-    )
-    image = reconstruction(kdata)
-
-Each call fits fresh generators and returns complex
-``IData`` with a header derived from the input. The random latent stays fixed while
-Adam updates the weights. The seed controls initialization without changing global
-random state. The default latent shape is ``(8, 4)``; smaller images need a smaller
-``latent_shape``. Its length selects the generator dimensionality: one entry for
-1D, two for slice-wise 2D (the default), three for 3D volumes, or four
-for a joint time/volume prior. The singleton coil axis is excluded; extra latent
-dimensions span leading acquisition axes. The first
-upsampling stage needs at least two pixels. Memory use grows with the number of generators.
-
-The reusable `~mr2.nn.nets.ConvDecoder` network accepts and returns ordinary real
-channels and supports arbitrary spatial dimensionality through dense
-``torchnd.ConvNd`` convolutions over all spatial axes. Normalization spans
-all spatial axes. Wrap it with `~mr2.nn.ComplexAsChannel` for
-complex output. To resume custom fitting, restore the network ``state_dict``,
-optimizer ``state_dict`` and fixed latent; reconstruct the network with the same
-configuration. The reconstruction class intentionally starts fresh on each call.
-
-This variant uses nearest-neighbor upsampling, convolution, ReLU and stateless affine
-InstanceNorm, followed by a linear complex object output. The authors' ConvDecoder
-uses BatchNorm; their paper describes both object-output and coil-output formulations:
-`Darestani and Heckel (2021) <https://doi.org/10.1109/TCI.2021.3097596>`_.
-Sensitivity maps are required for multicoil object reconstruction. With ``noise``
-prewhitening enabled, supplied maps must already match the whitened coil basis;
-automatic estimation uses whitened data.
-
-``max_iterations`` sets the fitting budget. An optional ``callback`` receives
-``iteration_number`` (zero-based) and ``solution=(image_tensor,)`` after each update;
-returning ``False`` stops fitting. Fitting loss alone does not protect against noise
-overfitting, so the stopping rule must be chosen for the acquisition and noise level.
-
 Low-field raw datasets
 ----------------------
 ``mr2.phantoms.IsmrmrdDataset`` loads local HDF5 ISMRMRD collections using
