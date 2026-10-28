@@ -31,22 +31,13 @@ maximum_python_313 = pytest.mark.skipif(
 )
 
 
-def pytest_addoption(parser: pytest.Parser) -> None:
-    """Allow CPU CI to report CUDA tests as skipped instead of deselecting them."""
-    parser.addoption('--skip-cuda', action='store_true', help='Collect CUDA tests but skip their execution.')
-
-
-def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Skip CUDA tests when unavailable or when GPU results are reported separately."""
-    skip_cuda = config.getoption('--skip-cuda')
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Skip CUDA tests when CUDA is unavailable."""
     with warnings.catch_warnings():
         warnings.filterwarnings(
             'ignore', message="CUDA initialization:|Can't (initialize NVML|get nvml device count)", category=UserWarning
         )
-        cuda_skip = pytest.mark.skipif(
-            skip_cuda or not torch.cuda.is_available(),
-            reason='CUDA results are reported separately' if skip_cuda else 'CUDA unavailable',
-        )
+        cuda_skip = pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
     for item in items:
         if item.get_closest_marker('cuda'):
             item.add_marker(cuda_skip, append=False)
