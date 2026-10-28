@@ -2,8 +2,7 @@
 
 import pytest
 import torch
-from mr2.algorithms.partial_fourier import pocs
-from mr2.algorithms.partial_fourier._shared import _partial_fourier_center, _partial_fourier_phase
+from mr2.algorithms.partial_fourier import _partial_fourier_center, _partial_fourier_phase, pocs
 from mr2.operators import FastFourierOp
 
 

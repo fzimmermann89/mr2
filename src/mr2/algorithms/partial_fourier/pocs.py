@@ -4,11 +4,7 @@ from collections.abc import Sequence
 
 import torch
 
-from mr2.algorithms.partial_fourier._shared import (
-    _partial_fourier_center,
-    _partial_fourier_phase,
-    _partial_fourier_setup,
-)
+from mr2.algorithms.partial_fourier import _partial_fourier_center, _partial_fourier_phase, _partial_fourier_setup
 
 
 def pocs(
