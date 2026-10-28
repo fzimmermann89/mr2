@@ -36,8 +36,8 @@ class MultiBandOp(EinsumOp):
             Nonempty one-dimensional sequence of shifts, one per slice. The
             product of `k` and each shift must be dimensionless. For an in-plane
             coordinate in full-grid units, shifts are fractions of the full FOV.
-            Alternatively, slice-encoding coordinates in cycles/metre can be
-            paired with slice positions in metres.
+            Alternatively, slice-encoding coordinates in cycles/meter can be
+            paired with slice positions in meters.
         """
         if k.ndim < 4 or k.shape[-4] != 1 or k.is_complex() or not torch.isfinite(k).all():
             raise ValueError('k must contain finite real coordinates with shape (... 1 k2 k1 k0).')
