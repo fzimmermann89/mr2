@@ -53,8 +53,10 @@ def test_reconstruction(
     recon = ConvDecoderReconstruction(
         fourier_op=fourier, csm=csm, latent_shape=latent_shape, n_features=4, n_levels=1, max_iterations=0
     )
+    torch.manual_seed(0)
     initial = recon(kdata).data
     recon.max_iterations = 20
+    torch.manual_seed(0)
     result = recon(kdata)
     operator = fourier @ csm
     assert (operator(result.data)[0] - kdata.data).abs().square().mean() < (
@@ -64,6 +66,7 @@ def test_reconstruction(
     assert result.data.dtype == dtype
     assert result.header.resolution == SpatialDimension(0.01, 0.01, 0.01)
     assert maps.grad is None
+    torch.manual_seed(0)
     torch.testing.assert_close(result.data, recon(kdata).data, rtol=0, atol=0)
 
 
@@ -91,9 +94,11 @@ def test_independent_slices(acquisition: tuple[KData, FourierOp, SensitivityOp])
     recon = ConvDecoderReconstruction(
         fourier_op=fourier, csm=csm, n_features=4, n_levels=1, latent_shape=(2, 2), max_iterations=3
     )
+    torch.manual_seed(0)
     original = recon(kdata).data
     changed = kdata.data.clone()
     changed[1] *= 100
+    torch.manual_seed(0)
     result = recon(KData(header=kdata.header, data=changed, traj=kdata.traj)).data
     torch.testing.assert_close(original[0], result[0], rtol=0, atol=0)
 

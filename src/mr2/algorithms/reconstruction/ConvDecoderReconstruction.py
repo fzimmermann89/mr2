@@ -51,7 +51,6 @@ class ConvDecoderReconstruction(DirectReconstruction):
         n_features: int = 256,
         n_levels: int = 6,
         latent_shape: tuple[int, ...] = (8, 4),
-        seed: int = 0,
         callback: Callable[[OptimizerStatus], bool | None] | None = None,
     ) -> None:
         """Initialize the reconstruction.
@@ -88,8 +87,6 @@ class ConvDecoderReconstruction(DirectReconstruction):
             Shape of the fixed random input, excluding channels. Its length selects
             the generator dimensionality (e.g. two for slices, four for time/volume).
             The coil axis is excluded. Must fit inside the output dimensions.
-        seed
-            Random initialization seed, reset on each call.
         callback
             Called after each update with zero-based `iteration_number` and
             `solution=(image,)` in mr2 layout. Return `False` to stop.
@@ -108,7 +105,6 @@ class ConvDecoderReconstruction(DirectReconstruction):
         self.n_features = n_features
         self.n_levels = n_levels
         self.latent_shape = latent_shape
-        self.seed = seed
         self.callback = callback
 
     @torch.enable_grad()
@@ -137,19 +133,14 @@ class ConvDecoderReconstruction(DirectReconstruction):
             scale_dims = tuple(range(-max(3, n_dim), 0))
             scale = adjoint.squeeze(-4).abs().square().mean(dim=scale_dims, keepdim=True).sqrt().unsqueeze(-4)
             scale = scale.clamp_min(torch.finfo(data.real.dtype).eps)
-        rng = torch.Generator(device=data.device).manual_seed(self.seed)
-        with torch.random.fork_rng(devices=[]):
-            torch.random.default_generator.manual_seed(self.seed)
-            models = nn.ModuleList(
-                ComplexAsChannel(
-                    ConvDecoder(n_dim, self.n_features, 2, image_shape, self.n_features, self.n_levels)
-                ).to(device=data.device, dtype=data.real.dtype)
-                for _ in range(math.prod(object_shape[:-n_dim]))
+        models = nn.ModuleList(
+            ComplexAsChannel(ConvDecoder(n_dim, self.n_features, 2, image_shape, self.n_features, self.n_levels)).to(
+                device=data.device, dtype=data.real.dtype
             )
+            for _ in range(math.prod(object_shape[:-n_dim]))
+        )
         latents = [
-            torch.rand(
-                (1, self.n_features, *self.latent_shape), generator=rng, device=data.device, dtype=data.real.dtype
-            )
+            torch.rand((1, self.n_features, *self.latent_shape), device=data.device, dtype=data.real.dtype)
             for _ in models
         ]
 
