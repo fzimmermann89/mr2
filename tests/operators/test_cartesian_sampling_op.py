@@ -323,7 +323,7 @@ def test_cartesian_duplicates(device: str) -> None:
 @pytest.mark.parametrize('assign', [False, True])
 @pytest.mark.parametrize('nested', [False, True])
 def test_cartesian_load_state_after_adjoint(assign: bool, nested: bool) -> None:
-    """Loading duplicate indices invalidates a warmed unique-map optimization."""
+    """The adjoint sums duplicates after loading new indices."""
     trajectory = KTrajectory(
         kz=torch.zeros(1, 1, 1, 1, 1),
         ky=torch.zeros(1, 1, 1, 1, 1),
@@ -343,7 +343,7 @@ def test_cartesian_load_state_after_adjoint(assign: bool, nested: bool) -> None:
 
 @pytest.mark.parametrize('update', ['replace', 'inplace', 'functional'])
 def test_cartesian_changed_indices_after_adjoint(update: str) -> None:
-    """Buffer replacements and mutations cannot reuse a stale unique-map result."""
+    """The adjoint sums duplicates after replacing or mutating indices."""
     trajectory = KTrajectory(
         kz=torch.zeros(1, 1, 1, 1, 1),
         ky=torch.zeros(1, 1, 1, 1, 1),
@@ -367,7 +367,7 @@ def test_cartesian_changed_indices_after_adjoint(update: str) -> None:
 
 
 def test_cartesian_inference_indices_after_adjoint() -> None:
-    """Inference-mode buffers without mutation counters still sum duplicate samples."""
+    """The adjoint sums duplicates with inference-mode buffers."""
     with torch.inference_mode():
         trajectory = KTrajectory(
             kz=torch.zeros(1, 1, 1, 1, 1),
@@ -397,16 +397,15 @@ def test_cartesian_inference_indices_after_adjoint() -> None:
 def test_batched_sampling(coordinates: list[list[float]], device: str) -> None:
     """Batches independently ignore outside points, including empty rows."""
     trajectory = KTrajectory(
-        kz=torch.zeros(1, 1, 1, 1, 1),
-        ky=torch.zeros(1, 1, 1, 1, 1),
-        kx=torch.tensor(coordinates).reshape(2, 1, 1, 1, 4),
+        kz=torch.zeros(1, 1, 1, 1, 1, device=device),
+        ky=torch.zeros(1, 1, 1, 1, 1, device=device),
+        kx=torch.tensor(coordinates, device=device).reshape(2, 1, 1, 1, 4),
     )
     if any(coordinate == 3 for row in coordinates for coordinate in row):
         with pytest.warns(UserWarning, match='outside'):
             op = CartesianSamplingOp(SpatialDimension(1, 1, 2), trajectory)
     else:
         op = CartesianSamplingOp(SpatialDimension(1, 1, 2), trajectory)
-    op = op.to(device)
     rng = RandomGenerator(seed=0)
     x = rng.complex64_tensor((3, 2, 5, 1, 1, 2)).to(device)
     y = rng.complex64_tensor((3, 2, 5, 1, 1, 4)).to(device)
