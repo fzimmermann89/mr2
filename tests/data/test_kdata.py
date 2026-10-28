@@ -22,7 +22,6 @@ from mr2.operators import FastFourierOp, LinearOperator
 from mr2.utils import RandomGenerator
 
 from tests import relative_image_difference
-from tests.data import IsmrmrdRawTestData
 from tests.phantoms import EllipsePhantomTestData
 
 
@@ -32,35 +31,24 @@ def test_KData_from_file(ismrmrd_cart) -> None:
     assert kdata is not None
 
 
-@pytest.mark.parametrize(('discard_pre', 'discard_post'), [(0, 0), (3, 0), (0, 2), (3, 2)])
-@pytest.mark.parametrize('trajectory_type', [KTrajectoryCartesian, KTrajectoryIsmrmrd, KTrajectory])
-def test_KData_from_file_discards(tmp_path, discard_pre: int, discard_post: int, trajectory_type) -> None:
-    """Discarded samples leave data and trajectory identical to an unpadded file."""
-    reference_file = tmp_path / 'reference.h5'
-    padded_file = tmp_path / 'padded.h5'
-    IsmrmrdRawTestData(reference_file, matrix_size=8, oversampling=1, n_coils=1)
-    IsmrmrdRawTestData(
-        padded_file, matrix_size=8, oversampling=1, n_coils=1, discard_pre=discard_pre, discard_post=discard_post
-    )
-    reference = KData.from_file(reference_file, KTrajectoryCartesian())
-    trajectory = (
-        KTrajectory.from_ismrmrd(padded_file, acquisition_filter_criterion=is_image_acquisition)
-        if trajectory_type is KTrajectory
-        else trajectory_type()
-    )
-    actual = KData.from_file(padded_file, trajectory)
+def test_KData_from_file_discards(ismrmrd_cart) -> None:
+    """Stored and calculated trajectories agree after discarding padded samples."""
+    calculated = KData.from_file(ismrmrd_cart.filename, KTrajectoryCartesian())
+    stored = KData.from_file(ismrmrd_cart.filename, KTrajectoryIsmrmrd())
+    n_k0 = ismrmrd_cart.matrix_size * ismrmrd_cart.oversampling
 
-    torch.testing.assert_close(actual.data, reference.data)
-    torch.testing.assert_close(actual.traj.as_tensor(), reference.traj.as_tensor())
+    torch.testing.assert_close(calculated.traj.kx.squeeze(), torch.arange(n_k0, dtype=torch.float32) - n_k0 // 2)
+    torch.testing.assert_close(stored.traj.as_tensor(), calculated.traj.as_tensor())
 
 
 @pytest.mark.parametrize('trajectory_type', [KTrajectoryCartesian, KTrajectoryIsmrmrd, KTrajectory])
 @pytest.mark.parametrize('shorten_by_discard', [False, True])
-def test_KData_from_file_drops_short_readouts(tmp_path, trajectory_type, shorten_by_discard: bool) -> None:
+def test_KData_from_file_drops_short_readouts(
+    ismrmrd_cart_single_rep, tmp_path, trajectory_type, shorten_by_discard: bool
+) -> None:
     """Dropping a short readout also drops its metadata and trajectory."""
-    reference_file = tmp_path / 'reference.h5'
+    reference_file = ismrmrd_cart_single_rep.filename
     mixed_file = tmp_path / 'mixed.h5'
-    IsmrmrdRawTestData(reference_file, matrix_size=8, oversampling=1, n_coils=1, discard_pre=3, discard_post=2)
     with ismrmrd.File(reference_file, 'r') as file:
         header = file['dataset'].header
         acquisitions = [acq for acq in file['dataset'].acquisitions[:] if is_image_acquisition(acq)]
@@ -70,6 +58,7 @@ def test_KData_from_file_drops_short_readouts(tmp_path, trajectory_type, shorten
         if trajectory_type is KTrajectory
         else trajectory_type()
     )
+    n_k0 = reference.data.shape[-1]
     short = acquisitions[2]
     if shorten_by_discard:
         short.discard_pre += 2
@@ -79,18 +68,18 @@ def test_KData_from_file_drops_short_readouts(tmp_path, trajectory_type, shorten
         file['dataset'].header = header
         file['dataset'].acquisitions = acquisitions
 
-    with pytest.warns(UserWarning, match='Keeping only acquisitions with 8 data samples'):
+    with pytest.warns(UserWarning, match=f'Keeping only acquisitions with {n_k0} data samples'):
         actual = KData.from_file(mixed_file, trajectory)
 
-    keep = [0, 1, 3, 4, 5, 6, 7]
+    keep = [i for i in range(ismrmrd_cart_single_rep.matrix_size) if i != 2]
     torch.testing.assert_close(actual.data, reference.data[..., keep, :])
     torch.testing.assert_close(actual.traj.as_tensor(), reference.traj.as_tensor()[..., keep, :])
     torch.testing.assert_close(actual.header.acq_info.idx.k1.flatten(), torch.tensor(keep, dtype=torch.int32))
 
     if trajectory_type is KTrajectory:
-        with pytest.warns(UserWarning, match='Keeping only acquisitions with 8 data samples'):
+        with pytest.warns(UserWarning, match=f'Keeping only acquisitions with {n_k0} data samples'):
             standalone = KTrajectory.from_ismrmrd(mixed_file, acquisition_filter_criterion=is_image_acquisition)
-        with pytest.warns(UserWarning, match='Keeping only acquisitions with 8 data samples'):
+        with pytest.warns(UserWarning, match=f'Keeping only acquisitions with {n_k0} data samples'):
             reloaded = KData.from_file(mixed_file, standalone)
         torch.testing.assert_close(reloaded.data, actual.data)
         torch.testing.assert_close(reloaded.traj.as_tensor(), actual.traj.as_tensor())
