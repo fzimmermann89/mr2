@@ -100,7 +100,7 @@ class Operator(Generic[Unpack[Tin], Tout], ABC, TensorAttributeMixin, torch.nn.M
 
         Returns ``lambda x: -self(x)``
         """
-        return (-1.0) * self
+        return (-1) * self
 
     @overload
     def __sub__(self, other: Operator[Unpack[Tin], Tout]) -> Operator[Unpack[Tin], Tout]: ...

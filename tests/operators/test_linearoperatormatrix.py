@@ -173,6 +173,13 @@ def test_linearoperatormatrix_neg():
     torch.testing.assert_close(result(*vector), tuple(-y for y in matrix(*vector)))
 
 
+def test_linearoperatormatrix_neg_integer():
+    """Matrix negation preserves integer dtype and values."""
+    matrix = LinearOperatorMatrix([[IdentityOp()]])
+    x = torch.tensor([16777217], dtype=torch.int64)
+    torch.testing.assert_close((-matrix)(x), (-x,))
+
+
 def test_linearoperatormatrix_rmul():
     """Test post multiplication with tensor."""
     rng = RandomGenerator(0)
@@ -242,6 +249,15 @@ def test_linearoperatormatrix_rmatmul_special_operators():
     assert isinstance(result, LinearOperatorMatrix)
     assert result.shape == (4, 3)
     assert all((y == 0).all() for y in result(*vector))
+
+
+def test_linearoperatormatrix_rmatmul_zero_keep_shape():
+    """Shape-preserving zero composition retains each output's shape."""
+    rng = RandomGenerator(0)
+    matrix = random_linearoperatormatrix((2, 3), (4, 5), rng)
+    vector = rng.complex64_tensor((3, 5))
+    zero = ZeroOp(keep_shape=True)
+    torch.testing.assert_close((zero @ matrix)(*vector), tuple(zero(y)[0] for y in matrix(*vector)))
 
 
 def test_linearoperatormatrix_composition_mismatch():

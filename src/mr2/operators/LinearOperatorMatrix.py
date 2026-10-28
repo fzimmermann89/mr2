@@ -205,7 +205,7 @@ class LinearOperatorMatrix(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torc
 
     def __neg__(self) -> Self:
         """Negation."""
-        return (-1.0) * self
+        return (-1) * self
 
     def __sub__(self, other: Self | LinearOperator | torch.Tensor | complex) -> Self:  # type: ignore[override]
         """Subtraction.

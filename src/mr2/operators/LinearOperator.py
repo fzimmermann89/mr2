@@ -257,8 +257,10 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
             return self
         elif isinstance(self, mr2.operators.IdentityOp):
             return other
-        elif isinstance(self, mr2.operators.ZeroOp) or isinstance(other, mr2.operators.ZeroOp):
-            # zero operator composition with any operator is zero
+        elif (isinstance(self, mr2.operators.ZeroOp) and not self.keep_shape) or (
+            isinstance(other, mr2.operators.ZeroOp) and not other.keep_shape
+        ):
+            # Only scalar zeros can discard the other operator's output shape.
             return mr2.operators.ZeroOp()
         elif isinstance(other, LinearOperator):
             # LinearOperator@LinearOperator is linear
@@ -280,7 +282,7 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
 
         Returns ``lambda x: -self(x)``
         """
-        return (-1.0) * self
+        return (-1) * self
 
     @overload  # type: ignore[override]
     def __add__(self, other: LinearOperator | torch.Tensor | complex) -> LinearOperator: ...

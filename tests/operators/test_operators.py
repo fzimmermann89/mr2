@@ -4,7 +4,7 @@ from typing import cast
 
 import pytest
 import torch
-from mr2.operators import LinearOperator, Operator
+from mr2.operators import IdentityOp, LinearOperator, Operator
 from mr2.utils import RandomGenerator
 from typing_extensions import Any, assert_type
 
@@ -199,6 +199,13 @@ def test_neg_linearoperator():
     torch.testing.assert_close(c(x)[0], -a(x)[0])
     assert isinstance(c, LinearOperator), '-LinearOperator should be a LinearOperator'
     assert_type(c, LinearOperator)
+
+
+@pytest.mark.parametrize('operator', [IdentityOp(), DummyOperator(torch.tensor(1))])
+def test_neg_operator_integer(operator):
+    """Negation preserves integer dtype and values beyond float32 precision."""
+    x = torch.tensor([16777217], dtype=torch.int64)
+    torch.testing.assert_close((-operator)(x)[0], -operator(x)[0])
 
 
 def test_sum_operator_tensor():
