@@ -105,6 +105,13 @@ class Operator(Generic[Unpack[Tin], Tout], ABC, TensorAttributeMixin, torch.nn.M
         """
         return OperatorElementwiseProductRight(self, other)
 
+    def __neg__(self) -> Operator[Unpack[Tin], Tout]:
+        """Operator negation.
+
+        Returns ``lambda x: -self(x)``
+        """
+        return (-1) * self
+
     @overload
     def __sub__(self, other: Operator[Unpack[Tin], Tout]) -> Operator[Unpack[Tin], Tout]: ...
 
@@ -123,7 +130,7 @@ class Operator(Generic[Unpack[Tin], Tout], ABC, TensorAttributeMixin, torch.nn.M
         """
         if isinstance(other, mr2.operators.ZeroOp):
             return self
-        return self + (-1.0) * other
+        return self + (-other)
 
     def __rsub__(
         self: Operator[Unpack[Tin], tuple[Unpack[Tin]]], other: torch.Tensor | complex
@@ -132,7 +139,7 @@ class Operator(Generic[Unpack[Tin], Tout], ABC, TensorAttributeMixin, torch.nn.M
 
         Returns ``lambda x: other*x - self(x)``
         """
-        return (-1.0) * self + other
+        return -self + other
 
 
 class OperatorComposition(Operator[Unpack[Tin2], Tout]):
