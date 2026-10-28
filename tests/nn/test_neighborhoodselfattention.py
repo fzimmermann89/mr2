@@ -1,7 +1,10 @@
 """Tests for NeighborhoodSelfAttention module."""
 
+from collections.abc import Sequence
+
 import pytest
 import torch
+from einops import rearrange
 from mr2.nn.attention.NeighborhoodSelfAttention import NeighborhoodSelfAttention
 from mr2.utils import RandomGenerator
 from tests.conftest import maximum_python_313, minimal_torch_26
@@ -150,3 +153,69 @@ def test_neighborhood_constraint(kernel_size: int, circular: bool, input_shape: 
 
     assert neighborhood_changed, 'Not all pixels in the neighborhood changed, which indicates a problem'
     assert not outside_changed, 'Pixels outside the neighborhood changed, which violates the constraint'
+
+
+def neighborhood_attention_reference(
+    attention: NeighborhoodSelfAttention, x: torch.Tensor, kernel_size: int, circular: bool
+) -> torch.Tensor:
+    """Brute-force neighborhood attention with an explicit dense mask and axial RoPE on the spatial grid."""
+    spatial_shape = x.shape[2:]
+    query, key, value = rearrange(
+        attention.to_qkv(x.moveaxis(1, -1)),
+        'batch ... (qkv heads channels) -> qkv batch heads ... channels',
+        qkv=3,
+        heads=attention.n_head,
+    )
+    query, key = attention.rope(query, key)
+    query, key, value = (t.flatten(2, -2) for t in (query, key, value))
+    coords = torch.stack(
+        torch.meshgrid(*[torch.arange(s, device=x.device) for s in spatial_shape], indexing='ij'), -1
+    ).flatten(0, -2)
+    half = kernel_size // 2
+    q_coord, kv_coord = coords[:, None], coords[None, :]
+    size = torch.tensor(spatial_shape, device=x.device)
+    if circular:
+        distance = torch.minimum((q_coord - kv_coord) % size, (kv_coord - q_coord) % size)
+    else:
+        center = torch.minimum(torch.maximum(q_coord, torch.tensor(half)), size - 1 - half)
+        distance = (kv_coord - center).abs()
+    mask = (distance <= half).all(-1)
+    out = torch.nn.functional.scaled_dot_product_attention(query, key, value, attn_mask=mask)
+    out = attention.to_out(rearrange(out, 'batch heads sequence channels -> batch sequence (heads channels)'))
+    return out.unflatten(1, spatial_shape).moveaxis(-1, 1)
+
+
+@maximum_python_313
+@minimal_torch_26
+@pytest.mark.parametrize(
+    'device',
+    [
+        pytest.param('cpu', id='cpu'),
+        pytest.param('cuda', id='cuda', marks=pytest.mark.cuda),
+    ],
+)
+@pytest.mark.parametrize(
+    ('spatial_shape', 'kernel_size', 'circular'),
+    [
+        ((9, 7), 3, False),
+        ((8, 8), 5, True),
+        ((5, 6, 7), 3, False),
+    ],
+    ids=['2d', '2d_circular', '3d'],
+)
+@torch.no_grad()
+def test_neighborhood_attention_reference(
+    spatial_shape: Sequence[int], kernel_size: int, circular: bool, device: str
+) -> None:
+    """Compare to a brute-force reference, with rotary embeddings on the true N-D positions."""
+    rng = RandomGenerator(seed=42)
+    x = rng.float32_tensor((2, 32, *spatial_shape)).to(device)
+    attention = NeighborhoodSelfAttention(
+        n_channels_in=32,
+        n_channels_out=32,
+        n_heads=2,
+        kernel_size=kernel_size,
+        circular=circular,
+        rope_embed_fraction=1.0,
+    ).to(device)
+    torch.testing.assert_close(attention(x), neighborhood_attention_reference(attention, x, kernel_size, circular))

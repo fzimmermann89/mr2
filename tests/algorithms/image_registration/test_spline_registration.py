@@ -53,3 +53,33 @@ def test_spline_registration(device: str, ellipse_phantom) -> None:
     assert moved.shape == fixed.shape
     assert torch.isfinite(moved).all()
     assert 1 - ncc3d(moved, fixed) < 0.5 * (1 - ncc3d(moving, fixed))
+
+
+@pytest.mark.parametrize('downsampling_factor', [1, 2])
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+def test_spline_registration_translation(device: str, downsampling_factor: int, blob_image: torch.Tensor) -> None:
+    """A downsampled fit must recover the displacement in full-resolution voxels."""
+    moving = blob_image.to(device)
+    displacement = torch.tensor([3.15, -1.89], device=device)
+    known_operator = GridSamplingOp.from_displacement(
+        None,
+        displacement[0].expand(1, 64, 64),
+        displacement[1].expand(1, 64, 64),
+        padding_mode='border',
+    )
+    (fixed,) = known_operator(moving)
+
+    operator = spline_registration(
+        fixed,
+        moving,
+        downsampling_factor=downsampling_factor,
+        window_size=21,
+        control_point_spacing=SpatialDimension(16.0, 16.0, 16.0),
+        regularization_weight=0.001,
+        max_iterations=80,
+    )
+    (moved,) = operator(moving)
+
+    recovered_displacement = operator.to_displacement()[0, :, 16:48, 16:48].mean(dim=(-2, -1))
+    torch.testing.assert_close(recovered_displacement, displacement, atol=0.3, rtol=0)
+    assert (moved - fixed).abs().mean() < 0.1 * (moving - fixed).abs().mean()

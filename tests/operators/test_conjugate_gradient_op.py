@@ -119,3 +119,25 @@ def test_conjugate_gradient_op_detaches_differentiable_initial_value(implicit_ba
 
     assert initial.grad is None
     torch.testing.assert_close(rhs.grad, torch.ones_like(rhs))
+
+
+@pytest.mark.cuda
+def test_conjugate_gradient_op_cuda_implicit_gradient() -> None:
+    """Implicit differentiation matches the scalar regularized solution on CUDA."""
+    regularization = torch.tensor(0.5, device='cuda', requires_grad=True)
+    rhs = torch.tensor([2.0, -1.0], device='cuda', requires_grad=True)
+    op = ConjugateGradientOp(
+        lambda alpha, _rhs: IdentityOp() * (1 + alpha),
+        lambda _alpha, value: (value,),
+        tolerance=1e-6,
+        max_iterations=8,
+    )
+    (solution,) = op(regularization, rhs)
+    solution.sum().backward()
+
+    expected = rhs.detach() / (1 + regularization.detach())
+    torch.testing.assert_close(solution, expected)
+    torch.testing.assert_close(rhs.grad, torch.ones_like(rhs) / 1.5)
+    torch.testing.assert_close(regularization.grad, -rhs.detach().sum().reshape_as(regularization) / 1.5**2)
+    assert solution.is_cuda
+    assert torch.isfinite(solution).all()

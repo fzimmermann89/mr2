@@ -18,6 +18,34 @@ from tests.operators.functionals.conftest import (
 )
 
 
+@pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
+@pytest.mark.parametrize('functional', FUNCTIONALS)
+@pytest.mark.parametrize('dtype', [torch.float32, torch.complex64])
+def test_functional_cuda_defaults(functional: type[ElementaryFunctional], dtype: torch.dtype) -> None:
+    """Default scalar parameters work with CUDA inputs without moving the functional."""
+    f = make_functional(functional)
+    x = RandomGenerator(0).rand_tensor((2, 3, 4), dtype=dtype)
+    for method in ('forward', 'prox', 'prox_convex_conj'):
+        operation = getattr(f, method)
+        expected = operation(x)[0]
+        result = operation(x.cuda())[0]
+        assert result.is_cuda
+        torch.testing.assert_close(result.cpu(), expected, rtol=1e-5, atol=1e-6)
+
+
+@pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
+def test_l1_cuda_tensor_weight_requires_move() -> None:
+    """L1 conjugate prox requires tensor weight arrays on the input device."""
+    x = torch.tensor([-2.0, 0.5, 3.0])
+    f = L1Norm(weight=torch.ones_like(x))
+    expected = f.prox_convex_conj(x)[0]
+    with pytest.raises(RuntimeError, match='device'):
+        f.prox_convex_conj(x.cuda())
+    torch.testing.assert_close(f.cuda().prox_convex_conj(x.cuda())[0].cpu(), expected)
+
+
 @pytest.mark.parametrize('shape', [[1, 2, 3], ()])
 @pytest.mark.parametrize('dim', [None, -2])
 @pytest.mark.parametrize('keepdim', [True, False])

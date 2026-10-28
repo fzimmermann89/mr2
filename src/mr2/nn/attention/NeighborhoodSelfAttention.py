@@ -219,12 +219,12 @@ class NeighborhoodSelfAttention(Module):
         qkv = self.to_qkv(x)
         query, key, value = rearrange(
             qkv,
-            'batch ... (qkv heads channels) -> qkv batch heads (...) channels',
+            'batch ... (qkv heads channels) -> qkv batch heads ... channels',
             qkv=3,
             heads=self.n_head,
         )
-        query, key = self.rope(query, key)
-        query, key, value = query.contiguous(), key.contiguous(), value.contiguous()
+        query, key = self.rope(query, key)  # axial positions require the unflattened spatial dimensions
+        query, key, value = (t.flatten(2, -2).contiguous() for t in (query, key, value))
         device = str(qkv.device)
         mask = neighborhood_mask(
             device=device,

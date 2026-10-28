@@ -7,6 +7,7 @@ from collections import deque
 from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from contextlib import contextmanager, nullcontext
 from importlib.metadata import version
+from math import prod
 from os import PathLike
 from pathlib import Path
 from types import EllipsisType
@@ -40,9 +41,11 @@ from mr2.data.KHeader import KHeader
 from mr2.data.KNoise import KNoise
 from mr2.data.KTrajectory import KTrajectory
 from mr2.data.Rotation import Rotation
+from mr2.data.SpatialDimension import SpatialDimension
 from mr2.data.traj_calculators.KTrajectoryCalculator import KTrajectoryCalculator
 from mr2.data.traj_calculators.KTrajectoryIsmrmrd import KTrajectoryIsmrmrd
 from mr2.data.traj_calculators.KTrajectorySunflowerGoldenRpe import KTrajectorySunflowerGoldenRpe
+from mr2.utils.filters import gaussian_window, hann_window, radial_hann_window
 from mr2.utils.reshape import normalize_index, normalize_indices
 from mr2.utils.summarize import summarize_object
 from mr2.utils.typing import FileOrPath
@@ -855,6 +858,74 @@ class KData(Dataclass):
         whitened = prewhiten_kspace(self, knoise, scale_factor)
         return type(self)(whitened.header, whitened.data, whitened.traj)
 
+    def apodize(
+        self,
+        width: float | SpatialDimension[float] | None = None,
+        *,
+        window: Literal['hann', 'gaussian'] = 'hann',
+        radial: bool = False,
+    ) -> Self:
+        """Return a copy with a centered k-space window applied at trajectory coordinates.
+
+        Suppressing high spatial frequencies smooths the reconstructed image and
+        reduces ringing at the cost of spatial resolution. Weights are shared
+        across coils, with unit gain at DC and no energy/noise normalization.
+        Trajectory, header and acquisition metadata are copied unchanged.
+
+        Parameters
+        ----------
+        width
+            Full window width in trajectory units: one unit normally corresponds
+            to one Cartesian encoding step, or ``1 / encoding_fov`` in spatial
+            frequency. A scalar applies to all spatial directions; a
+            `SpatialDimension` specifies z, y and x separately. Defaults to the
+            header's encoding matrix sizes, independent of acquired sample count.
+            All widths must be finite and positive.
+        window
+            ``'hann'`` has compact support of the specified width.
+            ``'gaussian'`` uses width as its full width at half maximum,
+            with no hard cutoff. See :func:`mr2.utils.filters.hann_window` and
+            :func:`mr2.utils.filters.gaussian_window` for the formulas.
+        radial
+            If False, multiply the windows along kz, ky and kx (separable).
+            If True, evaluate one window at the radius formed from coordinates
+            scaled by their respective widths (ellipsoidal support for Hann).
+            Gaussian weights coincide for both choices.
+
+        Returns
+        -------
+            Apodized copy with the same dtype and device. Repeated data dimensions
+            are reduced to singletons following the usual KData convention.
+            Density compensation is not applied or modified.
+        """
+        widths: tuple[float, float, float]
+        if width is None:
+            widths = self.header.encoding_matrix.zyx
+        elif isinstance(width, SpatialDimension):
+            widths = width.zyx
+        else:
+            widths = (width, width, width)
+        coordinates = tuple(
+            coordinate.to(device=self.data.device, dtype=self.data.real.dtype)
+            for coordinate in (self.traj.kz, self.traj.ky, self.traj.kx)
+        )
+        match window, radial:
+            case 'hann', True:
+                weight = radial_hann_window(coordinates, widths)
+            case 'hann', False:
+                weight = prod(
+                    (hann_window(k, w) for k, w in zip(coordinates, widths, strict=True)),
+                    start=self.data.real.new_ones(()),
+                )
+            case 'gaussian', _:
+                weight = prod(
+                    (gaussian_window(k, w) for k, w in zip(coordinates, widths, strict=True)),
+                    start=self.data.real.new_ones(()),
+                )
+            case _:
+                raise ValueError("window must be 'hann' or 'gaussian'.")
+        return type(self)(self.header.clone(), self.data * weight, self.traj.clone())
+
     def remove_readout_os(self: Self) -> Self:
         """Remove any oversampling along the readout direction.
 
@@ -915,6 +986,100 @@ class KData(Dataclass):
         header.encoding_fov.x = self.header.recon_fov.x
 
         return type(self)(header, cropped_data, cropped_traj)
+
+    def partial_fourier(
+        self: Self,
+        dim: int = -2,
+        method: Literal['pocs', 'homodyne'] = 'pocs',
+        *,
+        n_iterations: int = 10,
+    ) -> Self:
+        """Complete one Cartesian partial Fourier direction using trajectory-derived support.
+
+        Requires separable Cartesian axes with shared sampling across batches
+        and a contiguous acquired interval touching either edge.
+
+        Parameters
+        ----------
+        dim
+            Partial Fourier axis within ``(k2, k1, k0)``; accepts positive or negative indices.
+        method
+            ``'pocs'`` preserves acquired values; ``'homodyne'`` uses ramp weighting.
+        n_iterations
+            POCS iteration count; unused for homodyne.
+
+        Returns
+        -------
+            KData with completed k-space, a full Cartesian trajectory and updated
+            encoding indices. Metadata for synthesized lines inherits the nearest
+            acquired line's values. The input is unchanged.
+        """
+        from mr2.algorithms.partial_fourier import homodyne, pocs
+        from mr2.data.enums import TrajectoryType
+        from mr2.operators.CartesianSamplingOp import CartesianSamplingOp
+
+        data = self.data.expand(torch.broadcast_shapes(self.data.shape, self.traj.shape))
+        axis = normalize_index(data.ndim, dim) - data.ndim
+        if axis not in (-3, -2, -1):
+            raise ValueError('dim must select one of the last three KData dimensions.')
+        if method not in ('pocs', 'homodyne'):
+            raise ValueError("method must be 'pocs' or 'homodyne'.")
+
+        # Align metadata with the sorted grid, extending edge metadata to missing lines.
+        indices = []
+        coordinates = []
+        for d, coord, size in zip(
+            (-3, -2, -1), (self.traj.kz, self.traj.ky, self.traj.kx), self.header.encoding_matrix.zyx, strict=True
+        ):
+            if coord.numel() != coord.shape[d] or coord.shape[d] != data.shape[d]:
+                raise ValueError('Trajectory must be separable and aligned with the Cartesian data axes.')
+            values = coord.reshape(-1)
+            if not torch.allclose(values, values.round(), atol=self.traj.grid_detection_tolerance, rtol=0):
+                raise ValueError('Trajectory must lie on the integer Cartesian grid.')
+            values = values.round()
+            grid = torch.arange(size, device=coord.device, dtype=coord.dtype) - size // 2
+            if values.min() < grid[0] or values.max() > grid[-1]:
+                raise ValueError('Trajectory lies outside the encoding matrix.')
+            sorted_values, order = values.sort()
+            if (sorted_values.diff() == 0).any():
+                raise ValueError('Repeated Cartesian coordinates are unsupported.')
+            source = torch.searchsorted(sorted_values, grid).clamp(max=values.numel() - 1)
+            indices.append(order[source])
+            shape = [1] * data.ndim
+            shape[d] = size
+            coordinates.append(grid.reshape(shape))
+
+        sampling = CartesianSamplingOp(self.header.encoding_matrix, self.traj)
+        (grid_data,) = sampling.H(data)
+        (mask,) = sampling.H(torch.ones_like(data.real[..., :1, :, :, :]))
+        mask = mask.bool()
+        if method == 'pocs':
+            completed = pocs(grid_data, mask, (-3, -2, -1), axis, n_iterations=n_iterations)
+        else:
+            completed = homodyne(grid_data, mask, (-3, -2, -1), axis)
+        if completed.shape[-3:] != self.header.encoding_matrix.zyx:
+            raise ValueError('Trajectory must cover every non-partial encoded Cartesian axis.')
+
+        header = copy.deepcopy(self.header)
+
+        def extend_metadata(field: object) -> object:
+            if isinstance(field, torch.Tensor | Rotation):
+                for d, index in zip((-3, -2, -1), indices, strict=True):
+                    if field.shape[d] > 1:
+                        indexer: list[slice | torch.Tensor] = [slice(None)] * len(field.shape)
+                        indexer[d] = index.to(field.device)
+                        field = field[tuple(indexer)]
+            return field
+
+        header.acq_info.apply_(extend_metadata)
+        header.trajectory_type = TrajectoryType.CARTESIAN
+        for d, label in ((-3, 'k2'), (-2, 'k1')):
+            size = completed.shape[d]
+            shape = [1] * data.ndim
+            shape[d] = size
+            setattr(header.acq_info.idx, label, torch.arange(size, device=data.device).reshape(shape))
+        trajectory = KTrajectory(coordinates[0], coordinates[1], coordinates[2])
+        return type(self)(header, completed, trajectory)
 
     def select_other_subset(
         self: Self,

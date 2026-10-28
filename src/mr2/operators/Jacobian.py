@@ -24,13 +24,22 @@ class Jacobian(LinearOperator):
         operator
             operator to linearize
         x0
-            point at which to linearize the operator
+            point at which to linearize the operator.
+            If gradients should propagate through these tensors, move them to the desired device and dtype
+            before constructing the Jacobian.
         """
         super().__init__()
         self._vjp: Callable[[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]] | None = None
         self._x0 = TensorList(x0)
         self._operator = operator
         self._f_x0: tuple[torch.Tensor, ...] | None = None
+
+    def _apply(self, fn: Callable[[torch.Tensor], torch.Tensor], recurse: bool = True) -> 'Jacobian':
+        """Discard cached values after converting registered tensors."""
+        result = super()._apply(fn, recurse=recurse)
+        self._vjp = None
+        self._f_x0 = None
+        return result
 
     def adjoint(self, *x: torch.Tensor) -> tuple[torch.Tensor, ...]:  # type:ignore[override]
         """Apply the adjoint operator.

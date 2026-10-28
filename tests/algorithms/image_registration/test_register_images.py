@@ -1,5 +1,6 @@
 """Tests for multi-level image registration."""
 
+import pytest
 import torch
 from mr2.algorithms.image_registration.register_images import register_images
 from mr2.data import SpatialDimension
@@ -62,3 +63,32 @@ def test_register_images(ellipse_phantom) -> None:
     assert torch.isfinite(initial_difference)
     assert torch.isfinite(recovered_difference)
     assert recovered_difference < initial_difference
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+def test_register_images_nonuniform_displacement(device: str, blob_image: torch.Tensor) -> None:
+    """The spline pyramid must recover a deformation that affine registration cannot fit."""
+    moving = blob_image.to(device)
+    y, x = torch.meshgrid(
+        torch.linspace(-1, 1, 64, device=device), torch.linspace(-1, 1, 64, device=device), indexing='ij'
+    )
+    displacement_y = 3.0 * torch.sin(torch.pi * x) * torch.cos(torch.pi * y / 2)
+    displacement_x = 2.0 * torch.sin(torch.pi * y) * torch.cos(torch.pi * x / 2)
+    known_operator = GridSamplingOp.from_displacement(
+        None, displacement_y[None], displacement_x[None], padding_mode='border'
+    )
+    (fixed,) = known_operator(moving)
+
+    operator = register_images(
+        fixed,
+        moving,
+        spline_downsampling_factors=(4, 2),
+        spline_window_sizes=(21, 21),
+        spline_control_point_spacings=(SpatialDimension(16.0, 16.0, 16.0), SpatialDimension(12.0, 12.0, 12.0)),
+        spline_regularization_weights=(0.001, 0.001),
+        affine_max_iterations=20,
+        spline_max_iterations=80,
+    )
+    (moved,) = operator(moving)
+
+    assert (moved - fixed).abs().mean() < 0.1 * (moving - fixed).abs().mean()

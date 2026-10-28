@@ -25,7 +25,19 @@ def test_lewin_transformer_block_structure() -> None:
 
 @pytest.mark.parametrize(
     ('shape', 'window_size'),
-    [((8, 8), 2), ((5,), 2), ((5,), 4), ((15, 16), 2), ((5, 7), 4), ((1, 3), 2), ((4, 4, 4), 2)],
+    [
+        ((8, 8), 2),
+        ((5,), 2),
+        ((5,), 4),
+        ((15, 16), 2),
+        ((5, 7), 4),
+        ((1, 3), 2),
+        ((4, 4, 4), 2),
+        ((3,), 7),
+        ((3, 3), 7),
+        ((2, 3, 2), 5),
+        ((5, 5, 5), 4),
+    ],
 )
 @pytest.mark.parametrize('shifted', [False, True])
 def test_lewin_periodic_modulator(shape: tuple[int, ...], window_size: int, shifted: bool) -> None:

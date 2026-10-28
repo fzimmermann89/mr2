@@ -169,3 +169,27 @@ def test_dcf_3d_cart_nonuniform_traj_voronoi(n_k2, n_k1, n_k0, k2_steps, k1_step
     # Do not test outer points because they have to be approximated and cannot be calculated
     # accurately using voronoi
     torch.testing.assert_close(dcf_full[1:-1, 1:-1, 1:-1], dcf_broadcast[1:-1, 1:-1, 1:-1])
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('n_points', [1, 2, 40])
+def test_dcf_1d_float64(device: str, n_points: int) -> None:
+    """All 1D size branches preserve float64 and give the expected cell widths."""
+    traj = torch.arange(n_points, dtype=torch.float64, device=device) * 0.25
+    result = dcf_1d(traj)
+    expected = torch.full_like(traj, 1 if n_points == 1 else 0.25)
+    torch.testing.assert_close(result, expected)
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('ndim', [2, 3])
+def test_dcf_voronoi_float64(device: str, ndim: int) -> None:
+    """Voronoi preserves float64 without changing the calculated cell volumes."""
+    generator = torch.Generator().manual_seed(42)
+    traj = torch.rand(ndim, 40, generator=generator, dtype=torch.float64).to(device)
+    result = dcf_2d3d_voronoi(traj)
+    assert result.dtype == traj.dtype
+    assert result.device == traj.device
+    assert result.shape == traj.shape[1:]
+    assert (result.isfinite() & (result > 0)).all()
+    torch.testing.assert_close(result.float(), dcf_2d3d_voronoi(traj.float()), rtol=1e-4, atol=1e-6)
