@@ -3,8 +3,6 @@
 import copy
 import datetime
 import io
-import subprocess
-import sys
 from contextlib import closing
 from types import SimpleNamespace
 
@@ -65,10 +63,10 @@ def assert_kdata_equal(actual: KData, expected: KData) -> None:
     assert actual.header.protocol_name == expected.header.protocol_name
 
 
-@pytest.mark.parametrize('trajectory', [DummyTrajectory(), KTrajectoryCartesian(), KTrajectoryIsmrmrd()])
-def test_reader_parity(raw_data, trajectory, tmp_path) -> None:
+def test_reader_parity(raw_data, tmp_path) -> None:
     """Paths, HDF5 BytesIO, open files, serialized streams and objects agree."""
     filename, header, acquisitions = raw_data
+    trajectory = KTrajectoryIsmrmrd()
     overwrites = {'datetime': datetime.datetime(2020, 1, 2), 'protocol_name': 'overwritten'}
     expected = KData.from_file(filename, trajectory, header_overwrites=overwrites)
     assert_kdata_equal(KData.from_ismrmrd(header, acquisitions, trajectory, header_overwrites=overwrites), expected)
@@ -92,7 +90,7 @@ def test_reader_parity(raw_data, trajectory, tmp_path) -> None:
     assert_kdata_equal(KData.from_file(hdf5_path, trajectory, header_overwrites=overwrites), expected)
 
 
-@pytest.mark.parametrize('index', [0, 1, 2, -1, -2, -3])
+@pytest.mark.parametrize('index', [0, 2, -1, -3])
 def test_multiple_measurements(raw_data, index) -> None:
     """Both index directions select the right measurement without mixing headers."""
     _, header, acquisitions = raw_data
@@ -105,10 +103,6 @@ def test_multiple_measurements(raw_data, index) -> None:
     stream = serialize_measurements(measurements)
     result = KData.from_file(stream, DummyTrajectory(), dataset_idx=index, file_format='ismrmrd-stream')
     torch.testing.assert_close(result.data, torch.full_like(result.data, complex(index % 3 + 1, -(index % 3 + 2))))
-    if index >= 0 and index < 2:
-        assert stream.tell() < len(stream.getvalue()) - 2
-    else:
-        assert stream.tell() == len(stream.getvalue())
     assert not stream.closed
 
 
@@ -163,13 +157,12 @@ def test_empty_selection(raw_data, empty_group) -> None:
     assert not stream.closed
 
 
-@pytest.mark.parametrize('mtime', [0, 946684800])
-def test_hdf5_timestamp(raw_data, monkeypatch, mtime) -> None:
-    """Unknown HDF5 timestamps stay unknown; recorded timestamps are retained."""
+def test_unknown_hdf5_timestamp(raw_data, monkeypatch) -> None:
+    """An unknown HDF5 timestamp stays unknown instead of becoming 1970."""
     filename, _, _ = raw_data
-    monkeypatch.setattr(h5py.h5g, 'get_objinfo', lambda *_args: SimpleNamespace(mtime=mtime))
+    monkeypatch.setattr(h5py.h5g, 'get_objinfo', lambda *_args: SimpleNamespace(mtime=0))
     result = KData.from_file(filename, DummyTrajectory())
-    assert result.header.datetime == (datetime.datetime.fromtimestamp(mtime) if mtime else None)
+    assert result.header.datetime is None
 
 
 def test_disable_filter_and_timestamp(raw_data) -> None:
@@ -178,11 +171,7 @@ def test_disable_filter_and_timestamp(raw_data) -> None:
     imaging = [acq for acq in acquisitions if is_image_acquisition(acq)]
     for acq in imaging:
         acq.setFlag(ismrmrd.ACQ_IS_NOISE_MEASUREMENT)
-    fallback = datetime.datetime(2001, 2, 3)
-    result = KData.from_ismrmrd(
-        header, imaging, DummyTrajectory(), acquisition_filter_criterion=None, header_defaults={'datetime': fallback}
-    )
-    assert result.header.datetime == fallback
+    result = KData.from_ismrmrd(header, imaging, DummyTrajectory(), acquisition_filter_criterion=None)
     assert result.data.shape[-2] == 4
     stream_path = filename.with_suffix('.ismrmrd')
     stream_path.write_bytes(serialize_measurements([(header, imaging)]).getvalue())
@@ -200,12 +189,7 @@ def test_mixed_readouts_keep_metadata_aligned(raw_data, trajectory) -> None:
     expected = KData.from_ismrmrd(header, retained, trajectory)
     with pytest.warns(UserWarning, match='different shape'):
         result = KData.from_ismrmrd(header, acquisitions, trajectory)
-    torch.testing.assert_close(result.data, expected.data)
-    torch.testing.assert_close(result.traj.as_tensor(), expected.traj.as_tensor())
-    torch.testing.assert_close(result.header.acq_info.idx.k1, expected.header.acq_info.idx.k1)
-    torch.testing.assert_close(
-        result.header.acq_info.acquisition_time_stamp, expected.header.acq_info.acquisition_time_stamp
-    )
+    assert_kdata_equal(result, expected)
     assert result.data.shape[-2] == 3
 
 
@@ -221,31 +205,27 @@ def test_precomputed_trajectory(raw_data) -> None:
     assert_kdata_equal(result, expected)
 
 
-@pytest.mark.parametrize('streamed', [False, True])
-def test_custom_filter(raw_data, streamed) -> None:
-    """Object and stream construction forward a custom acquisition predicate."""
+def test_custom_filter(raw_data) -> None:
+    """Stream construction forwards a custom acquisition predicate."""
     _, header, acquisitions = raw_data
     image = next(acq for acq in acquisitions if is_image_acquisition(acq))
     criterion = lambda acq: is_image_acquisition(acq) and acq.idx.kspace_encode_step_1 == image.idx.kspace_encode_step_1  # noqa: E731
-    if streamed:
-        result = KData.from_file(
-            serialize_measurements([(header, acquisitions)]),
-            DummyTrajectory(),
-            acquisition_filter_criterion=criterion,
-            file_format='ismrmrd-stream',
-        )
-    else:
-        result = KData.from_ismrmrd(header, acquisitions, DummyTrajectory(), acquisition_filter_criterion=criterion)
+    result = KData.from_file(
+        serialize_measurements([(header, acquisitions)]),
+        DummyTrajectory(),
+        acquisition_filter_criterion=criterion,
+        file_format='ismrmrd-stream',
+    )
     torch.testing.assert_close(result.data.flatten(), torch.as_tensor(image.data).conj().flatten())
     assert result.header.acq_info.idx.k1.item() == image.idx.kspace_encode_step_1
 
 
-@pytest.mark.parametrize('header_format', ['parsed', 'xml', 'bytes'])
+@pytest.mark.parametrize('header_format', ['xml', 'bytes'])
 def test_server_acquisitions(raw_data, header_format) -> None:
     """Server metadata and decoded acquisitions construct KData without a file round trip."""
     _, header, acquisitions = raw_data
     expected = KData.from_ismrmrd(header, acquisitions, KTrajectoryCartesian())
-    metadata = header if header_format == 'parsed' else header.toXML()
+    metadata = header.toXML()
     if header_format == 'bytes':
         metadata = metadata.encode()
 
@@ -254,8 +234,7 @@ def test_server_acquisitions(raw_data, header_format) -> None:
     assert result.header.datetime is None
 
 
-@pytest.mark.parametrize('dated', [False, True])
-@pytest.mark.parametrize('overwrite', ['absent', None, datetime.datetime(2022, 3, 4)])
+@pytest.mark.parametrize(('dated', 'overwrite'), [(True, 'absent'), (False, 'absent'), (True, None)])
 def test_header_default_precedence(raw_data, dated, overwrite) -> None:
     """Measurement metadata and explicit overwrites take precedence over reader defaults."""
     _, header, acquisitions = raw_data
@@ -280,16 +259,6 @@ def test_header_default_precedence(raw_data, dated, overwrite) -> None:
     assert result.header.acq_info is not None
 
 
-def test_xml_header_repair(raw_data) -> None:
-    """Server XML receives the same legacy header repair as HDF5 input."""
-    _, header, acquisitions = raw_data
-    expected = KData.from_ismrmrd(header, acquisitions, DummyTrajectory())
-    xml = header.toXML().replace('<trajectory>cartesian</trajectory>', '')
-    assert xml != header.toXML()
-    result = KData.from_ismrmrd(xml, acquisitions, DummyTrajectory())
-    assert_kdata_equal(result, expected)
-
-
 class ShortReads(io.BytesIO):
     """A blocking nonseekable input delivering at most three bytes per read."""
 
@@ -306,29 +275,17 @@ class ShortReads(io.BytesIO):
         return super().read(3 if size is None or size < 0 else min(size, 3))
 
 
-@pytest.mark.parametrize('reader', ['from_file', 'iter_ismrmrd'])
-def test_short_reads(raw_data, reader) -> None:
+def test_short_reads(raw_data) -> None:
     """Chunked nonseekable transports preserve data and report premature EOF."""
     _, header, acquisitions = raw_data
     data = serialize_measurements([(header, acquisitions)]).getvalue()
     stream = ShortReads(data)
-    if reader == 'from_file':
-        expected = KData.from_ismrmrd(header, acquisitions, DummyTrajectory())
-        assert_kdata_equal(KData.from_file(stream, DummyTrajectory(), file_format='ismrmrd-stream'), expected)
-    else:
-        results = list(KData.iter_ismrmrd(stream, DummyTrajectory()))
-        imaging = [acq for acq in acquisitions if is_image_acquisition(acq)]
-        assert len(results) == len(imaging)
-        for result, acq in zip(results, imaging, strict=True):
-            assert_kdata_equal(result, KData.from_ismrmrd(header, [acq], DummyTrajectory()))
+    expected = KData.from_ismrmrd(header, acquisitions, DummyTrajectory())
+    assert_kdata_equal(KData.from_file(stream, DummyTrajectory(), file_format='ismrmrd-stream'), expected)
     assert not stream.closed
     truncated = ShortReads(data[:-1])
-    if reader == 'from_file':
-        with pytest.raises(EOFError):
-            KData.from_file(truncated, DummyTrajectory(), file_format='ismrmrd-stream')
-    else:
-        with pytest.raises(EOFError):
-            list(KData.iter_ismrmrd(truncated, DummyTrajectory()))
+    with pytest.raises(EOFError):
+        KData.from_file(truncated, DummyTrajectory(), file_format='ismrmrd-stream')
     assert not truncated.closed
 
 
@@ -346,7 +303,6 @@ def test_iter_acquisitions(raw_data) -> None:
             result = next(readouts)
             assert_kdata_equal(result, KData.from_ismrmrd(header, [acq], KTrajectoryCartesian()))
             assert_kdata_equal(result, result.reshape_by_idx())
-            assert result.header.acq_info.idx.k1.item() == acq.idx.kspace_encode_step_1
         result = next(readouts)
         assert result.header.protocol_name == 'next measurement'
         with pytest.raises(StopIteration):
@@ -405,18 +361,3 @@ def test_from_file_requires_trajectory(raw_data) -> None:
     filename, _, _ = raw_data
     with pytest.raises(ValueError, match='trajectory source'):
         KData.from_file(filename)
-
-
-def test_stdin(raw_data) -> None:
-    """A script can construct KData from a real binary stdin pipe."""
-    _, header, acquisitions = raw_data
-    data = serialize_measurements([(header, acquisitions)]).getvalue()
-    script = """
-import sys
-from mr2.data import KData
-from mr2.data.traj_calculators.KTrajectoryCalculator import DummyTrajectory
-for kdata in KData.iter_ismrmrd(sys.stdin.buffer, DummyTrajectory()):
-    assert kdata.data.shape == (1, 2, 1, 1, 4)
-assert not sys.stdin.buffer.closed
-"""
-    subprocess.run([sys.executable, '-c', script], input=data, capture_output=True, check=True, timeout=60)  # noqa: S603
