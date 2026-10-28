@@ -7,19 +7,9 @@ import torch
 from mr2.algorithms.reconstruction import GrappaReconstruction
 from mr2.data import CsmData, IData, KData, KNoise, KTrajectory, SpatialDimension
 from mr2.operators import FastFourierOp, FourierOp
-from mr2.phantoms import EllipsePhantom
-from mr2.phantoms.coils import birdcage_2d
 from mr2.utils import RandomGenerator, unsqueeze_at
 from tests import relative_image_difference
-from tests.algorithms.reconstruction.conftest import fully_sampled_kdata
 from torch.nn.functional import conv3d
-
-
-def _coil_volume(shape: tuple[int, int, int]) -> torch.Tensor:
-    """Eight-coil ellipse image with intensity varying along z."""
-    matrix = SpatialDimension(*shape)
-    profile = torch.linspace(0.5, 1.0, shape[0])[:, None, None]
-    return EllipsePhantom().image_space(matrix) * birdcage_2d(8, matrix) * profile
 
 
 def _acquired(kdata: KData, mask: torch.Tensor) -> KData:
@@ -29,28 +19,31 @@ def _acquired(kdata: KData, mask: torch.Tensor) -> KData:
 
 
 @pytest.fixture
-def grappa_data() -> tuple[KData, torch.Tensor, KData]:
+def grappa_data(fully_sampled_kdata: KData) -> tuple[KData, torch.Tensor, KData]:
     """Ellipse acquisition with alternate phase-encoding lines missing."""
-    full = fully_sampled_kdata(_coil_volume((1, 16, 18)).to(torch.complex128))
+    full = fully_sampled_kdata
     acquired = torch.ones(full.data.shape[-3:], dtype=torch.bool)
     acquired[..., 1::2, :] = False
     return full, acquired, _acquired(full, acquired)
 
 
 @pytest.mark.parametrize(
-    ('shape', 'kernel', 'acceleration'),
-    [((1, 24, 20), (1, 3, 3), 2), ((1, 24, 20), (1, 5, 3), 3), ((9, 16, 12), (3, 3, 3), 2)],
+    ('fully_sampled_kdata', 'kernel', 'acceleration'),
+    [
+        ((shape, dtype), kernel, acceleration)
+        for shape, kernel, acceleration in [
+            ((1, 24, 20), (1, 3, 3), 2),
+            ((1, 24, 20), (1, 5, 3), 3),
+            ((9, 16, 12), (3, 3, 3), 2),
+        ]
+        for dtype in (torch.complex64, torch.complex128)
+    ],
+    indirect=['fully_sampled_kdata'],
 )
-@pytest.mark.parametrize('dtype', [torch.complex64, torch.complex128])
-def test_grappa_reconstruction(
-    shape: tuple[int, int, int],
-    kernel: tuple[int, int, int],
-    acceleration: int,
-    dtype: torch.dtype,
-) -> None:
+def test_grappa_reconstruction(fully_sampled_kdata: KData, kernel: tuple[int, int, int], acceleration: int) -> None:
     """Reconstruct the ellipse phantom using cropped ACS and trajectory-derived sampling."""
-    full = fully_sampled_kdata(_coil_volume(shape).to(dtype))
-    acquired = torch.zeros(shape, dtype=torch.bool)
+    full = fully_sampled_kdata
+    acquired = torch.zeros(full.data.shape[-3:], dtype=torch.bool)
     acquired[..., ::acceleration, :] = True
     acquired[..., 6:10, :] = True
     data = _acquired(full, acquired)
@@ -77,10 +70,11 @@ def test_grappa_reconstruction_zero_and_coil_combination(grappa_data: tuple[KDat
     torch.testing.assert_close(explicit(data).data, reconstruction(data).data)
 
 
-def test_grappa_batched_volume() -> None:
+@pytest.mark.parametrize('fully_sampled_kdata', [((9, 16, 12), torch.complex128)], indirect=True)
+def test_grappa_batched_volume(fully_sampled_kdata: KData) -> None:
     """Use noncontiguous shared cropped ACS for separate 3D data batches."""
-    image = _coil_volume((9, 16, 12)).to(torch.complex128)
-    full = fully_sampled_kdata(torch.cat((image, (2 - 1j) * image)).transpose(-1, -2))
+    full = fully_sampled_kdata
+    full.data = torch.cat((full.data, (2 - 1j) * full.data))
     acs = full.data[:1, :, 1:-1, 2:-2, 2:-2]
     acquired = torch.ones(full.data.shape[-3:], dtype=torch.bool)
     acquired[..., 1::2] = False
@@ -104,9 +98,10 @@ def test_grappa_reconstruction_cuda(grappa_data: tuple[KData, torch.Tensor, KDat
     torch.testing.assert_close(reconstruction.cpu()(data).data, expected)
 
 
-def test_grappa_full_sampling_and_recalibration() -> None:
+@pytest.mark.parametrize('fully_sampled_kdata', [((1, 24, 20), torch.complex128)], indirect=True)
+def test_grappa_full_sampling_and_recalibration(fully_sampled_kdata: KData) -> None:
     """A full grid is unchanged, and updating a trajectory recalibrates its kernels."""
-    full = fully_sampled_kdata(_coil_volume((1, 24, 20)).to(torch.complex128))
+    full = fully_sampled_kdata
     reconstruction = GrappaReconstruction(full, full.data, (1, 5, 3), regularization=0, csm=None)
     assert torch.equal(reconstruction.interpolate(full), full.data)
     for acceleration in (2, 3):
