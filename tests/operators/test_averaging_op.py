@@ -72,6 +72,17 @@ def test_averaging_adjoint_invalid_groups(
 
 
 @pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('group', [[], slice(0, 0), [False, False], torch.tensor([False, False])])
+def test_averaging_forward_empty_group(group: list[bool] | slice | torch.Tensor, device: str) -> None:
+    """An empty group raises instead of producing a NaN mean."""
+    if isinstance(group, torch.Tensor):
+        group = group.to(device)
+    op = AveragingOp(-1, [group], domain_size=2)
+    with pytest.raises(ValueError, match='nonempty groups'):
+        op(torch.ones(2, device=device))
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
 @pytest.mark.parametrize(
     'group',
     [(0, 2), (-3, -1), [True, False, True], (True, False, True), torch.tensor([True, False, True]), slice(0, 3, 2)],

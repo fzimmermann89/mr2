@@ -74,8 +74,13 @@ class AveragingOp(LinearOperator):
         self._last_domain_size = x.shape[self.dim]
 
         placeholder = (slice(None),) * (self.dim % x.ndim)
-        averaged = torch.stack([x[(*placeholder, i)].mean(self.dim) for i in self.idx], self.dim)
-        return (averaged,)
+        averaged = []
+        for group in self.idx:
+            selected = x[(*placeholder, group)]
+            if selected.shape[self.dim] == 0:
+                raise ValueError('Averaging requires nonempty groups.')
+            averaged.append(selected.mean(self.dim))
+        return (torch.stack(averaged, self.dim),)
 
     def adjoint(self, x: torch.Tensor) -> tuple[torch.Tensor]:
         """Apply the adjoint of the averaging operator.
