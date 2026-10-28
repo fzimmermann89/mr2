@@ -14,13 +14,6 @@ class Jacobian(LinearOperator):
 
     This operator implements the Jacobian of a (non-linear) operator at a given point :math:`x_0` as a LinearOperator,
     i.e. a linearization of the operator at the point :math:`x_0`.
-
-    Notes
-    -----
-    If :math:`x_0` requires gradients and is not a `torch.nn.Parameter`, convert it to the desired device and dtype
-    before constructing the Jacobian; converting the Jacobian does not convert these tensors.
-    Convert this operator to the desired device and dtype before evaluating it.
-    Otherwise, adjoint evaluations and the cached value at :math:`x_0` can still use the original device and dtype.
     """
 
     def __init__(self, operator: Operator[torch.Tensor, tuple[torch.Tensor]], *x0: torch.Tensor):

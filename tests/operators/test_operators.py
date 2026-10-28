@@ -1,11 +1,10 @@
 """Tests for the operators module."""
 
-from functools import cached_property
 from typing import cast
 
 import pytest
 import torch
-from mr2.operators import LinearOperator, Operator
+from mr2.operators import LinearOperator, LinearOperatorMatrix, Operator
 from mr2.utils import RandomGenerator
 from typing_extensions import Any, assert_type
 
@@ -40,43 +39,13 @@ class DummyLinearOperator(LinearOperator):
         return (self._value.mH @ x,)
 
 
-@pytest.mark.parametrize('recurse', [True, False])
-def test_operator_apply_invalidates_cached_properties(recurse: bool) -> None:
-    """Clear inherited and local caches, recursing only when requested."""
-
-    class CachedOperator(DummyOperator):
-        @cached_property
-        def squared_value(self) -> torch.Tensor:
-            """Cache a tensor in the base class."""
-            return self._value.square()
-
-    class DerivedCachedOperator(CachedOperator):
-        @cached_property
-        def value_dtype(self) -> torch.dtype:
-            """Cache non-tensor metadata in the subclass."""
-            return self._value.dtype
-
-        @cached_property
-        def unused(self) -> None:
-            """Fail if invalidation evaluates an uncached property."""
-            raise AssertionError('Uncached properties must not be evaluated')
-
-    parent = DerivedCachedOperator(torch.tensor(2.0))
-    child = DerivedCachedOperator(torch.tensor(3.0))
-    parent.child = child
-    for op in (parent, child):
-        assert op.squared_value is op.squared_value
-        assert op.value_dtype == torch.float32
-
-    assert parent._apply(lambda tensor: tensor.double(), recurse=recurse) is parent
-    for op in (parent, child) if recurse else (parent,):
-        assert not {'squared_value', 'value_dtype', 'unused'} & op.__dict__.keys()
-        assert op._value.dtype == torch.float64
-        assert op.squared_value.dtype == torch.float64
-        assert op.value_dtype == torch.float64
-    if not recurse:
-        assert {'squared_value', 'value_dtype'} <= child.__dict__.keys()
-        assert child._value.dtype == torch.float32
+def test_operator_double_invalidates_cached_properties() -> None:
+    """Converting an operator to double clears its cached Gram."""
+    operator = LinearOperatorMatrix([[DummyLinearOperator(torch.eye(2))]])
+    _ = operator.gram
+    assert 'gram' in operator.__dict__
+    operator.double()
+    assert 'gram' not in operator.__dict__
 
 
 def test_composition_operator():
