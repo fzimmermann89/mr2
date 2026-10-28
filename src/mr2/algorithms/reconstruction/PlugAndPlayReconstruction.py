@@ -24,7 +24,8 @@ class PlugAndPlayReconstruction(DirectReconstruction):
     Uses `~mr2.algorithms.optimizers.admm.admm_l2` for iteration and
     `DirectReconstruction` for acquisition setup. The initial image is the adjoint
     reconstruction, including density compensation if available, without an
-    additional normalization. Denoiser strength must match this image scale.
+    additional normalization. Choose denoiser strength for the reconstruction's
+    complex image convention and intensity scale.
     Density compensation only affects initialization. An arbitrary denoiser
     need not define a regularization objective or guarantee convergence.
 

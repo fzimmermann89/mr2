@@ -107,7 +107,7 @@ def test_zero_data(tolerance: float, expected_iterations: int, cg_tolerance: flo
     assert len(statuses) == expected_iterations
     assert [s['iteration_number'] for s in statuses] == list(range(expected_iterations))
     torch.testing.assert_close(result, data)
-    assert statuses[-1]['data_fidelity'] == 0
+    assert statuses[-1]['data_fidelity']() == 0
     assert torch.isfinite(result).all()
 
 
@@ -137,7 +137,7 @@ def test_callback_stop_and_initial_state() -> None:
     assert 'objective' not in statuses[0]
     torch.testing.assert_close(result, expected_x)
     torch.testing.assert_close(statuses[0]['z'][0], (expected_x + 0.5) * 0.5)
-    torch.testing.assert_close(statuses[0]['data_fidelity'], 0.5 * (expected_x - data).square().sum())
+    torch.testing.assert_close(statuses[0]['data_fidelity'](), 0.5 * (expected_x - data).square().sum())
 
 
 def test_autograd() -> None:
@@ -294,7 +294,7 @@ def test_block_updates_and_residuals(dtype: torch.dtype) -> None:
         torch.testing.assert_close(torch.stack(status['primal_residual']), primal)
         torch.testing.assert_close(torch.stack(status['dual_residual']), dual)
         torch.testing.assert_close(torch.stack(status['u']), u)
-        torch.testing.assert_close(status['data_fidelity'], 0.5 * (x - data).abs().square().sum())
+        torch.testing.assert_close(status['data_fidelity'](), 0.5 * (x - data).abs().square().sum())
         assert 'objective' not in status
         z = z_new
     assert len(statuses) == 2
@@ -397,3 +397,36 @@ def test_functional_broadcast_and_promotion(case: str) -> None:
     torch.testing.assert_close(result, expected)
     assert len(statuses) == 2
     assert 'objective' in statuses[-1]
+
+
+@pytest.mark.parametrize('as_callable', [False, True])
+def test_callback_data_fidelity_is_lazy(as_callable: bool) -> None:
+    """Logging callbacks avoid extra forward calls; saved diagnostics bind their iterate."""
+    data = torch.tensor([2.0, 3.0], dtype=torch.float64)
+    operator = 2 * IdentityOp()
+    regularizer = L1Norm(divide_by_n=False)
+    forward_calls: list[None] = []
+    hook = operator.register_forward_hook(lambda *_: forward_calls.append(None))
+    g = regularizer.prox if as_callable else regularizer
+    admm_l2(g, operator, data, IdentityOp(), torch.zeros_like(data), tau=0.7, max_iterations=2, cg_tolerance=1e-12)
+    baseline_calls = len(forward_calls)
+    forward_calls.clear()
+    statuses: list[ADMML2Status] = []
+    admm_l2(
+        g,
+        operator,
+        data,
+        IdentityOp(),
+        torch.zeros_like(data),
+        callback=statuses.append,
+        tau=0.7,
+        max_iterations=2,
+        cg_tolerance=1e-12,
+    )
+    assert len(forward_calls) == baseline_calls
+    assert len(statuses) == 2
+    for index, status in enumerate(statuses, start=1):
+        expected = 0.5 * (2 * status['solution'][0] - data).square().sum()
+        torch.testing.assert_close(status['data_fidelity'](), expected)
+        assert len(forward_calls) == baseline_calls + index
+    hook.remove()

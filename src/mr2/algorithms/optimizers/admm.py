@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from functools import partial
 from typing import Literal
 
 import torch
@@ -88,7 +89,8 @@ class ADMML2Status(OptimizerStatus):
     dual_residual
         Dual residual A.H(z - z_previous) / tau, in the primal space.
     data_fidelity
-        Current value of 0.5 * ||op(x) - b|| squared.
+        Zero-argument callable returning 0.5 * ||op(x) - b|| squared for this
+        iteration. The forward operator is evaluated only when invoked.
     """
 
     objective: NotRequired[Callable[[*tuple[torch.Tensor, ...]], torch.Tensor]]
@@ -98,7 +100,7 @@ class ADMML2Status(OptimizerStatus):
 
     primal_residual: tuple[torch.Tensor, ...]
     dual_residual: tuple[torch.Tensor, ...]
-    data_fidelity: torch.Tensor
+    data_fidelity: Callable[[], torch.Tensor]
 
 
 def admm_linear(
@@ -325,14 +327,14 @@ def admm_l2(
     tau
         Positive finite real inverse penalty: tau = 1/rho. Callable updates
         require a scalar tensor. Functional updates with solution stopping also
-        accept broadcastable tensors, preserving the existing convention.
+        accept broadcastable tensors.
         Residual stopping requires a single value.
     max_iterations
         Maximum number of ADMM iterations.
     tolerance
         Nonnegative finite relative stopping tolerance. Zero disables stopping.
     stopping_criterion
-        ``'solution'`` preserves relative x-change stopping:
+        ``'solution'`` checks relative x-change:
         :math:`\|x_{k+1}-x_k\|_2 < tolerance \|x_{k+1}\|_2`.
         ``'residual'`` requires both ``||Ax-z|| <= tolerance * max(||Ax||, ||z||)``
         and ``||A.H(z-z_previous)/tau|| <= tolerance * ||A.H(u)/tau||``.
@@ -353,7 +355,7 @@ def admm_l2(
         Optional callback called after each iteration with `ADMML2Status`.
         If it returns `False`, iterations stop early. With residual stopping,
         callbacks include the converged iteration. With solution stopping, an
-        early return precedes the callback, preserving existing behavior.
+        early return precedes the callback.
         Status includes an objective only when ``g`` is a functional.
 
     Returns
@@ -490,7 +492,7 @@ def admm_l2(
                 u=u,
                 primal_residual=primal_residual,
                 dual_residual=dual_residual,
-                data_fidelity=data_fidelity(*x),
+                data_fidelity=partial(data_fidelity, *x),
             )
             if functional is not None:
                 status['objective'] = lambda *x_: data_fidelity(*x_) + functional(*a_matrix(*x_))[0]

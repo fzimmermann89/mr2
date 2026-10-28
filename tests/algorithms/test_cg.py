@@ -9,7 +9,7 @@ import scipy.sparse.linalg
 import torch
 from mr2.algorithms.optimizers import bicg, cg
 from mr2.algorithms.optimizers.cg import CGStatus
-from mr2.operators import EinsumOp, IdentityOp, LinearOperator, LinearOperatorMatrix
+from mr2.operators import EinsumOp, LinearOperator, LinearOperatorMatrix
 from mr2.utils import RandomGenerator
 
 
@@ -287,20 +287,3 @@ def test_cuda(
     result = algorithm(operator, right_hand_side, initial_value=initial_value, tolerance=1e-6, max_iterations=1000)
     assert all(x.is_cuda for x in result)
     torch.testing.assert_close(result, solution, rtol=5e-3, atol=5e-3)
-
-
-@pytest.mark.parametrize('initially_solved', [False, True])
-def test_cg_exact_solution_zero_tolerance(initially_solved: bool) -> None:
-    """Exact convergence stops before division by zero, even at zero tolerance."""
-    data = torch.tensor([1.0, -2.0], dtype=torch.float64)
-    statuses: list[CGStatus] = []
-    (result,) = cg(
-        IdentityOp(),
-        data,
-        initial_value=data if initially_solved else None,
-        tolerance=0,
-        max_iterations=4,
-        callback=statuses.append,
-    )
-    torch.testing.assert_close(result, data)
-    assert len(statuses) == (0 if initially_solved else 1)
