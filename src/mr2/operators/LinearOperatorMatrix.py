@@ -37,7 +37,7 @@ class LinearOperatorMatrix(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torc
     Basic arithmetic operations are supported with `~mr2.operators.LinearOperator`, tensors and scalars.
     In these, a `~mr2.operators.LinearOperator`, tensor or scalar :math:`A` acts as :math:`A` times the identity
     matrix: ``M + A`` adds :math:`A` to the diagonal blocks of a square matrix,
-    ``A @ M`` and ``M @ A`` compose :math:`A` with each block.
+    ``S @ M`` and ``M @ S`` compose a linear operator :math:`S` with each block.
     Use ``A | B`` for horizontal stacking (side-by-side columns) and ``A % B`` for vertical stacking (stacked rows).
 
     """
@@ -107,8 +107,8 @@ class LinearOperatorMatrix(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torc
     def __getitem__(self, idx: _IdxType) -> Self | LinearOperator:
         """Index the Operator Matrix.
 
-        Follows the indexing rules of sequences, numpy arrays and torch tensors:
-        Integers and sequences of integers must be in range, slice bounds are clamped.
+        Integers and sequences of integers must be in range. Slice bounds are clamped as for Python sequences.
+        Empty selections raise `IndexError`.
 
         Parameters
         ----------
@@ -166,18 +166,14 @@ class LinearOperatorMatrix(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torc
         """Representation of the Operator Matrix."""
         return f'LinearOperatorMatrix(shape={self._shape}, operators={self._operators})'
 
-    def _add_to_diagonal(self, other: LinearOperator | torch.Tensor | complex, right: bool) -> Self:
-        """Add ``other`` times the identity matrix, i.e. ``other`` to each diagonal block.
-
-        If `right` is `True`, ``op + other`` is used for the diagonal blocks, otherwise ``other + op``.
-        """
+    def _add_to_diagonal(self, other: LinearOperator | torch.Tensor | complex) -> Self:
+        """Add ``other`` times the identity matrix, i.e. ``other`` to each diagonal block."""
         if not self.shape[0] == self.shape[1]:
             raise ValueError('Cannot add a LinearOperator, tensor or scalar to a non-square OperatorMatrix.')
         operators = [
-            [(op + other if right else other + op) if i == j else op for j, op in enumerate(row)]
-            for i, row in enumerate(self._operators)
+            [op + other if i == j else op for j, op in enumerate(row)] for i, row in enumerate(self._operators)
         ]
-        return self.__class__(cast(list[list[LinearOperator]], operators))
+        return self.__class__(operators)
 
     # Note: The type ignores are needed because we currently cannot do arithmetic operations with non-linear operators.
     def __add__(self, other: Self | LinearOperator | torch.Tensor | complex) -> Self:  # type: ignore[override]
@@ -195,7 +191,7 @@ class LinearOperatorMatrix(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torc
             ]
             return self.__class__(operators)
         if isinstance(other, LinearOperator | torch.Tensor | complex | float | int):
-            return self._add_to_diagonal(other, right=True)
+            return self._add_to_diagonal(other)
         return NotImplemented
 
     def __radd__(self, other: LinearOperator | torch.Tensor | complex) -> Self:  # type: ignore[misc]
@@ -204,7 +200,7 @@ class LinearOperatorMatrix(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torc
         See `__add__`.
         """
         if isinstance(other, LinearOperator | torch.Tensor | complex | float | int):
-            return self._add_to_diagonal(other, right=False)
+            return self._add_to_diagonal(other)
         return NotImplemented
 
     def __neg__(self) -> Self:
@@ -226,7 +222,7 @@ class LinearOperatorMatrix(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torc
         See `__add__`.
         """
         if isinstance(other, LinearOperator | torch.Tensor | complex | float | int):
-            return (-self)._add_to_diagonal(other, right=False)
+            return -self + other
         return NotImplemented
 
     def __mul__(self, other: torch.Tensor | Sequence[torch.Tensor | complex] | complex) -> Self:

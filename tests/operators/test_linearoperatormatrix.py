@@ -39,6 +39,18 @@ def test_linearoperatormatrix_add_matrix():
     torch.testing.assert_close(result, expected)
 
 
+def test_linearoperatormatrix_sub_matrix():
+    """Subtract matrices with matching shapes and reject mismatched shapes."""
+    rng = RandomGenerator(0)
+    matrix1 = random_linearoperatormatrix((2, 3), (3, 10), rng)
+    matrix2 = random_linearoperatormatrix((2, 3), (3, 10), rng)
+    vector = rng.complex64_tensor((3, 10))
+    expected = tuple(a - b for a, b in zip(matrix1(*vector), matrix2(*vector), strict=True))
+    torch.testing.assert_close((matrix1 - matrix2)(*vector), expected)
+    with pytest.raises(ValueError, match='shapes do not match'):
+        matrix1 - random_linearoperatormatrix((3, 2), (3, 10), rng)
+
+
 def test_linearoperatormatrix_add_tensor_nonsquare():
     """Test failure of addition of tensor to non-square matrix."""
     rng = RandomGenerator(0)
