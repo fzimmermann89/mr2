@@ -58,7 +58,7 @@ class CsmData(IData, init=False):
         acs: KData,
         singular_value_threshold: float = 0.02,
         kernel_width: int = 6,
-        crop_threshold: float = 0.3,
+        crop_threshold: float = 0.8,
         n_iterations: int = 10,
         calibration_size: int | SpatialDimension[int] | None = None,
     ) -> Self:
@@ -74,12 +74,13 @@ class CsmData(IData, init=False):
             undersampled outside its central calibration region. Non-Cartesian
             calibration is approximately gridded using density compensation.
         singular_value_threshold
-            threshold for the singular value decomposition
+            Relative singular-value cutoff, matching SigPy. To reproduce BART
+            ``ecalib -t t``, use ``sqrt(t)``. See `~mr2.algorithms.csm.espirit`.
         kernel_width
             width of the kernel for the espirit algorithm
         crop_threshold
-            Eigenvalue threshold for cropping the maps. Defaults to 0.3 here;
-            the tensor-level `~mr2.algorithms.csm.espirit` defaults to 0.1.
+            Eigenvalue cutoff for map support. Defaults to 0.8, as in the
+            tensor-level `~mr2.algorithms.csm.espirit`.
         n_iterations
             Number of power iterations.
         calibration_size

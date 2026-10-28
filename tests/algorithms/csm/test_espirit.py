@@ -53,3 +53,43 @@ def test_espirit_spatial_complex_phase(ny: int) -> None:
     actual = espirit(kspace, SpatialDimension(1, ny, 16), kernel_width=3, n_iterations=30)
     overlap = (actual.conj() * reference).sum(dim=0).abs()
     torch.testing.assert_close(overlap, torch.ones_like(overlap), atol=1e-6, rtol=1e-6)
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('dtype', [torch.complex64, torch.complex128])
+@pytest.mark.parametrize(('support', 'image_shape'), [((1, 3, 3), (1, 4, 5)), ((2, 3, 3), (3, 6, 7))])
+def test_espirit_covariance(support, image_shape, dtype, device) -> None:
+    """Small-grid correlations match direct kernel products, including overlapping lags."""
+    from math import prod
+
+    from mr2.algorithms.csm.espirit import _espirit_covariance
+
+    kernels = torch.randn(7, 3, *support, dtype=dtype, device=device)
+    images = torch.fft.fftshift(
+        torch.fft.ifftn(kernels, s=image_shape, dim=(-3, -2, -1), norm='ortho'), dim=(-3, -2, -1)
+    )
+    expected = torch.einsum('nczyx,ndzyx->cdzyx', images, images.conj()) * (prod(image_shape) / prod(support))
+    torch.testing.assert_close(_espirit_covariance(kernels, image_shape), expected)
+    # A complete orthonormal kernel basis gives identity covariance.
+    basis = torch.eye(2 * prod(support), dtype=dtype, device=device).reshape(-1, 2, *support)
+    identity = torch.eye(2, dtype=dtype, device=device)[:, :, None, None, None].expand(2, 2, *image_shape)
+    torch.testing.assert_close(_espirit_covariance(basis, image_shape), identity)
+
+
+@pytest.mark.parametrize('shape', [(1, 4, 4), (1, 8, 9)])
+def test_espirit_gram_subspace(shape) -> None:
+    """Gram eigenvectors retain the same complex subspace as SVD for wide and tall calibration."""
+    from unittest.mock import patch
+
+    from mr2.algorithms.csm.espirit import _espirit_covariance
+
+    calibration = torch.randn(3, *shape, dtype=torch.complex128)
+    matrix = calibration.unfold(1, 1, 1).unfold(2, 3, 1).unfold(3, 3, 1)
+    matrix = matrix.permute(1, 2, 3, 0, 4, 5, 6).reshape(-1, 27)
+    _, singular_values, vh = torch.linalg.svd(matrix, full_matrices=False)
+    expected = vh[singular_values > 0.02 * singular_values.max()]
+    with patch('mr2.algorithms.csm.espirit._espirit_covariance', wraps=_espirit_covariance) as covariance:
+        espirit(calibration, SpatialDimension(*shape), kernel_width=3)
+    actual = covariance.call_args.args[0].reshape(-1, 27)
+    assert actual.shape == expected.shape
+    torch.testing.assert_close(actual.H @ actual, expected.H @ expected)

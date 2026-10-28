@@ -148,7 +148,7 @@ def test_CsmData_kdata_espirit_indexed_acs(ismrmrd_cart_single_rep) -> None:
     assert acs.data.shape[-3:] != acs.header.encoding_matrix.zyx
 
     csm = CsmData.from_kdata_espirit(acs, n_iterations=3)
-    expected = espirit(acs.acs()[0], acs.header.encoding_matrix, crop_threshold=0.3, n_iterations=3)
+    expected = espirit(acs.acs()[0], acs.header.encoding_matrix, crop_threshold=0.8, n_iterations=3)
     expected = ZeroPadOp((-3, -2, -1), acs.header.encoding_matrix.zyx, acs.header.recon_matrix.zyx)(expected)[0]
 
     torch.testing.assert_close(csm.data[0], expected)
