@@ -6,8 +6,11 @@ import pytest
 import torch
 from mr2.algorithms.reconstruction import GrappaReconstruction
 from mr2.data import AcqInfo, CsmData, IData, KData, KHeader, KNoise, KTrajectory, SpatialDimension
+from mr2.data.traj_calculators import KTrajectoryCartesian
 from mr2.operators import FastFourierOp, FourierOp
 from mr2.phantoms.coils import birdcage_2d
+from mr2.utils import RandomGenerator, unsqueeze_at
+from tests import relative_image_difference
 from tests.phantoms import EllipsePhantomTestData
 from torch.nn.functional import conv3d
 
@@ -24,9 +27,8 @@ def _phantom_kspace(phantom: EllipsePhantomTestData, shape: tuple[int, int, int]
 def _kdata(header: KHeader, full: torch.Tensor, acquired: torch.Tensor) -> KData:
     """Pack acquired Cartesian samples using a copy of the existing header fixture."""
     shape = full.shape[-3:]
-    coordinates = torch.meshgrid(*(torch.arange(n, device=full.device) - n // 2 for n in shape), indexing='ij')
-    kz, ky, kx = (coordinate[acquired].reshape(1, 1, 1, 1, -1) for coordinate in coordinates)
-    trajectory = KTrajectory(kz, ky, kx)
+    trajectory = KTrajectoryCartesian.fullysampled(SpatialDimension(*shape)).to(full.device)
+    trajectory = KTrajectory.from_tensor(unsqueeze_at(trajectory.as_tensor()[..., acquired], dim=-2, n=2))
     header = header.clone()
     header.recon_matrix = SpatialDimension(*shape)
     header.encoding_matrix = SpatialDimension(*shape)
@@ -34,7 +36,7 @@ def _kdata(header: KHeader, full: torch.Tensor, acquired: torch.Tensor) -> KData
     header.encoding_fov = SpatialDimension(1.0, 1.0, 1.0)
     header.acq_info = AcqInfo()
     header.trajectory = None
-    return KData(data=full[..., acquired].unsqueeze(-2).unsqueeze(-2), header=header, traj=trajectory)
+    return KData(data=unsqueeze_at(full[..., acquired], dim=-2, n=2), header=header, traj=trajectory)
 
 
 @pytest.fixture
@@ -70,7 +72,7 @@ def test_grappa_reconstruction(
     acs = full[..., 2:-2, 2:-2]
     reconstruction = GrappaReconstruction(data, acs, kernel, regularization=0, csm=None)
     completed = reconstruction.interpolate(data)
-    assert (completed - full).norm() < 0.03 * full.norm()
+    assert relative_image_difference(completed, full) < 0.03
     assert torch.equal(completed[..., acquired], full[..., acquired])
     (expected,) = FastFourierOp().H(completed)
     torch.testing.assert_close(reconstruction(data).data, expected, atol=2e-5, rtol=2e-5)
@@ -101,7 +103,7 @@ def test_grappa_batched_volume(ellipse_phantom: EllipsePhantomTestData, random_k
     acquired[..., 1::2] = False
     data = _kdata(random_kheader, full, acquired)
     reconstruction = GrappaReconstruction(data, acs, (3, 3, 3), regularization=0, csm=None)
-    assert (reconstruction.interpolate(data) - full).norm() < 0.03 * full.norm()
+    assert relative_image_difference(reconstruction.interpolate(data), full) < 0.03
 
 
 @pytest.mark.cuda
@@ -134,7 +136,7 @@ def test_grappa_full_sampling_and_recalibration(
         mask[..., ::acceleration, :] = True
         data = _kdata(random_kheader, full, mask)
         reconstruction.recalculate_fourierop(data)
-        assert (reconstruction.interpolate(data) - full).norm() < 0.03 * full.norm()
+        assert relative_image_difference(reconstruction.interpolate(data), full) < 0.03
 
 
 def test_grappa_reject_noncartesian(grappa_data: tuple[torch.Tensor, torch.Tensor, KData]) -> None:
@@ -198,7 +200,7 @@ def test_grappa_recalculate_csm(grappa_data: tuple[torch.Tensor, torch.Tensor, K
     reconstruction.recalculate_csm(data, calculate, noise=False)
     torch.testing.assert_close(reconstruction(data).data, reference)
 
-    noise = KNoise(torch.randn(1, full.shape[-4], 1, 1, 100, dtype=full.dtype))
+    noise = KNoise(RandomGenerator(0).randn_tensor((1, full.shape[-4], 1, 1, 100), dtype=full.dtype))
     with pytest.raises(ValueError, match='Prewhiten acquisition and ACS together'):
         reconstruction.recalculate_csm(data, noise=noise)
 
@@ -242,7 +244,7 @@ def test_grappa_image_geometry(
 @pytest.mark.parametrize('dtype', [torch.complex64, torch.complex128])
 def test_grappa_calibration_explicit(regularization: float, dtype: torch.dtype) -> None:
     """Fit the acquired neighbors of a missing center, matching an explicit solve."""
-    acs = torch.randn(2, 1, 5, 9, generator=torch.Generator().manual_seed(13), dtype=dtype)
+    acs = RandomGenerator(13).randn_tensor((2, 1, 5, 9), dtype=dtype)
     pattern = torch.zeros((1, 3, 3), dtype=torch.bool)
     pattern[..., ::2] = True
     offsets = [(dy, dx) for dy, dx in product(range(-1, 2), repeat=2) if dx != 0]
@@ -271,8 +273,8 @@ def test_grappa_interpolation(
     dtype: torch.dtype, shape: tuple[int, int, int], kernel_size: tuple[int, int, int]
 ) -> None:
     """Match complex cross-correlation, including zero boundaries."""
-    generator = torch.Generator().manual_seed(42)
-    data = torch.randn(2, 3, *shape, generator=generator, dtype=dtype)
+    rng = RandomGenerator(42)
+    data = rng.randn_tensor((2, 3, *shape), dtype=dtype)
     pattern = torch.zeros(kernel_size, dtype=torch.bool)
     pattern[..., 0] = True
     kernel = GrappaReconstruction.calibrate(data[0], pattern)
@@ -287,9 +289,9 @@ def test_grappa_interpolation(
 
 def test_grappa_shared_calibration_and_scale() -> None:
     """Broadcast fitted kernels over batches without repeating calibration."""
-    generator = torch.Generator().manual_seed(42)
-    acs = torch.randn(1, 3, 2, 1, 12, 13, generator=generator, dtype=torch.complex128)
-    data = torch.randn(2, 3, 2, 1, 8, 9, generator=generator, dtype=acs.dtype)
+    rng = RandomGenerator(42)
+    acs = rng.randn_tensor((1, 3, 2, 1, 12, 13), dtype=torch.complex128)
+    data = rng.randn_tensor((2, 3, 2, 1, 8, 9), dtype=acs.dtype)
     pattern = torch.zeros((1, 3, 3), dtype=torch.bool)
     pattern[..., ::2] = True
     kernel = GrappaReconstruction.calibrate(acs, pattern)
@@ -320,7 +322,7 @@ def test_grappa_reject_center_source() -> None:
 @pytest.mark.parametrize('regularization', [0.0, 0.03])
 def test_grappa_underdetermined_calibration(regularization: float) -> None:
     """Allow more source features than rows and match an augmented least-squares solve."""
-    acs = torch.randn(4, 1, 1, 5, dtype=torch.complex128, generator=torch.Generator().manual_seed(27))
+    acs = RandomGenerator(27).randn_tensor((4, 1, 1, 5), dtype=torch.complex128)
     pattern = torch.tensor([[[True, False, True]]])
     sources = torch.stack((acs[:, 0, 0, :-2].mT, acs[:, 0, 0, 2:].mT), dim=-1).flatten(-2)
     targets = acs[:, 0, 0, 1:-1].mT
@@ -335,7 +337,7 @@ def test_grappa_underdetermined_calibration(regularization: float) -> None:
 
 def test_grappa_zero_calibration_batch() -> None:
     """An empty-signal batch yields zero kernels without affecting neighboring batches."""
-    acs = torch.randn(2, 2, 1, 4, 5, dtype=torch.complex128, generator=torch.Generator().manual_seed(28))
+    acs = RandomGenerator(28).randn_tensor((2, 2, 1, 4, 5), dtype=torch.complex128)
     acs[0] = 0
     pattern = torch.tensor([[[True, False, True]]])
     kernels = GrappaReconstruction.calibrate(acs, pattern)
