@@ -5,49 +5,36 @@ from itertools import product
 import pytest
 import torch
 from mr2.algorithms.reconstruction import GrappaReconstruction
-from mr2.data import AcqInfo, CsmData, IData, KData, KHeader, KNoise, KTrajectory, SpatialDimension
-from mr2.data.traj_calculators import KTrajectoryCartesian
+from mr2.data import CsmData, IData, KData, KNoise, KTrajectory, SpatialDimension
 from mr2.operators import FastFourierOp, FourierOp
+from mr2.phantoms import EllipsePhantom
 from mr2.phantoms.coils import birdcage_2d
 from mr2.utils import RandomGenerator, unsqueeze_at
 from tests import relative_image_difference
-from tests.phantoms import EllipsePhantomTestData
+from tests.algorithms.reconstruction.conftest import fully_sampled_kdata
 from torch.nn.functional import conv3d
 
 
-def _phantom_kspace(phantom: EllipsePhantomTestData, shape: tuple[int, int, int], dtype: torch.dtype) -> torch.Tensor:
-    """Sample the existing ellipse phantom with birdcage coil sensitivities."""
-    dimensions = SpatialDimension(*shape)
-    image = phantom.phantom.image_space(dimensions).to(dtype)
-    image = image * torch.linspace(0.5, 1.0, shape[0]).reshape(1, 1, -1, 1, 1)
-    (kspace,) = FastFourierOp()(image * birdcage_2d(8, dimensions).to(dtype))
-    return kspace[0]
+def _coil_volume(shape: tuple[int, int, int]) -> torch.Tensor:
+    """Eight-coil ellipse image with intensity varying along z."""
+    matrix = SpatialDimension(*shape)
+    profile = torch.linspace(0.5, 1.0, shape[0])[:, None, None]
+    return EllipsePhantom().image_space(matrix) * birdcage_2d(8, matrix) * profile
 
 
-def _kdata(header: KHeader, full: torch.Tensor, acquired: torch.Tensor) -> KData:
-    """Pack acquired Cartesian samples using a copy of the existing header fixture."""
-    shape = full.shape[-3:]
-    trajectory = KTrajectoryCartesian.fullysampled(SpatialDimension(*shape)).to(full.device)
-    trajectory = KTrajectory.from_tensor(unsqueeze_at(trajectory.as_tensor()[..., acquired], dim=-2, n=2))
-    header = header.clone()
-    header.recon_matrix = SpatialDimension(*shape)
-    header.encoding_matrix = SpatialDimension(*shape)
-    header.recon_fov = SpatialDimension(1.0, 1.0, 1.0)
-    header.encoding_fov = SpatialDimension(1.0, 1.0, 1.0)
-    header.acq_info = AcqInfo()
-    header.trajectory = None
-    return KData(data=unsqueeze_at(full[..., acquired], dim=-2, n=2), header=header, traj=trajectory)
+def _acquired(kdata: KData, mask: torch.Tensor) -> KData:
+    """Keep the samples selected by a k-space mask as a single readout."""
+    trajectory = KTrajectory.from_tensor(unsqueeze_at(kdata.traj.as_tensor()[..., mask], dim=-2, n=2))
+    return KData(header=kdata.header, data=unsqueeze_at(kdata.data[..., mask], dim=-2, n=2), traj=trajectory)
 
 
 @pytest.fixture
-def grappa_data(
-    ellipse_phantom: EllipsePhantomTestData, random_kheader: KHeader
-) -> tuple[torch.Tensor, torch.Tensor, KData]:
+def grappa_data() -> tuple[KData, torch.Tensor, KData]:
     """Ellipse acquisition with alternate phase-encoding lines missing."""
-    full = _phantom_kspace(ellipse_phantom, (1, 16, 18), torch.complex128)[None]
-    acquired = torch.ones(full.shape[-3:], dtype=torch.bool)
+    full = fully_sampled_kdata(_coil_volume((1, 16, 18)).to(torch.complex128))
+    acquired = torch.ones(full.data.shape[-3:], dtype=torch.bool)
     acquired[..., 1::2, :] = False
-    return full, acquired, _kdata(random_kheader, full, acquired)
+    return full, acquired, _acquired(full, acquired)
 
 
 @pytest.mark.parametrize(
@@ -60,60 +47,55 @@ def test_grappa_reconstruction(
     kernel: tuple[int, int, int],
     acceleration: int,
     dtype: torch.dtype,
-    ellipse_phantom: EllipsePhantomTestData,
-    random_kheader: KHeader,
 ) -> None:
     """Reconstruct the ellipse phantom using cropped ACS and trajectory-derived sampling."""
-    full = _phantom_kspace(ellipse_phantom, shape, dtype)[None]
+    full = fully_sampled_kdata(_coil_volume(shape).to(dtype))
     acquired = torch.zeros(shape, dtype=torch.bool)
     acquired[..., ::acceleration, :] = True
     acquired[..., 6:10, :] = True
-    data = _kdata(random_kheader, full, acquired)
-    acs = full[..., 2:-2, 2:-2]
+    data = _acquired(full, acquired)
+    acs = full.data[..., 2:-2, 2:-2]
     reconstruction = GrappaReconstruction(data, acs, kernel, regularization=0, csm=None)
     completed = reconstruction.interpolate(data)
-    assert relative_image_difference(completed, full) < 0.03
-    assert torch.equal(completed[..., acquired], full[..., acquired])
+    assert relative_image_difference(completed, full.data) < 0.03
+    assert torch.equal(completed[..., acquired], full.data[..., acquired])
     (expected,) = FastFourierOp().H(completed)
     torch.testing.assert_close(reconstruction(data).data, expected, atol=2e-5, rtol=2e-5)
 
 
-def test_grappa_reconstruction_zero_and_coil_combination(
-    grappa_data: tuple[torch.Tensor, torch.Tensor, KData], random_kheader: KHeader
-) -> None:
+def test_grappa_reconstruction_zero_and_coil_combination(grappa_data: tuple[KData, torch.Tensor, KData]) -> None:
     """Preserve acquired zeros and use the normal IData coil combination interface."""
     full, acquired, _ = grappa_data
-    full[..., 0, 0, 0] = 0
-    data = _kdata(random_kheader, full, acquired)
-    reconstruction = GrappaReconstruction(data, full, (1, 3, 3))
+    full.data[..., 0, 0, 0] = 0
+    data = _acquired(full, acquired)
+    reconstruction = GrappaReconstruction(data, full.data, (1, 3, 3))
     completed = reconstruction.interpolate(data)
-    assert torch.equal(completed[..., acquired], full[..., acquired])
+    assert torch.equal(completed[..., acquired], full.data[..., acquired])
     assert reconstruction(data).data.shape == (1, 1, 1, 16, 18)
-    csm = CsmData.from_idata_walsh(GrappaReconstruction(data, full, (1, 3, 3), csm=None)(data))
-    explicit = GrappaReconstruction(data, full, (1, 3, 3), csm=csm)
+    csm = CsmData.from_idata_walsh(GrappaReconstruction(data, full.data, (1, 3, 3), csm=None)(data))
+    explicit = GrappaReconstruction(data, full.data, (1, 3, 3), csm=csm)
     torch.testing.assert_close(explicit(data).data, reconstruction(data).data)
 
 
-def test_grappa_batched_volume(ellipse_phantom: EllipsePhantomTestData, random_kheader: KHeader) -> None:
+def test_grappa_batched_volume() -> None:
     """Use noncontiguous shared cropped ACS for separate 3D data batches."""
-    full = _phantom_kspace(ellipse_phantom, (9, 16, 12), torch.complex128)
-    full = torch.stack((full, (2 - 1j) * full)).transpose(-1, -2)
-    acs = full[:1, :, 1:-1, 2:-2, 2:-2]
-    acquired = torch.ones(full.shape[-3:], dtype=torch.bool)
+    image = _coil_volume((9, 16, 12)).to(torch.complex128)
+    full = fully_sampled_kdata(torch.cat((image, (2 - 1j) * image)).transpose(-1, -2))
+    acs = full.data[:1, :, 1:-1, 2:-2, 2:-2]
+    acquired = torch.ones(full.data.shape[-3:], dtype=torch.bool)
     acquired[..., 1::2] = False
-    data = _kdata(random_kheader, full, acquired)
+    data = _acquired(full, acquired)
     reconstruction = GrappaReconstruction(data, acs, (3, 3, 3), regularization=0, csm=None)
-    assert relative_image_difference(reconstruction.interpolate(data), full) < 0.03
+    assert relative_image_difference(reconstruction.interpolate(data), full.data) < 0.03
 
 
 @pytest.mark.cuda
 @pytest.mark.parametrize('dtype', [torch.complex64, torch.complex128])
-def test_grappa_reconstruction_cuda(grappa_data: tuple[torch.Tensor, torch.Tensor, KData], dtype: torch.dtype) -> None:
+def test_grappa_reconstruction_cuda(grappa_data: tuple[KData, torch.Tensor, KData], dtype: torch.dtype) -> None:
     """Move calibration, sampling and interpolation together with the reconstruction."""
     full, _, data = grappa_data
-    full = full.to(dtype)
-    data.data = data.data.to(dtype)
-    reconstruction = GrappaReconstruction(data, full, (1, 3, 3), csm=None)
+    data = data.to(dtype)
+    reconstruction = GrappaReconstruction(data, full.data.to(dtype), (1, 3, 3), csm=None)
     expected = reconstruction(data).data
     actual = reconstruction.cuda()(data.cuda()).data
     assert actual.device.type == 'cuda'
@@ -122,50 +104,40 @@ def test_grappa_reconstruction_cuda(grappa_data: tuple[torch.Tensor, torch.Tenso
     torch.testing.assert_close(reconstruction.cpu()(data).data, expected)
 
 
-def test_grappa_full_sampling_and_recalibration(
-    ellipse_phantom: EllipsePhantomTestData, random_kheader: KHeader
-) -> None:
+def test_grappa_full_sampling_and_recalibration() -> None:
     """A full grid is unchanged, and updating a trajectory recalibrates its kernels."""
-    full = _phantom_kspace(ellipse_phantom, (1, 24, 20), torch.complex128)[None]
-    mask = torch.ones(full.shape[-3:], dtype=torch.bool)
-    data = _kdata(random_kheader, full, mask)
-    reconstruction = GrappaReconstruction(data, full, (1, 5, 3), regularization=0, csm=None)
-    assert torch.equal(reconstruction.interpolate(data), full)
+    full = fully_sampled_kdata(_coil_volume((1, 24, 20)).to(torch.complex128))
+    reconstruction = GrappaReconstruction(full, full.data, (1, 5, 3), regularization=0, csm=None)
+    assert torch.equal(reconstruction.interpolate(full), full.data)
     for acceleration in (2, 3):
-        mask[:] = False
+        mask = torch.zeros(full.data.shape[-3:], dtype=torch.bool)
         mask[..., ::acceleration, :] = True
-        data = _kdata(random_kheader, full, mask)
+        data = _acquired(full, mask)
         reconstruction.recalculate_fourierop(data)
-        assert relative_image_difference(reconstruction.interpolate(data), full) < 0.03
+        assert relative_image_difference(reconstruction.interpolate(data), full.data) < 0.03
 
 
-def test_grappa_reject_noncartesian(grappa_data: tuple[torch.Tensor, torch.Tensor, KData]) -> None:
+def test_grappa_reject_noncartesian(grappa_data: tuple[KData, torch.Tensor, KData]) -> None:
     """Reject non-Cartesian acquisition coordinates before creating interpolation kernels."""
     full, _, data = grappa_data
     data.traj = KTrajectory(data.traj.kz, data.traj.ky + 0.25, data.traj.kx)
     with pytest.raises(ValueError, match='Cartesian data'):
-        GrappaReconstruction(data, full, (1, 3, 3), csm=None)
+        GrappaReconstruction(data, full.data, (1, 3, 3), csm=None)
 
 
-def test_grappa_reject_varying_batch_masks(
-    grappa_data: tuple[torch.Tensor, torch.Tensor, KData], random_kheader: KHeader
-) -> None:
+def test_grappa_reject_varying_batch_masks(grappa_data: tuple[KData, torch.Tensor, KData]) -> None:
     """Reject different sampling supports across batches explicitly."""
-    full, acquired, first = grappa_data
-    second = _kdata(random_kheader, full, ~acquired)
-    first.data = torch.cat((first.data, second.data), dim=0)
-    first.traj = KTrajectory.from_tensor(torch.cat((first.traj.as_tensor(), second.traj.as_tensor()), dim=1))
+    full, acquired, data = grappa_data
+    data = data.concatenate(_acquired(full, ~acquired), dim=0)
     with pytest.raises(ValueError, match='shared sampling pattern'):
-        GrappaReconstruction(first, full, (1, 3, 3), csm=None)
+        GrappaReconstruction(data, full.data, (1, 3, 3), csm=None)
 
 
 @pytest.mark.parametrize('failure', ['repeated_samples', 'no_sources'])
-def test_grappa_failed_recalibration(
-    grappa_data: tuple[torch.Tensor, torch.Tensor, KData], failure: str, random_kheader: KHeader
-) -> None:
+def test_grappa_failed_recalibration(grappa_data: tuple[KData, torch.Tensor, KData], failure: str) -> None:
     """A failed sampling update or kernel fit leaves the original reconstruction usable."""
     full, mask, original = grappa_data
-    acs = full[..., 3:9, 3:10]
+    acs = full.data[..., 3:9, 3:10]
     reconstruction = GrappaReconstruction(original, acs, (1, 3, 3), regularization=0, csm=None)
     expected = reconstruction(original).data
     expected_direct = reconstruction.direct_reconstruction(original).data
@@ -178,7 +150,7 @@ def test_grappa_failed_recalibration(
     else:
         mask[:] = True
         mask[..., 6:11, 6:11] = False
-        invalid = _kdata(random_kheader, full, mask)
+        invalid = _acquired(full, mask)
         message = 'No acquired neighbor within kernel_size'
     with pytest.raises(ValueError, match=message):
         reconstruction.recalculate_fourierop(invalid)
@@ -186,10 +158,10 @@ def test_grappa_failed_recalibration(
     torch.testing.assert_close(reconstruction.direct_reconstruction(original).data, expected_direct)
 
 
-def test_grappa_recalculate_csm(grappa_data: tuple[torch.Tensor, torch.Tensor, KData]) -> None:
+def test_grappa_recalculate_csm(grappa_data: tuple[KData, torch.Tensor, KData]) -> None:
     """Estimate sensitivities from completed coil images even when CSMs already exist."""
     full, _, data = grappa_data
-    reconstruction = GrappaReconstruction(data, full, (1, 3, 3), regularization=0)
+    reconstruction = GrappaReconstruction(data, full.data, (1, 3, 3), regularization=0)
     (expected,) = FastFourierOp().H(reconstruction.interpolate(data))
 
     def calculate(image: IData) -> CsmData:
@@ -200,17 +172,17 @@ def test_grappa_recalculate_csm(grappa_data: tuple[torch.Tensor, torch.Tensor, K
     reconstruction.recalculate_csm(data, calculate, noise=False)
     torch.testing.assert_close(reconstruction(data).data, reference)
 
-    noise = KNoise(RandomGenerator(0).randn_tensor((1, full.shape[-4], 1, 1, 100), dtype=full.dtype))
+    noise = KNoise(RandomGenerator(0).randn_tensor((1, full.data.shape[-4], 1, 1, 100), dtype=full.data.dtype))
     with pytest.raises(ValueError, match='Prewhiten acquisition and ACS together'):
         reconstruction.recalculate_csm(data, noise=noise)
 
 
 @pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
-def test_grappa_gradient_calibration(grappa_data: tuple[torch.Tensor, torch.Tensor, KData], device: str) -> None:
+def test_grappa_gradient_calibration(grappa_data: tuple[KData, torch.Tensor, KData], device: str) -> None:
     """Differentiate calibration on CPU and CUDA."""
     full, _, data = grappa_data
     data = data.to(device)
-    acs = full.to(device).requires_grad_()
+    acs = full.data.to(device).requires_grad_()
     reconstruction = GrappaReconstruction(data, acs, (1, 3, 3), csm=None)
     reference = reconstruction(data).data
     (gradient,) = torch.autograd.grad(reference.abs().square().sum(), acs)
@@ -220,7 +192,7 @@ def test_grappa_gradient_calibration(grappa_data: tuple[torch.Tensor, torch.Tens
 
 @pytest.mark.parametrize(('depth', 'recon_y', 'recon_x'), [(1, 12, 14), (4, 16, 18)])
 def test_grappa_image_geometry(
-    grappa_data: tuple[torch.Tensor, torch.Tensor, KData],
+    grappa_data: tuple[KData, torch.Tensor, KData],
     depth: int,
     recon_y: int,
     recon_x: int,
@@ -229,7 +201,7 @@ def test_grappa_image_geometry(
     full, _, data = grappa_data
     data.header.encoding_matrix.z = depth
     data.header.recon_matrix = SpatialDimension(depth, recon_y, recon_x)
-    reconstruction = GrappaReconstruction(data, full, (1, 3, 3), regularization=0, csm=None)
+    reconstruction = GrappaReconstruction(data, full.data, (1, 3, 3), regularization=0, csm=None)
     (expected,) = FastFourierOp(
         dim=(-2, -1), recon_matrix=data.header.recon_matrix, encoding_matrix=data.header.encoding_matrix
     ).H(reconstruction.interpolate(data))
