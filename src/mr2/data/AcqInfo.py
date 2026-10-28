@@ -386,15 +386,15 @@ def write_acqinfo_to_ismrmrd_acquisition_(
         acq_info.idx.user7,
     )
     # active_channesl, number_of_samples and trajectory_dimensions are read-only and cannot be set
-    # Match the micrometer convention used by the reader and Siemens ISMRMRD files.
-    ismrmrd_acq.patient_table_position = (
-        acq_info.patient_table_position[0].apply(m_to_micrometer).zyx[::-1]
-    )  # zyx -> xyz
-    directions = acq_info.orientation[0].as_directions()
-    ismrmrd_acq.slice_dir = directions[0].zyx[::-1]  # zyx -> xyz
-    ismrmrd_acq.phase_dir = directions[1].zyx[::-1]
-    ismrmrd_acq.read_dir = directions[2].zyx[::-1]
-    ismrmrd_acq.position = acq_info.position[0].apply(m_to_mm).zyx[::-1]
+    # ISMRMRD spatial fields use xyz order; Siemens table positions use micrometers.
+    table_position_um = acq_info.patient_table_position[0].apply(m_to_micrometer)
+    ismrmrd_acq.patient_table_position = (table_position_um.x, table_position_um.y, table_position_um.z)
+    slice_direction, phase_direction, readout_direction = acq_info.orientation[0].as_directions()
+    ismrmrd_acq.slice_dir = (slice_direction.x, slice_direction.y, slice_direction.z)
+    ismrmrd_acq.phase_dir = (phase_direction.x, phase_direction.y, phase_direction.z)
+    ismrmrd_acq.read_dir = (readout_direction.x, readout_direction.y, readout_direction.z)
+    position_mm = acq_info.position[0].apply(m_to_mm)
+    ismrmrd_acq.position = (position_mm.x, position_mm.y, position_mm.z)
     ismrmrd_acq.sample_time_us = acq_info.sample_time_us
     ismrmrd_acq.user_float = (
         acq_info.user.float0,

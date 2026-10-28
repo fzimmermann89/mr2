@@ -191,14 +191,18 @@ class IData(Dataclass):
             Many software packages do not support complex data.
         """
         orientation = self.header.orientation.mean()
-        resolution = self.header.resolution.apply(m_to_mm)
+        resolution_mm = self.header.resolution.apply(m_to_mm)
+        position_mm = self.header.position.apply(torch.mean).apply(m_to_mm)
         nz, ny, nx = self.data.shape[-3:]
+        # In-plane axes use N/2 even for one pixel; a single slice has no z offset.
         center = SpatialDimension(z=nz / 2 if nz > 1 else 0, y=ny / 2, x=nx / 2)
-        position = self.header.position.apply(torch.mean).apply(m_to_mm) - orientation(resolution * center)
-        # Convert mr2's zyx LPS coordinates to NIfTI's xyz RAS coordinates.
+        origin_mm = position_mm - orientation(resolution_mm * center)
+
+        # Reorder both physical axes (rows) and voxel axes (columns) from zyx to xyz.
+        rotation_xyz = orientation.as_matrix().flip([0, 1]).numpy()
         affine = np.eye(4)
-        affine[:3, :3] = orientation.as_matrix().flip([0, 1]).numpy() * resolution.zyx[::-1]
-        affine[:3, 3] = torch.stack(position.zyx[::-1]).numpy()
+        affine[:3, :3] = rotation_xyz * (resolution_mm.x, resolution_mm.y, resolution_mm.z)
+        affine[:3, 3] = torch.stack((origin_mm.x, origin_mm.y, origin_mm.z)).numpy()
         affine[:2] *= -1  # LPS to RAS
         data = rearrange(self.data, '... other coils z y x-> x y z 1 other (...) coils')
         if magnitude_only:
