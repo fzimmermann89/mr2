@@ -4,7 +4,7 @@ from itertools import product
 
 import pytest
 import torch
-from mr2.algorithms import grappa_calibration, grappa_interpolation
+from mr2.algorithms.grappa import grappa_calibration, grappa_interpolation
 from torch.nn.functional import conv3d
 
 

@@ -54,7 +54,7 @@ class GrappaReconstruction(Reconstruction):
             for 2D acquisitions. At boundaries, only in-grid acquired sources
             enter the fit. Every missing point needs an acquired neighbor.
         regularization
-            Relative ridge strength passed to `~mr2.algorithms.grappa_calibration`.
+            Relative ridge strength passed to `~mr2.algorithms.grappa.grappa_calibration`.
         csm
             Coil combination maps, operator or calculation from completed coil
             images, following `~mr2.algorithms.reconstruction.DirectReconstruction`.

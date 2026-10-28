@@ -1,7 +1,6 @@
 """Algorithms for reconstructions, optimization, density and sensitivity map estimation, etc."""
 
-from mr2.algorithms import csm, dcf, optimizers, reconstruction, image_registration, denoising
-from mr2.algorithms.grappa import grappa_calibration, grappa_interpolation
+from mr2.algorithms import csm, dcf, optimizers, reconstruction, image_registration, denoising, grappa
 from mr2.algorithms.prewhiten_kspace import prewhiten_kspace
 from mr2.algorithms.rovir import rovir
 from mr2.algorithms.varimax import varimax
@@ -10,8 +9,7 @@ __all__ = [
     'csm',
     'dcf',
     'denoising',
-    'grappa_calibration',
-    'grappa_interpolation',
+    'grappa',
     'image_registration',
     'optimizers',
     'prewhiten_kspace',
