@@ -150,7 +150,7 @@ class KData(Dataclass):
             path or binary file-like object
         trajectory
             Trajectory source for ISMRMRD input. MR2 files contain their own trajectory.
-            If a KTrajectory is given, the shape should be `(acquisisions 1 1 k0)` in the same order as the acquisitions
+            A KTrajectory should have shape `(acquisitions 1 1 1 k0)` and match the acquisition order
             retained after filtering, coil selection and readout-length selection.
         header_overwrites
             dictionary of key-value pairs to overwrite the header
@@ -360,7 +360,7 @@ class KData(Dataclass):
             the longest post-discard readouts precede metadata and trajectory construction.
         trajectory
             Trajectory calculator, stored ISMRMRD trajectory reader, or a KTrajectory
-            of shape ``(acquisitions 1 1 k0)`` matching the retained, cropped acquisitions.
+            of shape ``(acquisitions 1 1 1 k0)`` matching the retained, cropped acquisitions.
             Stored ISMRMRD trajectories are currently read without discard cropping.
         header_overwrites
             Header fields to overwrite.
@@ -515,18 +515,20 @@ class KData(Dataclass):
                     encoding_matrix=header.encoding_matrix,
                 )
             case KTrajectory():
-                try:
-                    torch.broadcast_shapes(trajectory.shape, (data.shape[0], *data.shape[-3:]))
-                except RuntimeError:
-                    raise ValueError(
-                        f'Trajectory shape {trajectory.shape} does not match data shape {data.shape}.'
-                    ) from None
                 trajectory_ = trajectory
             case _:
                 raise TypeError(
                     'ktrajectory must be KTrajectoryIsmrmrd, KTrajectory or KTrajectoryCalculator'
                     f'not {type(trajectory)}',
                 )
+
+        expected_shape = (data.shape[0], 1, *data.shape[-3:])
+        try:
+            trajectory_shape = torch.broadcast_shapes(trajectory_.shape, expected_shape)
+        except RuntimeError:
+            raise ValueError(f'Trajectory shape {trajectory_.shape} does not match data shape {data.shape}.') from None
+        if trajectory_shape != expected_shape:
+            raise ValueError(f'Trajectory shape {trajectory_.shape} does not match data shape {data.shape}.')
 
         kdata = cls(header, data, trajectory_)
         return kdata.reshape_by_idx() if data.shape[0] > 1 else kdata

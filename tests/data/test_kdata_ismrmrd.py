@@ -492,6 +492,17 @@ def test_iter_rejects_measurement_trajectory(raw_data, trajectory) -> None:
     assert not stream.closed
 
 
+def test_iter_rejects_full_measurement_trajectory(raw_data) -> None:
+    """A single readout must not broadcast over a full measurement's trajectory."""
+    _, header, acquisitions = raw_data
+    coordinates = torch.arange(16).reshape(4, 1, 1, 1, 4).float()
+    trajectory = KTrajectory(coordinates, coordinates, coordinates)
+    stream = serialize_measurements([(header, acquisitions)])
+    with pytest.raises(ValueError, match=r'Trajectory shape .* does not match data shape'):
+        next(KData.iter_ismrmrd(stream, trajectory))
+    assert not stream.closed
+
+
 def test_iter_close_owned_file(raw_data, tmp_path, monkeypatch) -> None:
     """Closing iteration early or encountering corrupt input closes owned files."""
     filename, header, acquisitions = raw_data
