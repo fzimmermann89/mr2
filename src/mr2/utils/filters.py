@@ -379,14 +379,49 @@ def fft_filters(
     return filters
 
 
-def apodization_window(
-    coordinates: Sequence[torch.Tensor],
-    widths: Sequence[float],
-    *,
-    window: Literal['hann', 'gaussian'] = 'hann',
-    radial: bool = False,
-) -> torch.Tensor:
-    """Evaluate a centered window at continuous coordinates.
+def hann_window(coordinate: torch.Tensor, width: float) -> torch.Tensor:
+    """Evaluate a continuous Hann window with unit gain at the origin.
+
+    Parameters
+    ----------
+    coordinate
+        Real floating-point coordinates, centered at zero.
+    width
+        Finite positive full support width in coordinate units. Weights are
+        ``(1 + cos(2*pi*coordinate/width)) / 2`` inside the support and zero outside.
+
+    Returns
+    -------
+        Real weights with the coordinate shape, dtype and device, without energy normalization.
+    """
+    if not math.isfinite(width) or width <= 0:
+        raise ValueError('width must be finite and positive.')
+    normalized = coordinate / (width / 2)
+    return torch.where(normalized.abs() < 1, (1 + torch.cos(torch.pi * normalized)) / 2, 0)
+
+
+def gaussian_window(coordinate: torch.Tensor, width: float) -> torch.Tensor:
+    """Evaluate a continuous Gaussian window with unit gain at the origin.
+
+    Parameters
+    ----------
+    coordinate
+        Real floating-point coordinates, centered at zero.
+    width
+        Finite positive full width at half maximum in coordinate units.
+        Weights are ``exp(-4*log(2)*(coordinate/width)**2)`` without a hard cutoff.
+
+    Returns
+    -------
+        Real weights with the coordinate shape, dtype and device, without energy normalization.
+    """
+    if not math.isfinite(width) or width <= 0:
+        raise ValueError('width must be finite and positive.')
+    return torch.exp(-math.log(2) * (coordinate / (width / 2)).square())
+
+
+def radial_hann_window(coordinates: Sequence[torch.Tensor], widths: Sequence[float]) -> torch.Tensor:
+    """Evaluate a Hann window on the radius of scaled continuous coordinates.
 
     Parameters
     ----------
@@ -394,42 +429,21 @@ def apodization_window(
         Nonempty sequence of broadcastable real floating-point coordinate tensors
         with the same dtype and device, one per spatial direction.
     widths
-        Finite positive full widths in the same units as the coordinates.
-        Must have the same length as coordinates. For Hann, this is the support
-        width; for Gaussian, the full width at half maximum.
-    window
-        ``'hann'`` evaluates ``(1 + cos(2*pi*k/width)) / 2`` inside
-        ``abs(k) < width/2`` and zero outside. ``'gaussian'`` evaluates
-        ``exp(-4*log(2)*(k/width)**2)`` without a hard cutoff.
-    radial
-        Evaluate one window at the radius of the scaled coordinates instead of
-        multiplying per-axis windows. Gaussian weights coincide for both choices.
+        Finite positive full support widths in the corresponding coordinate units.
+        Must have the same length as coordinates; unequal widths give ellipsoidal support.
 
     Returns
     -------
-        Real weights with the broadcast coordinate shape, unit gain at the
-        origin and no energy normalization. Radial Hann has zero gradient at DC.
+        Real weights with the broadcast coordinate shape, unit gain and zero
+        coordinate gradient at the origin, without energy normalization.
     """
     if not coordinates or len(coordinates) != len(widths):
         raise ValueError('Must provide nonempty coordinates and matching length widths.')
-    if window not in ('hann', 'gaussian'):
-        raise ValueError("window must be 'hann' or 'gaussian'.")
-    if any(not math.isfinite(value) or value <= 0 for value in widths):
+    if any(not math.isfinite(width) or width <= 0 for width in widths):
         raise ValueError('width must be finite and positive in every direction.')
-
-    weight = coordinates[0].new_ones(())
-    radius_squared = torch.zeros_like(weight)
-    for coordinate, axis_width in zip(coordinates, widths, strict=True):
-        normalized = coordinate / (axis_width / 2)
-        if radial or window == 'gaussian':
-            radius_squared = radius_squared + normalized.square()
-        else:
-            weight = weight * torch.where(normalized.abs() < 1, (1 + torch.cos(torch.pi * normalized)) / 2, 0)
-    if window == 'gaussian':
-        weight = torch.exp(-math.log(2) * radius_squared)
-    elif radial:
-        at_dc = radius_squared == 0
-        radius = torch.where(at_dc, 1, radius_squared).sqrt()
-        weight = torch.where(radius < 1, (1 + torch.cos(torch.pi * radius)) / 2, 0)
-        weight = torch.where(at_dc, 1, weight)
-    return weight
+    radius_squared = coordinates[0].new_zeros(())
+    for coordinate, width in zip(coordinates, widths, strict=True):
+        radius_squared = radius_squared + (coordinate / (width / 2)).square()
+    at_dc = radius_squared == 0
+    radius = torch.where(at_dc, 1, radius_squared).sqrt()
+    return torch.where(at_dc, 1, hann_window(radius, 2))

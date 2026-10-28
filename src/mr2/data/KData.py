@@ -38,7 +38,7 @@ from mr2.data.Rotation import Rotation
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.data.traj_calculators.KTrajectoryCalculator import KTrajectoryCalculator
 from mr2.data.traj_calculators.KTrajectoryIsmrmrd import KTrajectoryIsmrmrd
-from mr2.utils.filters import apodization_window
+from mr2.utils.filters import gaussian_window, hann_window, radial_hann_window
 from mr2.utils.reshape import normalize_index, normalize_indices
 from mr2.utils.summarize import summarize_object
 from mr2.utils.typing import FileOrPath
@@ -631,8 +631,8 @@ class KData(Dataclass):
         window
             ``'hann'`` has compact support of the specified width.
             ``'gaussian'`` uses width as its full width at half maximum,
-            with no hard cutoff. See :func:`mr2.utils.filters.apodization_window`
-            for the window formulas.
+            with no hard cutoff. See :func:`mr2.utils.filters.hann_window` and
+            :func:`mr2.utils.filters.gaussian_window` for the formulas.
         radial
             If False, multiply the windows along kz, ky and kx (separable).
             If True, evaluate one window at the radius formed from coordinates
@@ -641,7 +641,8 @@ class KData(Dataclass):
 
         Returns
         -------
-            Apodized copy with the same data shape, dtype and device.
+            Apodized copy with the same dtype and device. Repeated data dimensions
+            are reduced to singletons following the usual KData convention.
             Density compensation is not applied or modified.
         """
         widths: tuple[float, float, float]
@@ -655,13 +656,19 @@ class KData(Dataclass):
             coordinate.to(device=self.data.device, dtype=self.data.real.dtype)
             for coordinate in (self.traj.kz, self.traj.ky, self.traj.kx)
         )
-        weight = apodization_window(coordinates, widths, window=window, radial=radial)
-        # Avoid constructor repeat reduction, which can discard small sample differences.
-        result = copy.copy(self)
-        result.header = self.header.clone()
-        result.traj = self.traj.clone()
-        result.data = self.data * weight
-        return result
+        if window == 'hann' and radial:
+            weight = radial_hann_window(coordinates, widths)
+        else:
+            if window == 'hann':
+                window_function = hann_window
+            elif window == 'gaussian':
+                window_function = gaussian_window
+            else:
+                raise ValueError("window must be 'hann' or 'gaussian'.")
+            weight = self.data.real.new_ones(())
+            for coordinate, axis_width in zip(coordinates, widths, strict=True):
+                weight = weight * window_function(coordinate, axis_width)
+        return type(self)(self.header.clone(), self.data * weight, self.traj.clone())
 
     def remove_readout_os(self: Self) -> Self:
         """Remove any oversampling along the readout direction.

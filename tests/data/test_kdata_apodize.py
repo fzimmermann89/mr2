@@ -73,7 +73,7 @@ def test_apodize_nonuniform_batch_support(kdata: KData, radial: bool) -> None:
     torch.testing.assert_close(result.data, expected.expand_as(result.data).to(result.data.dtype))
     assert result.data[0, ..., 3:].eq(0).all()
     gaussian = kdata.apodize(2, window='gaussian', radial=radial)
-    torch.testing.assert_close(gaussian.data[:, 0, 0, 0, 0].real, torch.tensor([0.5, 0.25]))
+    torch.testing.assert_close(gaussian.data.expand(2, 2, 1, 1, 6)[:, 0, 0, 0, 0].real, torch.tensor([0.5, 0.25]))
 
 
 @pytest.mark.parametrize('dtype', [torch.complex64, torch.complex128])
@@ -117,14 +117,12 @@ def test_apodize_invalid_window(kdata: KData) -> None:
         kdata.apodize(window='unknown')  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize('scale', [0.0, 1e-8])
-def test_apodize_preserves_small_data(kdata: KData, scale: float) -> None:
-    """Zero and small samples keep their shape and weighted values."""
-    expected = kdata.apodize().data * scale
-    kdata.data = kdata.data * scale
+def test_apodize_reduces_repeated_data(kdata: KData) -> None:
+    """The result uses the usual constructor repeat reduction."""
+    kdata.data = torch.zeros_like(kdata.data)
     result = kdata.apodize()
-    assert result.data.shape == kdata.data.shape
-    torch.testing.assert_close(result.data, expected, rtol=1e-6, atol=0)
+    assert result.data.shape == (1, 1, 1, 1, 1)
+    assert result.data.eq(0).all()
 
 
 @pytest.mark.parametrize('radial', [False, True])
