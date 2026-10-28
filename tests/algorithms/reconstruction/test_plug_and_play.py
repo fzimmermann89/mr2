@@ -94,7 +94,8 @@ def test_zero_kspace(cartesian_kdata: KData) -> None:
 
 
 @pytest.mark.parametrize('as_operator', [False, True])
-def test_explicit_csm_whitening(cartesian_kdata: KData, as_operator: bool) -> None:
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+def test_explicit_csm_whitening(cartesian_kdata: KData, as_operator: bool, device: str) -> None:
     """Non-diagonal noise transforms both measured data and explicit coil maps."""
     kdata = cartesian_kdata
     maps = CsmData.from_kdata_walsh(kdata)
@@ -120,8 +121,12 @@ def test_explicit_csm_whitening(cartesian_kdata: KData, as_operator: bool) -> No
         max_iterations=3,
         cg_max_iterations=8,
     )
-    acquisition = fourier @ SensitivityOp(expected_maps)
-    whitened = torch.linalg.solve_triangular(factor, kdata.data.flatten(-3), upper=False).reshape_as(kdata.data)
+    reconstruction = reconstruction.to(device)
+    moved_kdata = kdata.to(device)
+    acquisition = fourier @ SensitivityOp(expected_maps.to(device))
+    whitened = torch.linalg.solve_triangular(factor.to(device), moved_kdata.data.flatten(-3), upper=False).reshape_as(
+        moved_kdata.data
+    )
     (initial,) = acquisition.H(whitened)
     (expected,) = admm_l2(
         lambda x, **_: (0.8 * x,),
@@ -134,6 +139,7 @@ def test_explicit_csm_whitening(cartesian_kdata: KData, as_operator: bool) -> No
         max_iterations=3,
         cg_max_iterations=8,
     )
-    torch.testing.assert_close(reconstruction(kdata).data, expected)
+    torch.testing.assert_close(reconstruction(moved_kdata).data, expected)
+    assert noise.data.device.type == 'cpu'
     # The supplied maps remain in their original coil basis.
     torch.testing.assert_close(maps.data, CsmData.from_kdata_walsh(kdata).data)

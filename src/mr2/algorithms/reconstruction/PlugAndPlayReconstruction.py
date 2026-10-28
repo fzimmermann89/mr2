@@ -106,7 +106,7 @@ class PlugAndPlayReconstruction(DirectReconstruction):
     def forward(self, kdata: KData) -> IData:
         """Reconstruct k-space data, returning the data-consistent iterate as IData."""
         if self.noise is not None:
-            kdata = prewhiten_kspace(kdata, self.noise)
+            kdata = prewhiten_kspace(kdata, self.noise.to(device=kdata.data.device))
         acquisition_model = self.fourier_op
         if self.csm_op is not None:
             acquisition_model = acquisition_model @ self.csm_op
