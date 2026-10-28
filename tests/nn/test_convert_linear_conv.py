@@ -12,7 +12,11 @@ DEVICES = pytest.mark.parametrize(
     'device',
     [
         pytest.param('cpu', id='cpu'),
-        pytest.param('cuda', id='cuda', marks=pytest.mark.cuda),
+        pytest.param(
+            'cuda',
+            id='cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+        ),
     ],
 )
 SHAPES = pytest.mark.parametrize(

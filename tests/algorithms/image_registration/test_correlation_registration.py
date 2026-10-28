@@ -79,7 +79,16 @@ def test_correlation_registration_search_mask() -> None:
     assert shift.y.item() >= 0
 
 
-@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize(
+    'device',
+    [
+        'cpu',
+        pytest.param(
+            'cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+        ),
+    ],
+)
 def test_correlation_registration_with_mask(device: str) -> None:
     """Test masked correlation registration."""
     y = torch.linspace(-1.0, 1.0, 48)

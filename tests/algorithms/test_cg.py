@@ -13,7 +13,16 @@ from mr2.operators import EinsumOp, LinearOperator, LinearOperatorMatrix
 from mr2.utils import RandomGenerator
 
 
-@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize(
+    'device',
+    [
+        'cpu',
+        pytest.param(
+            'cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+        ),
+    ],
+)
 def test_cg_exact_convergence(device: str) -> None:
     """CG stops at an exact solution even with zero tolerance."""
     rhs = torch.ones(2, device=device)
@@ -272,6 +281,7 @@ def test_autograd(
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 @pytest.mark.parametrize('algorithm', [cg, bicg])
 def test_cuda(
     spd_matrix_system: tuple[

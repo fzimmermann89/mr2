@@ -119,6 +119,7 @@ def test_callback() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_cuda_backtracking_solution() -> None:
     """Backtracking PGD recovers the soft-thresholded CUDA solution."""
     data = torch.tensor([[-1 + 0.3j, -0.2j, 0.4, 1.5 - 0.5j]], device='cuda')

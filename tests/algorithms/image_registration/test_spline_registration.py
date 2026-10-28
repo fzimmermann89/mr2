@@ -13,7 +13,11 @@ from mr2.utils import RandomGenerator
     'device',
     [
         pytest.param('cpu', id='cpu'),
-        pytest.param('cuda', marks=pytest.mark.cuda, id='cuda'),
+        pytest.param(
+            'cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+            id='cuda',
+        ),
     ],
 )
 def test_spline_registration(device: str, ellipse_phantom) -> None:
@@ -56,7 +60,16 @@ def test_spline_registration(device: str, ellipse_phantom) -> None:
 
 
 @pytest.mark.parametrize('downsampling_factor', [1, 2])
-@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize(
+    'device',
+    [
+        'cpu',
+        pytest.param(
+            'cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+        ),
+    ],
+)
 def test_spline_registration_translation(device: str, downsampling_factor: int, blob_image: torch.Tensor) -> None:
     """A downsampled fit must recover the displacement in full-resolution voxels."""
     moving = blob_image.to(device)

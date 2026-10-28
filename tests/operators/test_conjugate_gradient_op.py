@@ -122,6 +122,7 @@ def test_conjugate_gradient_op_detaches_differentiable_initial_value(implicit_ba
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_conjugate_gradient_op_cuda_implicit_gradient() -> None:
     """Implicit differentiation matches the scalar regularized solution on CUDA."""
     regularization = torch.tensor(0.5, device='cuda', requires_grad=True)

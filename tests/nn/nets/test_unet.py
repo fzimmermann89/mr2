@@ -12,7 +12,11 @@ from mr2.nn.nets import AttentionGatedUNet, UNet
     'device',
     [
         pytest.param('cpu', id='cpu'),
-        pytest.param('cuda', marks=pytest.mark.cuda, id='cuda'),
+        pytest.param(
+            'cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+            id='cuda',
+        ),
     ],
 )
 def test_unet_forward(torch_compile: bool, device: str) -> None:
@@ -69,7 +73,11 @@ def test_unet_backward() -> None:
     'device',
     [
         pytest.param('cpu', id='cpu'),
-        pytest.param('cuda', marks=pytest.mark.cuda, id='cuda'),
+        pytest.param(
+            'cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+            id='cuda',
+        ),
     ],
 )
 def test_gated_unet_forward(torch_compile: bool, device: str) -> None:

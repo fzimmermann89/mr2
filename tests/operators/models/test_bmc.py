@@ -559,6 +559,7 @@ def test_slice_rf_pulse_templates_match_flip_angle_and_zero_phase(pulse_cls: typ
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 @pytest.mark.parametrize('pulse_cls', [GaussianRFPulse, SincRFPulse])
 def test_slice_rf_pulse_templates_follow_module_device_on_cuda(pulse_cls: type[SliceRFPulseBase]) -> None:
     """Test that RF pulse templates create CUDA tensors when the module is on CUDA."""
@@ -1094,6 +1095,7 @@ def test_bmsim_case_8_reference() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_bmsim_cuda() -> None:
     """Test BMsim models work on cuda devices."""
     parameters = Parameters(

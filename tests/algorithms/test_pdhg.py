@@ -173,7 +173,16 @@ def test_f_and_g_None() -> None:
     assert (pdhg_solution == initial_values[0]).all()
 
 
-@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize(
+    'device',
+    [
+        'cpu',
+        pytest.param(
+            'cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+        ),
+    ],
+)
 def test_zero_operator_automatic_steps(device: str) -> None:
     """Automatic PDHG steps stay finite for a zero operator."""
     initial = torch.tensor([1.0, -2.0], device=device)

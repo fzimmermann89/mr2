@@ -162,6 +162,7 @@ class EpgTseModel(SignalModel[torch.Tensor, torch.Tensor, torch.Tensor, torch.Te
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_BasicEpgModel_cuda(parameter_shape: Sequence[int] = (2,)) -> None:
     """Test basic EPG blocks work on cuda devices."""
     rng = RandomGenerator(8)
@@ -249,6 +250,7 @@ def test_EpgFisp_shape(parameter_shape, contrast_dim_shape, signal_shape) -> Non
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_EpgFisp_cuda(parameter_shape: Sequence[int] = (2,)) -> None:
     """Test Fisp model works on cuda devices."""
     rng = RandomGenerator(8)
@@ -411,6 +413,7 @@ def test_EpgTse_shape(parameter_shape, contrast_dim_shape, signal_shape) -> None
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_EpgTse_cuda(parameter_shape: Sequence[int] = (2,)) -> None:
     """Test Tse model works on cuda devices."""
     rng = RandomGenerator(8)

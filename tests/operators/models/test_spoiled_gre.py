@@ -62,6 +62,7 @@ def test_autodiff_spoiled_gre(parameter_shape: Sequence[int] = (2, 5, 10, 10)) -
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_spoiled_gre_cuda(parameter_shape: Sequence[int] = (2, 5, 10, 10, 10)) -> None:
     """Test the spoiled gre model works on cuda devices."""
     rng = RandomGenerator(1)

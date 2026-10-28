@@ -104,6 +104,7 @@ def test_autodiff_WASABI(parameter_shape: Sequence[int] = (2, 5, 3), contrast_di
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_wasabi_cuda(parameter_shape: Sequence[int] = (2, 5, 3), contrast_dim_shape: Sequence[int] = (3,)) -> None:
     """Test the WASABI model works on cuda devices."""
     rng = RandomGenerator(8)

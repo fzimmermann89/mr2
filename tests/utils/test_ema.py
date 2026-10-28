@@ -90,6 +90,7 @@ def test_ema_dict_tensor_detach() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 @pytest.mark.parametrize('dtype', [torch.float32, torch.complex64, torch.int64])
 def test_ema_dict_cpu_cuda_updates(dtype: torch.dtype) -> None:
     """EMA updates retain the stored device and detach tensor state."""

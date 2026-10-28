@@ -431,6 +431,7 @@ def test_subspace_non_uniform_fast_fourier_op_gram_autograd() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_non_uniform_fast_fourier_op_gram_cuda() -> None:
     """Test Toeplitz Gram operators work on CUDA devices."""
     rng = RandomGenerator(seed=5)
@@ -450,6 +451,7 @@ def test_non_uniform_fast_fourier_op_gram_cuda() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_non_uniform_fast_fourier_op_subspace_gram_cuda() -> None:
     """Test subspace Toeplitz Gram operators work on CUDA devices."""
     rng = RandomGenerator(seed=5)
@@ -470,6 +472,7 @@ def test_non_uniform_fast_fourier_op_subspace_gram_cuda() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_non_uniform_fast_fourier_op_cuda() -> None:
     """Test non-uniform fast Fourier operator works on CUDA devices."""
 

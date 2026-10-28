@@ -748,6 +748,7 @@ def test_grid_sampling_op_matmul_composition_2d_3d() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 @pytest.mark.parametrize('dim', [3, 2])
 def test_grid_sampling_op_from_displacement_cuda(dim: int) -> None:
     """Test operator grid on cuda if the input displacement on cuda."""
@@ -781,6 +782,7 @@ def test_grid_sampling_op_from_displacement_cuda(dim: int) -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 @pytest.mark.parametrize('dim', [3, 2])
 def test_grid_sampling_op_from_affine_cuda(dim: int) -> None:
     """Test operator grid on cuda if the input affine is on cuda."""
@@ -826,6 +828,7 @@ def test_grid_sampling_op_from_affine_cuda(dim: int) -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 @pytest.mark.parametrize('dim', [3, 2])
 def test_grid_sampling_op_from_bspline_cuda(dim: int) -> None:
     """Test operator grid on cuda if the input B-spline control points are on cuda."""
@@ -883,6 +886,7 @@ def test_grid_sampling_op_from_bspline_cuda(dim: int) -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 @pytest.mark.parametrize('dim', [3, 2])
 def test_grid_sampling_op_from_stationary_velocity_cuda(dim: int) -> None:
     """Test operator grid on cuda if the input stationary velocity is on cuda."""

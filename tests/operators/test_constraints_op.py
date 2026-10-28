@@ -144,6 +144,7 @@ def test_autodiff_constraints_operator():
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_constraints_operator_cuda() -> None:
     """Test constraints operator works on CUDA devices."""
 
@@ -165,6 +166,7 @@ def test_constraints_operator_cuda() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_constraints_operator_inverse_cuda() -> None:
     """Test inverse of constraints operator works on CUDA devices."""
 

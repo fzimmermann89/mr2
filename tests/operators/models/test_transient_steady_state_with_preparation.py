@@ -116,6 +116,7 @@ def test_autodiff_transient_steady_state(
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_transient_steady_state_cuda(
     parameter_shape: Sequence[int] = (2, 5, 10), contrast_dim_shape: Sequence[int] = (6,)
 ) -> None:

@@ -388,6 +388,7 @@ def test_randperm(n: int = 5, dtype: torch.dtype = torch.int64) -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_cross_device_sampling() -> None:
     """Sampling should use the generator device internally and materialize on the requested device."""
     cpu_rng = RandomGenerator(seed=42, device='cpu')

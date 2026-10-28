@@ -108,6 +108,7 @@ def test_finite_difference_op_forward_mode_autodiff(
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_finite_difference_op_cuda() -> None:
     """Test finite difference operator works on CUDA devices."""
 

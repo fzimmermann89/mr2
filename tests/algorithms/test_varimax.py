@@ -65,6 +65,7 @@ def test_varimax_zero_iterations_returns_input() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_varimax_cuda_preserves_subspace() -> None:
     """CUDA Varimax preserves the row subspace."""
     data = RandomGenerator(seed=1).complex64_tensor((8, 3)).cuda()

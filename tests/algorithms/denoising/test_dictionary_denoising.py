@@ -182,6 +182,7 @@ def test_tolerance(denoise) -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 @pytest.mark.parametrize('denoise', [analysis_denoising, synthesis_denoising])
 def test_cuda(denoise) -> None:
     """Caller-supplied dictionaries on the image device support CUDA."""

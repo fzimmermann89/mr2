@@ -16,7 +16,11 @@ from tests.conftest import maximum_python_313, minimal_torch_26
     'device',
     [
         pytest.param('cpu', id='cpu'),
-        pytest.param('cuda', marks=pytest.mark.cuda, id='cuda'),
+        pytest.param(
+            'cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+            id='cuda',
+        ),
     ],
 )
 def test_hourglass_forward(torch_compile: bool, device: str) -> None:
@@ -46,6 +50,7 @@ def test_hourglass_forward(torch_compile: bool, device: str) -> None:
 @maximum_python_313
 @minimal_torch_26
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_hourglass_backward() -> None:
     hourglass = HourglassTransformer(
         n_dim=1,

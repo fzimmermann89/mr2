@@ -3,6 +3,7 @@
 from collections.abc import Sequence
 
 import pytest
+import torch
 from mr2.operators.models.NeuroMRF import DELICS_FLIP_ANGLES, NeuroMRF
 from mr2.utils import RandomGenerator
 from tests import autodiff_test
@@ -33,6 +34,7 @@ def test_neuro_mrf_autodiff(parameter_shape: Sequence[int] = (2, 1, 3, 4, 2)) ->
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_mese_cuda(parameter_shape: Sequence[int] = (2,)) -> None:
     """Test the NeuroMRF model works on cuda devices."""
     rng = RandomGenerator(8)

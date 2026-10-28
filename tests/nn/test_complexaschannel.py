@@ -1,6 +1,7 @@
 """Tests for ComplexAsChannel module."""
 
 import pytest
+import torch
 from mr2.nn.ComplexAsChannel import ComplexAsChannel
 from mr2.utils import RandomGenerator
 from torch.nn import Linear
@@ -10,7 +11,11 @@ from torch.nn import Linear
     'device',
     [
         pytest.param('cpu', id='cpu'),
-        pytest.param('cuda', id='cuda', marks=pytest.mark.cuda),
+        pytest.param(
+            'cuda',
+            id='cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+        ),
     ],
 )
 def test_complexaschannel(device: str) -> None:

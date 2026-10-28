@@ -17,7 +17,11 @@ flex_attention_marks = (minimal_torch_26, maximum_python_313)
     'device',
     [
         pytest.param('cpu', id='cpu'),
-        pytest.param('cuda', id='cuda', marks=pytest.mark.cuda),
+        pytest.param(
+            'cuda',
+            id='cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+        ),
     ],
 )
 @pytest.mark.parametrize('torch_compile', [True, False], ids=['compiled', 'uncompiled'])
@@ -86,7 +90,11 @@ def test_spatialtransformerblock_backward(
     'device',
     [
         pytest.param('cpu', id='cpu'),
-        pytest.param('cuda', id='cuda', marks=pytest.mark.cuda),
+        pytest.param(
+            'cuda',
+            id='cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+        ),
     ],
 )
 @pytest.mark.parametrize('torch_compile', [False, True])

@@ -103,6 +103,7 @@ def test_dictionary_matching_op_not_differentiable() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_dictionary_matching_op_cuda() -> None:
     """Test dictionary matching operator works on CUDA devices."""
     rng = RandomGenerator(2)

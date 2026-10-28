@@ -303,6 +303,7 @@ def test_KData_to_float64tensor(ismrmrd_cart) -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_KData_to_cudatensor(ismrmrd_cart) -> None:
     """Move KData to cuda  using other-tensor overload."""
     kdata = KData.from_file(ismrmrd_cart.filename, DummyTrajectory())
@@ -357,6 +358,7 @@ def test_KData_to_complex128_header(ismrmrd_cart) -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_KData_to_cuda(ismrmrd_cart) -> None:
     """Test KData.to to move data to CUDA memory."""
     kdata = KData.from_file(ismrmrd_cart.filename, DummyTrajectory())
@@ -369,6 +371,7 @@ def test_KData_to_cuda(ismrmrd_cart) -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_KData_cuda(ismrmrd_cart) -> None:
     """Move KData object to CUDA memory."""
     kdata = KData.from_file(ismrmrd_cart.filename, DummyTrajectory())
@@ -385,6 +388,7 @@ def test_KData_cuda(ismrmrd_cart) -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_KData_cpu(ismrmrd_cart) -> None:
     """Move KData object to CUDA memory and back to CPU memory."""
     kdata = KData.from_file(ismrmrd_cart.filename, DummyTrajectory())
@@ -407,6 +411,7 @@ def test_Kdata_device_cpu(ismrmrd_cart) -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_KData_inconsistentdevice(ismrmrd_cart) -> None:
     """Inconsistent device raises exception."""
     kdata_cpu = KData.from_file(ismrmrd_cart.filename, DummyTrajectory())

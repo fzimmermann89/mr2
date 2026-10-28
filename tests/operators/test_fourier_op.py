@@ -88,8 +88,16 @@ class NufftTrajektory(KTrajectory):
     ('device', 'dtype'),
     [
         ('cpu', torch.float64),
-        pytest.param('cuda', torch.float32, marks=pytest.mark.cuda),
-        pytest.param('cuda', torch.float64, marks=pytest.mark.cuda),
+        pytest.param(
+            'cuda',
+            torch.float32,
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+        ),
+        pytest.param(
+            'cuda',
+            torch.float64,
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+        ),
     ],
 )
 def test_fourier_op_cached_gram_after_to(
@@ -207,7 +215,16 @@ def test_fourier_op_gram(
     torch.testing.assert_close(actual, expected, rtol=1e-3, atol=1e-3)
 
 
-@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize(
+    'device',
+    [
+        'cpu',
+        pytest.param(
+            'cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+        ),
+    ],
+)
 @pytest.mark.parametrize('encoding_offset', [0, 1])
 @pytest.mark.parametrize(
     ('recon_shape', 'cartesian_axis'),
@@ -474,6 +491,7 @@ def test_fourier_op_repr_mixed_fft_nufft():
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_fourier_op_cuda() -> None:
     """Test Fourier operator works on CUDA devices."""
 
@@ -526,6 +544,7 @@ def test_fourier_op_cuda() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_fourier_op_gram_cuda() -> None:
     """Test gram Fourier operator works on CUDA devices."""
     # Create a trajectory with both Cartesian (on-grid) and non-Cartesian (off-grid) components

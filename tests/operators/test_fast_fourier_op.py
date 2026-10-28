@@ -67,7 +67,16 @@ MATRIX_PARAMETERS = pytest.mark.parametrize(
 )
 
 
-@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize(
+    'device',
+    [
+        'cpu',
+        pytest.param(
+            'cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+        ),
+    ],
+)
 @pytest.mark.parametrize(
     ('recon_matrix', 'encoding_matrix'),
     [
@@ -178,6 +187,7 @@ def test_fast_fourier_op_repr():
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_fast_fourier_op_cuda() -> None:
     """Test fast Fourier operator works on CUDA devices."""
 

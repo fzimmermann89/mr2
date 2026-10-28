@@ -65,7 +65,16 @@ def test_register_images(ellipse_phantom) -> None:
     assert recovered_difference < initial_difference
 
 
-@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize(
+    'device',
+    [
+        'cpu',
+        pytest.param(
+            'cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+        ),
+    ],
+)
 def test_register_images_nonuniform_displacement(device: str, blob_image: torch.Tensor) -> None:
     """The spline pyramid must recover a deformation that affine registration cannot fit."""
     moving = blob_image.to(device)

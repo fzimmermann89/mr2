@@ -71,6 +71,7 @@ def test_multi_identity_is_neutral():
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_identity_op_cuda() -> None:
     """Test identity operator works with CUDA devices."""
 
@@ -93,6 +94,7 @@ def test_identity_op_cuda() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_multi_identity_op_cuda() -> None:
     """Test multi identity operator works with CUDA devices."""
 

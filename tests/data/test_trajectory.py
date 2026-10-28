@@ -110,6 +110,7 @@ def test_trajectory_floating_dtype(dtype: torch.dtype) -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_trajectory_cuda(cartesian_grid) -> None:
     """Move KTrajectory object to CUDA memory."""
     n_k0 = 10
@@ -135,6 +136,7 @@ def test_trajectory_cuda(cartesian_grid) -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_trajectory_cpu(cartesian_grid) -> None:
     """Move KTrajectory object to CUDA memory and back to CPU memory."""
     n_k0 = 10

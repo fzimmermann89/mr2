@@ -56,7 +56,11 @@ def test_lewin_periodic_modulator(shape: tuple[int, ...], window_size: int, shif
     'device',
     [
         pytest.param('cpu', id='cpu'),
-        pytest.param('cuda', marks=pytest.mark.cuda, id='cuda'),
+        pytest.param(
+            'cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+            id='cuda',
+        ),
     ],
 )
 def test_uformer_forward(shape: tuple[int, int], torch_compile: bool, device: str) -> None:

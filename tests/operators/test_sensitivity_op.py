@@ -118,6 +118,7 @@ def test_sensitivity_op_other_dim_compatibility_fail(random_iheader, n_other_csm
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_sensitivity_op_cuda(random_iheader) -> None:
     """Test sensitivity operator works on CUDA devices."""
     random_generator = RandomGenerator(seed=0)

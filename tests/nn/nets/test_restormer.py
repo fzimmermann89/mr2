@@ -23,7 +23,11 @@ def test_restormer_block_normalization() -> None:
     'device',
     [
         pytest.param('cpu', id='cpu'),
-        pytest.param('cuda', marks=pytest.mark.cuda, id='cuda'),
+        pytest.param(
+            'cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+            id='cuda',
+        ),
     ],
 )
 def test_restormer_forward(torch_compile: bool, device: str) -> None:

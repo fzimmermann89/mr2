@@ -122,6 +122,7 @@ def test_zero_op_forward_mode_autodiff_scalar() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_zero_op_cuda() -> None:
     """Test ZeroOp works on CUDA devices."""
     generator = RandomGenerator(seed=0)

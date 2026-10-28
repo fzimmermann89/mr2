@@ -11,7 +11,11 @@ from mr2.utils import RandomGenerator
     'device',
     [
         pytest.param('cpu', id='cpu'),
-        pytest.param('cuda', id='cuda', marks=pytest.mark.cuda),
+        pytest.param(
+            'cuda',
+            id='cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+        ),
     ],
 )
 def test_droppath_no_drop(device: str, scale_by_keep: bool) -> None:

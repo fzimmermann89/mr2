@@ -23,7 +23,16 @@ def test_rovir_returns_operator_with_expected_shape() -> None:
     torch.testing.assert_close(gram, torch.eye(2, dtype=img.dtype), atol=1e-5, rtol=1e-5)
 
 
-@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize(
+    'device',
+    [
+        'cpu',
+        pytest.param(
+            'cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+        ),
+    ],
+)
 @pytest.mark.parametrize('dtype', [torch.float32, torch.float64, torch.complex64, torch.complex128])
 def test_rovir_energy_ratio_matches_generalized_eigenvector(device: str, dtype: torch.dtype) -> None:
     """ROVir matches the optimal ROI/background energy ratio for real and complex coil images."""
@@ -81,6 +90,7 @@ def test_rovir_raises_for_invalid_roi() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_rovir_cuda_image_with_cpu_roi() -> None:
     """ROVir accepts a CPU ROI with CUDA coil images and preserves orthonormality."""
     img = RandomGenerator(1).complex64_tensor((4, 2, 3, 4)).cuda()

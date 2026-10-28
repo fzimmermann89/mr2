@@ -171,7 +171,16 @@ def test_dcf_3d_cart_nonuniform_traj_voronoi(n_k2, n_k1, n_k0, k2_steps, k1_step
     torch.testing.assert_close(dcf_full[1:-1, 1:-1, 1:-1], dcf_broadcast[1:-1, 1:-1, 1:-1])
 
 
-@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize(
+    'device',
+    [
+        'cpu',
+        pytest.param(
+            'cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+        ),
+    ],
+)
 @pytest.mark.parametrize('n_points', [1, 2, 40])
 def test_dcf_1d_float64(device: str, n_points: int) -> None:
     """All 1D size branches preserve float64 and give the expected cell widths."""
@@ -181,7 +190,16 @@ def test_dcf_1d_float64(device: str, n_points: int) -> None:
     torch.testing.assert_close(result, expected)
 
 
-@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize(
+    'device',
+    [
+        'cpu',
+        pytest.param(
+            'cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+        ),
+    ],
+)
 @pytest.mark.parametrize('ndim', [2, 3])
 def test_dcf_voronoi_float64(device: str, ndim: int) -> None:
     """Voronoi preserves float64 without changing the calculated cell volumes."""

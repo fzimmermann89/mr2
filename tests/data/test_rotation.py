@@ -627,7 +627,16 @@ def test_as_euler_degenerate_symmetric_axes(seq_tuple: Sequence[str], intrinsic:
 @pytest.mark.parametrize('intrinsic', [False, True])
 @pytest.mark.parametrize('symmetric', [False, True])
 @pytest.mark.parametrize('dtype', [torch.float32, torch.float64])
-@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize(
+    'device',
+    [
+        'cpu',
+        pytest.param(
+            'cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+        ),
+    ],
+)
 def test_as_euler_roundtrip(
     seq_tuple: Sequence[str], intrinsic: bool, symmetric: bool, dtype: torch.dtype, device: str
 ) -> None:
@@ -1780,6 +1789,7 @@ def test_unqueeze_last() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_cuda_quat_roundtrip() -> None:
     """from_quat / as_quat preserve device."""
     quat = torch.tensor([0.0, 0.0, 0.0, 1.0], device='cuda')
@@ -1791,6 +1801,7 @@ def test_cuda_quat_roundtrip() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_cuda_matrix_roundtrip() -> None:
     """from_matrix / as_matrix preserve device."""
     rotation = Rotation.random(4, random_state=0, device='cuda')
@@ -1802,6 +1813,7 @@ def test_cuda_matrix_roundtrip() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_cuda_rotvec_roundtrip() -> None:
     """from_rotvec / as_rotvec preserve device, including python-list reflection flags."""
     rotvec = torch.tensor([[0.1, 0.0, 0.0], [0.2, 0.0, 0.0]], device='cuda')
@@ -1812,6 +1824,7 @@ def test_cuda_rotvec_roundtrip() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_cuda_euler_roundtrip() -> None:
     """from_euler / as_euler preserve device."""
     angles = torch.tensor([0.1, 0.2, 0.3], device='cuda')
@@ -1823,6 +1836,7 @@ def test_cuda_euler_roundtrip() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_cuda_directions_roundtrip() -> None:
     """from_directions / as_directions preserve device."""
     rotation = Rotation.random(random_state=0, device='cuda')
@@ -1834,6 +1848,7 @@ def test_cuda_directions_roundtrip() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_cuda_apply_tensor() -> None:
     """Applying a CUDA rotation to a tensor or python list returns CUDA output."""
     rotation = Rotation.identity(device='cuda')
@@ -1842,6 +1857,7 @@ def test_cuda_apply_tensor() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_cuda_apply_spatialdimension() -> None:
     """Applying a CUDA rotation to a SpatialDimension (scalar floats) returns CUDA tensors."""
     rotation = Rotation.identity(device='cuda')
@@ -1851,6 +1867,7 @@ def test_cuda_apply_spatialdimension() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_cuda_matmul() -> None:
     """Composing two CUDA rotations preserves device."""
     r1 = Rotation.random(3, random_state=0, device='cuda')
@@ -1859,6 +1876,7 @@ def test_cuda_matmul() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_cuda_inv() -> None:
     """inv preserves device and composes back to identity."""
     rotation = Rotation.random(4, random_state=0, device='cuda')
@@ -1868,6 +1886,7 @@ def test_cuda_inv() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_cuda_pow() -> None:
     """Integer powers preserve device, including the n=0 identity shortcut."""
     rotation = Rotation.random(3, random_state=0, device='cuda')
@@ -1877,6 +1896,7 @@ def test_cuda_pow() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_cuda_magnitude() -> None:
     """magnitude returns a CUDA tensor."""
     rotation = Rotation.random(3, random_state=0, device='cuda')
@@ -1884,6 +1904,7 @@ def test_cuda_magnitude() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_cuda_reflect() -> None:
     """reflect preserves device."""
     rotation = Rotation.random(3, random_state=0, device='cuda')
@@ -1891,6 +1912,7 @@ def test_cuda_reflect() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_cuda_invert_axes() -> None:
     """invert_axes preserves device."""
     rotation = Rotation.random(3, random_state=0, device='cuda')
@@ -1898,6 +1920,7 @@ def test_cuda_invert_axes() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_cuda_mean() -> None:
     """mean stays on CUDA, with both default weights and python-list weights."""
     rotation = Rotation.random(4, random_state=0, device='cuda')
@@ -1906,6 +1929,7 @@ def test_cuda_mean() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_cuda_align_vectors() -> None:
     """align_vectors stays on CUDA, with both default weights and python-list weights."""
     a = torch.eye(3, device='cuda')
@@ -1919,6 +1943,7 @@ def test_cuda_align_vectors() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_cuda_concatenate() -> None:
     """Concatenating CUDA rotations preserves device."""
     r1 = Rotation.random(2, random_state=0, device='cuda')
@@ -1927,6 +1952,7 @@ def test_cuda_concatenate() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_cuda_random_vmf() -> None:
     """random_vmf materializes outputs on the requested CUDA device."""
     mean_axis = torch.tensor([0.0, 0.0, 1.0], device='cuda')

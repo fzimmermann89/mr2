@@ -262,6 +262,7 @@ def test_slice_projection_op_forward_mode_autodiff(
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_slice_projection_op_cpu_cuda_consistency() -> None:
     """Construction on CPU and CUDA produces numerically equivalent operators."""
     input_shape = SpatialDimension(12, 12, 12)

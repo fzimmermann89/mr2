@@ -107,6 +107,7 @@ def test_dcf_spiral_traj_voronoi_singlespiral() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 @pytest.mark.parametrize(('n_ka', 'n_kr', 'n_k0'), [(10, 6, 20)])
 def test_dcf_rpe_traj_voronoi_cuda(n_ka: int, n_kr: int, n_k0: int) -> None:
     """Voronoi-based dcf calculation for RPE trajectory in CUDA memory."""
@@ -127,7 +128,16 @@ def test_dcf_broadcast() -> None:
     assert dcf.data.shape == trajectory.shape
 
 
-@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize(
+    'device',
+    [
+        'cpu',
+        pytest.param(
+            'cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+        ),
+    ],
+)
 def test_dcf_pipe_mixed_batch(device: str) -> None:
     """Mixed radial/Cartesian factors work with dense, broadcast and batched geometry."""
     trajectory = example_traj_rpe(12, 32, 8)
@@ -183,7 +193,16 @@ def test_dcf_pipe_coil_axis() -> None:
         DcfData.from_traj_pipe(KTrajectory(k, k, k), SpatialDimension(8, 8, 8))
 
 
-@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize(
+    'device',
+    [
+        'cpu',
+        pytest.param(
+            'cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+        ),
+    ],
+)
 def test_dcf_pipe_batch_constant_directions(device: str) -> None:
     """Unrelated batch entries must not change active directions or normalization."""
     kx = torch.arange(-4, 4, dtype=torch.float32, device=device).reshape(1, 1, 1, 1, 8)
@@ -213,7 +232,16 @@ def test_dcf_pipe_constant_input_validation(varying: bool, invalid: str) -> None
         )
 
 
-@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize(
+    'device',
+    [
+        'cpu',
+        pytest.param(
+            'cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+        ),
+    ],
+)
 @pytest.mark.parametrize('method', ['voronoi', 'pipe'])
 @pytest.mark.parametrize('geometry', ['singleton', 'cartesian', 'spiral', 'rpe'])
 def test_dcf_constructor_float64(device: str, method: str, geometry: str) -> None:
@@ -240,7 +268,16 @@ def test_dcf_constructor_float64(device: str, method: str, geometry: str) -> Non
     assert torch.broadcast_shapes(dcf.data.shape, traj.shape) == traj.shape
 
 
-@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize(
+    'device',
+    [
+        'cpu',
+        pytest.param(
+            'cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+        ),
+    ],
+)
 @pytest.mark.parametrize('dtype', [torch.float32, torch.float64])
 def test_dcf_pipe_repeated_readouts(device: str, dtype: torch.dtype) -> None:
     """Reducing duplicate sample axes preserves their multiplicity in each geometry."""
@@ -261,7 +298,16 @@ def test_dcf_pipe_repeated_readouts(device: str, dtype: torch.dtype) -> None:
     torch.testing.assert_close(result.reshape(flat.shape), flat)
 
 
-@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize(
+    'device',
+    [
+        'cpu',
+        pytest.param(
+            'cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+        ),
+    ],
+)
 @pytest.mark.parametrize('method', ['voronoi', 'pipe'])
 @pytest.mark.parametrize('dense', [False, True])
 def test_dcf_connected_directions(device: str, method: str, dense: bool) -> None:

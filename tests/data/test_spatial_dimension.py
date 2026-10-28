@@ -172,6 +172,7 @@ def test_spatial_dimension_zyx() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_spatial_dimension_cuda_tensor() -> None:
     """Test moving to CUDA"""
     spatial_dimension = SpatialDimension(z=torch.ones(1), y=torch.ones(1), x=torch.ones(1))
@@ -189,6 +190,7 @@ def test_spatial_dimension_cuda_tensor() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_spatial_dimension_cuda_float() -> None:
     """Test moving to CUDA without tensors -> copy only"""
     spatial_dimension = SpatialDimension(z=1.0, y=2.0, x=3.0)

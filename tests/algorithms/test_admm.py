@@ -154,6 +154,7 @@ def test_admm_l2_callback_early_stop() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 @pytest.mark.parametrize('algorithm', [admm_linear, admm_l2], ids=['linear', 'l2'])
 def test_cuda_admm_solution(algorithm) -> None:
     """ADMM variants recover a small soft-thresholded CUDA solution."""

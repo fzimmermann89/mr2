@@ -38,6 +38,7 @@ def test_separablesum_forward():
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_separablesum_forward_cuda():
     a = Dummy()
     b = Dummy()
@@ -108,7 +109,16 @@ def test_summedfunctionls_len():
 
 @pytest.mark.parametrize('shorthand', [False, True])
 @pytest.mark.parametrize('dtype', [torch.float32, torch.float64])
-@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize(
+    'device',
+    [
+        'cpu',
+        pytest.param(
+            'cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+        ),
+    ],
+)
 def test_separablesum_to(shorthand: bool, dtype: torch.dtype, device: str):
     """Device and dtype conversions reach every member, including scaled functionals."""
     a = L2NormSquared(target=torch.ones(3), weight=torch.full((3,), 2.0))

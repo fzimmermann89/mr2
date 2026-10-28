@@ -104,7 +104,16 @@ def test_pca_compression_op_with_varimax_rotation() -> None:
     )
 
 
-@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize(
+    'device',
+    [
+        'cpu',
+        pytest.param(
+            'cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+        ),
+    ],
+)
 @pytest.mark.parametrize('dtype', [torch.float32, torch.complex64])
 @pytest.mark.parametrize('centering', [False, True])
 def test_pca_compression_op_rank_one_reconstruction(device: str, dtype: torch.dtype, centering: bool) -> None:
@@ -120,7 +129,16 @@ def test_pca_compression_op_rank_one_reconstruction(device: str, dtype: torch.dt
     torch.testing.assert_close(reconstructed, data, atol=1e-5, rtol=1e-5)
 
 
-@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize(
+    'device',
+    [
+        'cpu',
+        pytest.param(
+            'cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+        ),
+    ],
+)
 @pytest.mark.parametrize('dtype', [torch.float32, torch.complex64])
 @pytest.mark.parametrize('centering', [False, True])
 @pytest.mark.parametrize('rotate', [False, True])
@@ -143,6 +161,7 @@ def test_pca_compression_op_captured_energy(
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_pca_compression_op_cuda() -> None:
     """Test if PCA compression operator works on CUDA devices."""
     init_data_shape = (40, 10)

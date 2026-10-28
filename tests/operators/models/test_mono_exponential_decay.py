@@ -64,6 +64,7 @@ def test_autodiff_mono_exponential_decay(parameter_shape: Sequence[int] = (2, 5,
 
 
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_mono_exponential_decay_cuda(parameter_shape: Sequence[int] = (2, 5, 10, 10, 10)) -> None:
     """Test the mono-exponential decay model works on cuda devices."""
     rng = RandomGenerator(3)

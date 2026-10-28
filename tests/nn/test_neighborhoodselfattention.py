@@ -19,7 +19,11 @@ from tests.conftest import maximum_python_313, minimal_torch_26
                 reason='Flex Attention backward not supported on CPU. https://github.com/pytorch/pytorch/issues/148752'
             ),
         ),
-        pytest.param('cuda', id='cuda', marks=pytest.mark.cuda),
+        pytest.param(
+            'cuda',
+            id='cuda',
+            marks=(pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')),
+        ),
     ],
 )
 @pytest.mark.parametrize(
@@ -73,6 +77,7 @@ def test_neighborhood_self_attention_backward(
 @maximum_python_313
 @minimal_torch_26
 @pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 @pytest.mark.parametrize(
     ('kernel_size', 'dilation', 'circular', 'rope'),
     [
