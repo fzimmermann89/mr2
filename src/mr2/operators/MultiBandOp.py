@@ -20,6 +20,8 @@ class MultiBandOp(EinsumOp):
     For joint SMS encoding, compose ``collapse @ fourier @ sensitivities``.
     Images and sensitivity maps must contain the same ordered group of slices.
     Other leading axes, such as contrasts or slice groups, remain batched.
+    Construct the Fourier operator with ``trajectory.unsqueeze(-5)`` to insert
+    a singleton slice axis, while passing the original coordinates to this operator.
     """
 
     def __init__(self, k: torch.Tensor, shifts: Sequence[float] | torch.Tensor) -> None:
@@ -39,19 +41,15 @@ class MultiBandOp(EinsumOp):
             Alternatively, slice-encoding coordinates in cycles/meter can be
             paired with slice positions in meters.
         """
-        if k.ndim < 4 or k.shape[-4] != 1 or k.is_complex() or not torch.isfinite(k).all():
-            raise ValueError('k must contain finite real coordinates with shape (... 1 k2 k1 k0).')
+        if k.ndim < 4 or k.shape[-4] != 1:
+            raise ValueError('k must have shape (... 1 k2 k1 k0).')
+        if k.is_complex():
+            raise ValueError('k must be real.')
         if not k.is_floating_point():
             k = k.to(torch.get_default_dtype())
-        shift_tensor = torch.as_tensor(shifts, device=k.device)
-        if (
-            shift_tensor.ndim != 1
-            or not shift_tensor.numel()
-            or shift_tensor.is_complex()
-            or not torch.isfinite(shift_tensor).all()
-        ):
-            raise ValueError('shifts must be a nonempty one-dimensional sequence of finite real values.')
         shift_tensor = torch.as_tensor(shifts, device=k.device, dtype=k.dtype)
+        if shift_tensor.ndim != 1 or not shift_tensor.numel():
+            raise ValueError('shifts must be a nonempty one-dimensional sequence.')
         phase = torch.exp(-2j * torch.pi * k * shift_tensor.reshape(-1, 1, 1, 1))
         super().__init__(phase, '... s k2 k1 k0, ... s c k2 k1 k0 -> ... c k2 k1 k0')
 
@@ -83,10 +81,9 @@ class MultiBandOp(EinsumOp):
         order and phase origin when applying it to raw data. A scanner setting
         meaning no CAIPI shift should remain 1.
         """
-        if not isinstance(multiband_factor, int) or isinstance(multiband_factor, bool) or multiband_factor < 1:
+        if multiband_factor < 1:
             raise ValueError('multiband_factor must be a positive integer.')
         if not math.isfinite(fov_shift_factor) or fov_shift_factor < 1:
             raise ValueError('fov_shift_factor must be finite and at least 1.')
-        shifts = torch.arange(multiband_factor, device=k.device, dtype=k.dtype if k.is_floating_point() else None)
-        shifts = torch.zeros_like(shifts) if fov_shift_factor == 1 else shifts / fov_shift_factor
+        shifts = [0.0 if fov_shift_factor == 1 else s / fov_shift_factor for s in range(multiband_factor)]
         return cls(k, shifts)

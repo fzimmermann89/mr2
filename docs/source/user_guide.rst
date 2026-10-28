@@ -94,16 +94,16 @@ Simultaneous multi-band encoding can be composed using `~mr2.operators.MultiBand
     collapse = mr2.operators.MultiBandOp.from_caipi(
         k=trajectory.ky, multiband_factor=3, fov_shift_factor=6,
     )
+    fourier = mr2.operators.FourierOp(
+        recon_matrix, encoding_matrix, trajectory.unsqueeze(-5),
+    )
     encoding = collapse @ fourier @ mr2.operators.SensitivityOp(csm)
 
 Images and sensitivity maps contain one ordered group of simultaneously excited slices on the axis
 immediately before the coil axis. The operator sums the encoded slices into one coil measurement.
-The coordinates retain the actual acquired positions, including their spacing in accelerated data.
-Here, successive slices are shifted by one sixth of the full FOV. If a scanner reports the shift
-relative to the acceleration-reduced FOV, multiply its shift factor by the nominal in-plane
-acceleration first: scanner factor 3 with acceleration 2 gives ``fov_shift_factor=6``.
-Confirm the sequence's slice order and phase convention when using scanner data.
-For explicit slice shifts, use ``MultiBandOp(k, shifts)``.
+The Fourier trajectory needs the additional singleton slice axis so batch-dependent coordinates
+broadcast across slices. See `~mr2.operators.MultiBandOp.from_caipi` for scanner shift conventions,
+or use ``MultiBandOp(k, shifts)`` for explicit shifts.
 
 Based on the acquisition model either a suitable optimizer from `mr2.algorithms.optimizers` can be selected
 or a new optimizer using pytorch functions can be created.
