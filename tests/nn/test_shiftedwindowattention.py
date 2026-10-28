@@ -141,3 +141,19 @@ def test_shifted_window_attention_reference(
     swin = ShiftedWindowAttention(n_dim, 4, 6, 2, window_size=window_size, shifted=shifted).double().to(device)
     torch.nn.init.normal_(swin.relative_position_bias_table)
     torch.testing.assert_close(swin(x), shifted_window_attention_reference(swin, x))
+
+
+@pytest.mark.parametrize('shifted', [True, False], ids=['shifted', 'non-shifted'])
+def test_shifted_window_attention_padded_backward(shifted: bool) -> None:
+    """Padded queries must not introduce non-finite gradients into valid tokens or parameters."""
+    rng = RandomGenerator(13)
+    x = rng.float32_tensor((2, 4, 5, 9)).requires_grad_(True)
+    swin = ShiftedWindowAttention(2, 4, 4, 2, window_size=4, shifted=shifted)
+    output = swin(x)
+    output.sum().backward()
+    assert torch.isfinite(output).all()
+    assert x.grad is not None
+    assert torch.isfinite(x.grad).all()
+    for parameter in swin.parameters():
+        assert parameter.grad is not None
+        assert torch.isfinite(parameter.grad).all()

@@ -80,7 +80,7 @@ def test_conditioning_reaches_all_layers(net_factory: Callable[[], Module]) -> N
 @torch.no_grad()
 def test_conditioning_changes_output(net_factory: Callable[[], Module]) -> None:
     """The output depends on the conditioning."""
-    net = net_factory()
+    net = net_factory().eval()
     for parameter in net.parameters():  # avoid zero-initialized conditioning projections
         torch.nn.init.normal_(parameter, std=0.2)
     rng = RandomGenerator(seed=0)

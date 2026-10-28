@@ -207,7 +207,7 @@ class SwinIR(Module):
         n_heads
             The number of attention heads.
         window_size
-            The size of the attention window. Inputs sizes must be divisible by this value.
+            The size of the attention window. Partial windows are zero-padded and padded keys are masked.
         n_blocks
             The number of residual blocks.
         n_attn_per_block
