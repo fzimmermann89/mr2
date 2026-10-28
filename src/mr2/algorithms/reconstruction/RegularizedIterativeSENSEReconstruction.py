@@ -112,9 +112,8 @@ class RegularizedIterativeSENSEReconstruction(DirectReconstruction):
         """
         super().__init__(kdata, fourier_op, csm, noise, dcf)
         self.n_iterations = n_iterations
-        self.register_buffer(
-            'regularization_data', None if regularization_data is None else torch.as_tensor(regularization_data)
-        )
+        self.register_buffer('regularization_data', None)
+        self.regularization_data = None if regularization_data is None else torch.as_tensor(regularization_data)
         self.regularization_weight = torch.as_tensor(regularization_weight)
         self.regularization_op = regularization_op if regularization_op is not None else IdentityOp()
 

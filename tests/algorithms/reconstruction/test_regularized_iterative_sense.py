@@ -108,6 +108,19 @@ def test_regularized_iterative_sense_identity_prior(cartesian_kdata: KData, devi
     torch.testing.assert_close(idata.data, expected, rtol=1e-5, atol=1e-5)
 
 
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+def test_regularized_iterative_sense_parameter_prior(cartesian_kdata: KData, device: str) -> None:
+    """Keep a trainable prior registered as a parameter and preserve its gradient."""
+    prior = torch.nn.Parameter(torch.tensor(0.5, device=device))
+    reconstruction = RegularizedIterativeSENSEReconstruction(
+        fourier_op=IdentityOp(), csm=None, n_iterations=1, regularization_weight=0.5, regularization_data=prior
+    ).to(device)
+    assert dict(reconstruction.named_parameters())['regularization_data'] is prior
+    reconstruction(cartesian_kdata.to(device)).data.real.mean().backward()
+    assert prior.grad is not None
+    torch.testing.assert_close(prior.grad, torch.tensor(1 / 3, device=device), rtol=1e-5, atol=1e-5)
+
+
 @pytest.mark.cuda
 def test_regularized_iterative_sense_cuda_from_kdata(cartesian_kdata: KData) -> None:
     """Test CUDA device transfers for reconstruction created from kdata."""
