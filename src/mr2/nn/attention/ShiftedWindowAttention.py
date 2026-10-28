@@ -151,7 +151,9 @@ class ShiftedWindowAttention(Module):
                 for mask in (region_mask, valid_mask)
             )
             allowed = (windowed_region[..., :, None] == windowed_region[..., None, :]) & windowed_valid[..., None, :]
-            bias = torch.where(allowed[..., None, None, :, :], bias, torch.finfo(q.dtype).min)
+            # Padded queries are cropped; leave their rows unmasked to keep backward finite.
+            allowed = allowed | ~windowed_valid[..., :, None]
+            bias = torch.where(allowed[..., None, None, :, :], bias, float('-inf'))
         attention = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=bias)
         attention = rearrange(attention, '... head sequence channels->... sequence (head channels)')
         attention = attention.unflatten(-2, windowed.shape[-self.n_dim - 1 : -1])

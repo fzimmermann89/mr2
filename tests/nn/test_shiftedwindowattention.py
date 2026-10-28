@@ -144,14 +144,40 @@ def test_shifted_window_attention_reference(
 
 
 @pytest.mark.parametrize('shifted', [True, False], ids=['shifted', 'non-shifted'])
-def test_shifted_window_attention_padded_backward(shifted: bool) -> None:
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('dtype', [torch.float32, torch.float16])
+def test_shifted_window_attention_padded_backward(shifted: bool, device: str, dtype: torch.dtype) -> None:
     """Padded queries must not introduce non-finite gradients into valid tokens or parameters."""
     rng = RandomGenerator(13)
-    x = rng.float32_tensor((2, 4, 5, 9)).requires_grad_(True)
-    swin = ShiftedWindowAttention(2, 4, 4, 2, window_size=4, shifted=shifted)
+    x = rng.float32_tensor((2, 4, 5, 9)).to(device=device, dtype=dtype).requires_grad_(True)
+    swin = ShiftedWindowAttention(2, 4, 4, 2, window_size=4, shifted=shifted).to(device=device, dtype=dtype)
     output = swin(x)
     output.sum().backward()
     assert torch.isfinite(output).all()
+    assert x.grad is not None
+    assert torch.isfinite(x.grad).all()
+    for parameter in swin.parameters():
+        assert parameter.grad is not None
+        assert torch.isfinite(parameter.grad).all()
+
+
+@pytest.mark.parametrize(
+    'device',
+    ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)],
+)
+def test_shifted_window_attention_large_scores(device: str) -> None:
+    """Large float16 scores cannot override the shifted-window mask."""
+    swin = ShiftedWindowAttention(1, 1, 1, 1, window_size=4, shifted=True).half().to(device)
+    with torch.no_grad():
+        swin.to_qkv.weight.copy_(torch.tensor([[300.0], [-300.0], [1.0]], device=device))
+        swin.to_qkv.bias.zero_()
+        swin.to_out.weight.fill_(1)
+        swin.to_out.bias.zero_()
+        swin.relative_position_bias_table.zero_()
+    x = torch.tensor([[[1, 1, 1, 1, -1, -1, -1, -1]]], dtype=torch.float16, device=device, requires_grad=True)
+    output = swin(x)
+    torch.testing.assert_close(output, shifted_window_attention_reference(swin, x))
+    output.sum().backward()
     assert x.grad is not None
     assert torch.isfinite(x.grad).all()
     for parameter in swin.parameters():
