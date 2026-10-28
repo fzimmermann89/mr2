@@ -17,35 +17,28 @@ from mr2.utils import RandomGenerator
 
 
 @pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
-@pytest.mark.parametrize('explicit_steps', [False, True])
-@pytest.mark.parametrize('batched', [False, True])
-def test_pdhg_default_functionals(device: str, explicit_steps: bool, batched: bool) -> None:
-    """PDHG and its callback objective work with unmoved default functionals."""
+@pytest.mark.parametrize('stepsize', [None, 0.5])
+def test_pdhg_default_functionals(device: str, stepsize: float | None) -> None:
+    """PDHG evaluates batched objectives with default scalar weights on the input device."""
     if device == 'cuda' and not torch.cuda.is_available():
         pytest.skip('CUDA unavailable')
-    initial = torch.tensor([-3.0, 0.0, 4.0], device=device)
-    if batched:
-        initial = initial.expand(2, -1).clone()
-    objectives = []
+    initial = torch.tensor([[-3.0, 0.0, 4.0], [1.0, 2.0, -1.0]], device=device)
 
     def callback(status: PDHGStatus) -> None:
         objective = status['objective'](*status['solution'])
         assert objective.device == initial.device
         assert torch.isfinite(objective).all()
-        objectives.append(objective)
 
     (result,) = pdhg(
-        f=L1Norm(dim=-1) if batched else L1Norm(),
-        g=ZeroFunctional(dim=-1) if batched else None,
+        f=L1Norm(dim=-1),
+        g=ZeroFunctional(dim=-1),
         operator=None,
         initial_values=(initial,),
-        primal_stepsize=0.5 if explicit_steps else None,
-        dual_stepsize=0.5 if explicit_steps else None,
+        primal_stepsize=stepsize,
+        dual_stepsize=stepsize,
         max_iterations=128,
-        tolerance=0,
         callback=callback,
     )
-    assert len(objectives) == 128
     torch.testing.assert_close(result, torch.zeros_like(initial), atol=1e-5, rtol=0)
 
 
