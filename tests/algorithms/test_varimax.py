@@ -62,3 +62,17 @@ def test_varimax_zero_iterations_returns_input() -> None:
     rotated = varimax(phi, n_iterations=0)
 
     torch.testing.assert_close(rotated, phi)
+
+
+@pytest.mark.cuda
+def test_varimax_cuda_preserves_subspace() -> None:
+    """CUDA Varimax preserves the row subspace."""
+    data = RandomGenerator(seed=1).complex64_tensor((8, 3)).cuda()
+    q, _ = torch.linalg.qr(data, mode='reduced')
+    phi = q.mH
+
+    rotated = varimax(phi, n_iterations=3)
+
+    assert rotated.is_cuda
+    torch.testing.assert_close(rotated @ rotated.mH, phi @ phi.mH, atol=1e-5, rtol=1e-5)
+    torch.testing.assert_close(rotated.mH @ rotated, phi.mH @ phi, atol=1e-5, rtol=1e-5)

@@ -1,6 +1,8 @@
 import pytest
 import torch
 from mr2.operators import ProximableFunctional, ProximableFunctionalSeparableSum
+from mr2.operators.Functional import ScaledProximableFunctional
+from mr2.operators.functionals import L1Norm, L2NormSquared
 from mr2.utils import RandomGenerator
 
 
@@ -75,7 +77,7 @@ def test_ProximableFunctionalSeparableSum_prox():
     summed = Dummy(1.0) | (Dummy(2.0) | Dummy(3.0)) | Dummy(4.0)
     expected_prox = tuple(torch.tensor([1.0, 2.0, 3.0, 4.0]) * xs)
     actual_prox = summed.prox(*xs, sigma=1.0)
-    assert expected_prox == pytest.approx(actual_prox)
+    torch.testing.assert_close(actual_prox, expected_prox)
 
 
 def test_ProximableFunctionalSeparableSum_prox_convex_conj():
@@ -84,7 +86,7 @@ def test_ProximableFunctionalSeparableSum_prox_convex_conj():
     summed = Dummy(1.0) | (Dummy(2.0) | Dummy(3.0)) | Dummy(4.0)
     expected_proxcc = tuple(torch.tensor([1.0, 2.0, 3.0, 4.0]) * xs)
     actual_prox = summed.prox_convex_conj(*xs, sigma=-1.0)
-    assert expected_proxcc == pytest.approx(actual_prox)
+    torch.testing.assert_close(actual_prox, expected_proxcc)
 
 
 def test_ProximableFunctionalSeparableSum_iter_order():
@@ -102,3 +104,72 @@ def test_summedfunctionls_len():
     b = Dummy()
     assert len(a | b) == 2
     assert len(b | b | b) == 3
+
+
+@pytest.mark.parametrize('shorthand', [False, True])
+@pytest.mark.parametrize('dtype', [torch.float32, torch.float64])
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+def test_separablesum_to(shorthand: bool, dtype: torch.dtype, device: str):
+    """Device and dtype conversions reach every member, including scaled functionals."""
+    a = L2NormSquared(target=torch.ones(3), weight=torch.full((3,), 2.0))
+    b = L1Norm(target=torch.full((3,), 2.0), weight=torch.full((3,), 3.0))
+    c = L2NormSquared(target=torch.full((3,), 3.0))
+    scaled_c = torch.tensor(2.0) * c
+    assert isinstance(scaled_c, ScaledProximableFunctional)
+    summed = a | (b | scaled_c) if shorthand else ProximableFunctionalSeparableSum(a, b, scaled_c)
+    summed.to(dtype).to(device)
+
+    for functional in (a, b, c):
+        for tensor in (functional.target, functional.weight):
+            assert tensor.dtype == dtype
+            assert tensor.device.type == device
+    assert scaled_c.scale.dtype == dtype
+    assert scaled_c.scale.device.type == device
+    assert summed.functionals == (a, b, scaled_c)
+    assert summed.functionals[0] is a
+    assert summed.functionals[1:] == (b, scaled_c)
+
+    x = torch.arange(3, dtype=dtype, device=device)
+    torch.testing.assert_close(summed(x, x, x), (a(x)[0] + b(x)[0] + scaled_c(x)[0],))
+    torch.testing.assert_close(summed.prox(x, x, x), (a.prox(x)[0], b.prox(x)[0], scaled_c.prox(x)[0]))
+    torch.testing.assert_close(
+        summed.prox_convex_conj(x, x, x),
+        (a.prox_convex_conj(x)[0], b.prox_convex_conj(x)[0], scaled_c.prox_convex_conj(x)[0]),
+    )
+
+
+def test_separablesum_registered_members():
+    """Parameters and state include the members' parameters and buffers."""
+    a = L2NormSquared(target=torch.nn.Parameter(torch.ones(3)), weight=torch.nn.Parameter(torch.ones(3)))
+    b = L1Norm(target=torch.zeros(3), weight=torch.full((3,), 2.0))
+    summed = a | b
+
+    assert {id(parameter) for parameter in summed.parameters()} == {id(a.target), id(a.weight)}
+    assert {id(tensor) for tensor in summed.state_dict(keep_vars=True).values()} == {
+        id(a.target),
+        id(a.weight),
+        id(b.target),
+        id(b.weight),
+    }
+
+
+def test_separablesum_replace_members():
+    """Replacing the public tuple updates evaluation and registered state together."""
+    summed = Dummy() | Dummy()
+    a = L2NormSquared(target=torch.ones(3), weight=torch.nn.Parameter(torch.full((3,), 2.0)))
+    b = L1Norm(target=torch.zeros(3))
+    summed.functionals = (a, b)
+
+    assert tuple(summed) == (a, b)
+    assert {id(parameter) for parameter in summed.parameters()} == {id(a.weight)}
+    assert {id(tensor) for tensor in summed.state_dict(keep_vars=True).values()} == {
+        id(a.target),
+        id(a.weight),
+        id(b.target),
+        id(b.weight),
+    }
+    summed.to(torch.float64)
+    assert all(tensor.dtype == torch.float64 for tensor in summed.state_dict().values())
+    x = torch.arange(3, dtype=torch.float64)
+    torch.testing.assert_close(summed(x, x), (a(x)[0] + b(x)[0],))
+    torch.testing.assert_close(summed.prox(x, x), (a.prox(x)[0], b.prox(x)[0]))

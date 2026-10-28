@@ -87,3 +87,30 @@ def test_ema_dict_tensor_detach() -> None:
     tensor = rng.float32_tensor((2, 3)).requires_grad_(True)
     ema['test'] = tensor
     assert not ema['test'].requires_grad
+
+
+@pytest.mark.cuda
+@pytest.mark.parametrize('dtype', [torch.float32, torch.complex64, torch.int64])
+def test_ema_dict_cpu_cuda_updates(dtype: torch.dtype) -> None:
+    """EMA updates retain the stored device and detach tensor state."""
+    initial = torch.tensor([2, 4], dtype=dtype)
+    update = torch.tensor([6, 8], dtype=dtype, device='cuda').requires_grad_(
+        dtype.is_floating_point or dtype.is_complex
+    )
+    ema = EMADict(decay=0.5)
+    ema['value'] = initial
+    ema.update({'value': update})
+
+    expected = update.to('cpu') if dtype == torch.int64 else initial * 0.5 + update.to('cpu') * 0.5
+    stored = ema['value']
+    assert stored.device.type == 'cpu'
+    assert not stored.requires_grad
+    torch.testing.assert_close(stored, expected)
+
+    ema = EMADict(decay=0.5)
+    ema['value'] = initial.cuda()
+    ema.update({'value': update.detach().cpu()})
+    stored = ema['value']
+    assert stored.is_cuda
+    assert not stored.requires_grad
+    torch.testing.assert_close(stored, expected.cuda())

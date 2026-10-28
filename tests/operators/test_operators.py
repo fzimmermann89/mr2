@@ -4,7 +4,7 @@ from typing import cast
 
 import pytest
 import torch
-from mr2.operators import LinearOperator, Operator
+from mr2.operators import LinearOperator, LinearOperatorMatrix, Operator
 from mr2.utils import RandomGenerator
 from typing_extensions import Any, assert_type
 
@@ -37,6 +37,15 @@ class DummyLinearOperator(LinearOperator):
     def adjoint(self, x: torch.Tensor):
         """Dummy adjoint linear operator."""
         return (self._value.mH @ x,)
+
+
+def test_operator_double_invalidates_cached_properties() -> None:
+    """Converting an operator to double clears its cached Gram."""
+    operator = LinearOperatorMatrix([[DummyLinearOperator(torch.eye(2))]])
+    _ = operator.gram
+    assert 'gram' in operator.__dict__
+    operator.double()
+    assert 'gram' not in operator.__dict__
 
 
 def test_composition_operator():

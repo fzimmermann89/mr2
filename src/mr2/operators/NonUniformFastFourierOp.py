@@ -379,7 +379,7 @@ def gram_nufft_kernel(
     kernel = torch.zeros(
         *weight.shape[:2], *[r * 2 for r in recon_shape], dtype=weight.dtype.to_complex(), device=weight.device
     )
-    shifts = (torch.tensor(recon_shape) / 2).unsqueeze(-1).to(trajectory)
+    shifts = (torch.tensor(recon_shape) // 2).unsqueeze(-1).to(trajectory)
     for flips in list(product([1, -1], repeat=rank)):
         flipped_trajectory = trajectory * torch.tensor(flips).to(trajectory).unsqueeze(-1)
         kernel_part = adjnufft(flipped_trajectory, torch.polar(weight, (shifts * flipped_trajectory).sum(-2, True)))

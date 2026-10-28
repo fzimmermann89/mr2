@@ -197,7 +197,7 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
 
         gram = self.gram  # self.H@self
 
-        vector = initial_value
+        vector = initial_value / norm_initial_value
         for _ in range(max_iterations):
             # apply the operator to the vector
             (vector_new,) = gram(vector)

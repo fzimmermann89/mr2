@@ -253,21 +253,25 @@ def _quaternion_to_euler(quaternion: torch.Tensor, seq: str, extrinsic: bool):
     angles_0 = half_sum - half_diff
     angles_2 = half_sum + half_diff
 
-    if not symmetric:
-        angles_2 *= sign
-        angles_1 -= torch.pi / 2
     if not extrinsic:
         # flip first and last rotation
         angles_2, angles_0 = angles_0, angles_2
 
-    # Check if angles_1 is equal to is 0 (case=1) or pi (case=2), causing a singularity,
-    # i.e. a gimble lock. case=0 is the normal.
+    # Detect gimbal lock before shifting the middle angle for Tait-Bryan sequences.
+    # The unshifted angle is 0 (case=1) or pi (case=2) at a singularity; case=0 is normal.
     case = 1 * (torch.abs(angles_1) <= 1e-7) + 2 * (torch.abs(angles_1 - torch.pi) <= 1e-7)
-    # if Gimbal lock, sett last angle to 0 and use 2 * half_sum / 2 * half_diff for first angle.
+    # If gimbal lock, set last angle to 0 and use 2 * half_sum / 2 * half_diff for first angle.
     angles_2 = (case == 0) * angles_2
     angles_0 = (
         (case == 0) * angles_0 + (case == 1) * 2 * half_sum + (case == 2) * 2 * half_diff * (-1 if extrinsic else 1)
     )
+
+    if not symmetric:
+        if extrinsic:
+            angles_2 *= sign
+        else:
+            angles_0 *= sign
+        angles_1 -= torch.pi / 2
 
     angles = torch.stack((angles_0, angles_1, angles_2), -1)
     angles += (angles < -torch.pi) * 2 * torch.pi
