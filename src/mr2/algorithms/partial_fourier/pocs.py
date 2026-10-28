@@ -4,7 +4,7 @@ from collections.abc import Sequence
 
 import torch
 
-from mr2.algorithms.partial_fourier import _partial_fourier_center
+from mr2.algorithms.partial_fourier.homodyne import _partial_fourier_center
 from mr2.operators.FastFourierOp import FastFourierOp
 from mr2.utils.reshape import normalize_index, normalize_indices
 
