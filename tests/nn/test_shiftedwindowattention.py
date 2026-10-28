@@ -169,7 +169,8 @@ def test_shifted_window_attention_large_scores(device: str) -> None:
     """Large float16 scores cannot override the shifted-window mask."""
     swin = ShiftedWindowAttention(1, 1, 1, 1, window_size=4, shifted=True).half().to(device)
     with torch.no_grad():
-        swin.to_qkv.weight.copy_(torch.tensor([[300.0], [-300.0], [1.0]], device=device))
+        # Scores of +/-40,000 stay finite in float16, but their gap exceeds its finite mask value.
+        swin.to_qkv.weight.copy_(torch.tensor([[200.0], [-200.0], [1.0]], device=device))
         swin.to_qkv.bias.zero_()
         swin.to_out.weight.fill_(1)
         swin.to_out.bias.zero_()
