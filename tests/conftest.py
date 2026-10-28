@@ -40,7 +40,9 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     """Skip CUDA tests when unavailable or when GPU results are reported separately."""
     skip_cuda = config.getoption('--skip-cuda')
     with warnings.catch_warnings():
-        warnings.filterwarnings('ignore', message='CUDA initialization:', category=UserWarning)
+        warnings.filterwarnings(
+            'ignore', message="CUDA initialization:|Can't (initialize NVML|get nvml device count)", category=UserWarning
+        )
         cuda_skip = pytest.mark.skipif(
             skip_cuda or not torch.cuda.is_available(),
             reason='CUDA results are reported separately' if skip_cuda else 'CUDA unavailable',
