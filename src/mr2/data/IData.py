@@ -196,10 +196,9 @@ class IData(Dataclass):
         center = SpatialDimension(z=nz / 2 if nz > 1 else 0, y=ny / 2, x=nx / 2)
         position = self.header.position.apply(torch.mean).apply(m_to_mm) - orientation(resolution * center)
         # Convert mr2's zyx LPS coordinates to NIfTI's xyz RAS coordinates.
-        affine = nibabel.affines.from_matvec(
-            orientation.as_matrix().flip([0, 1]).numpy() * resolution.zyx[::-1],
-            torch.stack(position.zyx[::-1]).numpy(),
-        )
+        affine = np.eye(4)
+        affine[:3, :3] = orientation.as_matrix().flip([0, 1]).numpy() * resolution.zyx[::-1]
+        affine[:3, 3] = torch.stack(position.zyx[::-1]).numpy()
         affine[:2] *= -1  # LPS to RAS
         data = rearrange(self.data, '... other coils z y x-> x y z 1 other (...) coils')
         if magnitude_only:
