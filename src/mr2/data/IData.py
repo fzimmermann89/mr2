@@ -190,24 +190,20 @@ class IData(Dataclass):
             otherwise the complex image data is saved as a NIFTI2 file.
             Many software packages do not support complex data.
         """
-        # Exported voxel axes and physical coordinates are both ordered x, y, z.
-        orientation = self.header.orientation.mean().as_matrix().flip([0, 1])
-        resolution = orientation.new_tensor(self.header.resolution.zyx[::-1])
-        position = torch.stack([p.mean() for p in self.header.position.zyx[::-1]])
-        affine = orientation.new_zeros(4, 4)
-        affine[:3, :3] = orientation * resolution
-        # In-plane axes use N/2 even for a single pixel; a single slice has no through-plane offset.
+        # Build the voxel-to-LPS transform in xyz order and millimeters.
+        orientation = self.header.orientation.mean().as_matrix().flip([0, 1]).numpy()
+        resolution = np.array(self.header.resolution.apply(m_to_mm).zyx[::-1])
+        position = m_to_mm(torch.stack([p.mean() for p in self.header.position.zyx[::-1]])).numpy()
         nz, ny, nx = self.data.shape[-3:]
-        center = orientation.new_tensor([nx / 2, ny / 2, nz / 2 if nz > 1 else 0])
-        affine[:3, 3] = position - affine[:3, :3] @ center
-        affine[:3] = m_to_mm(affine[:3])
+        center = [nx / 2, ny / 2, nz / 2 if nz > 1 else 0]  # A single slice is already at its center.
+        voxel_basis = orientation * resolution
+        affine = nibabel.affines.from_matvec(voxel_basis, position - voxel_basis @ center)
         affine[:2] *= -1  # LPS to RAS
-        affine[3, 3] = 1
         data = rearrange(self.data, '... other coils z y x-> x y z 1 other (...) coils')
         if magnitude_only:
-            nifti = nibabel.nifti2.Nifti1Image(data.abs().numpy(), affine.numpy(), dtype=np.float32)
+            nifti = nibabel.nifti2.Nifti1Image(data.abs().numpy(), affine, dtype=np.float32)
         else:
-            nifti = nibabel.nifti2.Nifti2Image(data.numpy(), affine.numpy(), dtype=np.complex64)
+            nifti = nibabel.nifti2.Nifti2Image(data.numpy(), affine, dtype=np.complex64)
 
         nifti.header.set_xyzt_units('mm')
         description = (

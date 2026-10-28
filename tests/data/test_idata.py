@@ -56,7 +56,7 @@ def test_IData_to_nifti(dcm_2d, tmp_path, magnitude_only: bool) -> None:
 
 @pytest.mark.parametrize('magnitude_only', [True, False])
 @pytest.mark.parametrize('shape', [(4, 6, 8), (1, 5, 7), (1, 5, 1), (1, 1, 7)])
-@pytest.mark.parametrize('angles', [(0.0, 0.0, 0.0), (0.2, 0.3, 1.4)])
+@pytest.mark.parametrize('angles', [(0.0, 0.0, 0.0), (np.pi / 2, 0.0, 0.0), (0.0, np.pi / 2, 0.0), (0.2, 0.3, 1.4)])
 def test_IData_to_nifti_affine(tmp_path, magnitude_only: bool, shape: tuple[int, int, int], angles) -> None:
     """NIfTI voxel coordinates map to the header's physical coordinates in RAS millimeters."""
     header = IHeader(
