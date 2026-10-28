@@ -42,6 +42,7 @@ from mr2.data.KTrajectory import KTrajectory
 from mr2.data.Rotation import Rotation
 from mr2.data.traj_calculators.KTrajectoryCalculator import KTrajectoryCalculator
 from mr2.data.traj_calculators.KTrajectoryIsmrmrd import KTrajectoryIsmrmrd
+from mr2.data.traj_calculators.KTrajectorySunflowerGoldenRpe import KTrajectorySunflowerGoldenRpe
 from mr2.utils.reshape import normalize_index, normalize_indices
 from mr2.utils.summarize import summarize_object
 from mr2.utils.typing import FileOrPath
@@ -310,6 +311,7 @@ class KData(Dataclass):
             Trajectory source, as in `from_ismrmrd`, applied to each acquisition.
             A precomputed KTrajectory must match one readout, rather than the full measurement.
             KTrajectoryIsmrmrd must use normalize=False, since normalization requires the full measurement.
+            KTrajectorySunflowerGoldenRpe also requires a full measurement and cannot be used here.
         header_overwrites
             Header fields to overwrite.
         acquisition_filter_criterion
@@ -322,6 +324,8 @@ class KData(Dataclass):
         """
         if isinstance(trajectory, KTrajectoryIsmrmrd) and trajectory.normalize:
             raise ValueError('Trajectory normalization requires a complete measurement. Use from_file instead.')
+        if isinstance(trajectory, KTrajectorySunflowerGoldenRpe):
+            raise ValueError('Sunflower shifts require a complete measurement. Use from_file instead.')
         header_defaults: dict[str, object] = {}
         if isinstance(filename, (str, PathLike)):
             header_defaults['datetime'] = datetime.datetime.fromtimestamp(Path(filename).stat().st_mtime)

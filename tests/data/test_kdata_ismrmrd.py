@@ -16,7 +16,7 @@ import pytest
 import torch
 from mr2.data import KData, KNoise, KTrajectory
 from mr2.data.acq_filters import is_image_acquisition
-from mr2.data.traj_calculators import KTrajectoryCartesian, KTrajectoryIsmrmrd
+from mr2.data.traj_calculators import KTrajectoryCartesian, KTrajectoryIsmrmrd, KTrajectorySunflowerGoldenRpe
 from mr2.data.traj_calculators.KTrajectoryCalculator import DummyTrajectory
 from xsdata.models.datatype import XmlDate, XmlTime
 
@@ -480,12 +480,13 @@ def test_iter_acquisitions(raw_data, monkeypatch) -> None:
     assert not stream.closed
 
 
-def test_iter_rejects_measurement_normalization(raw_data) -> None:
-    """Per-readout normalization would change the relative trajectory coordinates."""
+@pytest.mark.parametrize('trajectory', [KTrajectoryIsmrmrd(normalize=True), KTrajectorySunflowerGoldenRpe()])
+def test_iter_rejects_measurement_trajectory(raw_data, trajectory) -> None:
+    """Trajectories requiring all readouts cannot be evaluated independently."""
     _, header, acquisitions = raw_data
     stream = serialize_measurements([(header, acquisitions)])
-    with pytest.raises(ValueError, match='normalization requires a complete measurement'):
-        next(KData.iter_ismrmrd(stream, KTrajectoryIsmrmrd(normalize=True)))
+    with pytest.raises(ValueError, match='complete measurement'):
+        next(KData.iter_ismrmrd(stream, trajectory))
     assert stream.tell() == 0
     assert not stream.closed
 
