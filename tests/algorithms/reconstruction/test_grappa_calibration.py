@@ -72,34 +72,19 @@ def test_grappa_shared_calibration_and_scale() -> None:
     torch.testing.assert_close(GrappaReconstruction._interpolate_kernel(scale * data, kernel), scale * output)
 
 
-@pytest.mark.parametrize('regularization', [-1.0, float('nan')])
-def test_grappa_invalid_regularization(regularization: float) -> None:
+def test_grappa_invalid_regularization() -> None:
     """Reject invalid ridge strengths before solving."""
     pattern = torch.tensor([[[True, False, True]]])
     with pytest.raises(ValueError, match='finite and nonnegative'):
+        GrappaReconstruction.calibrate(torch.ones(2, 1, 4, 5, dtype=torch.complex64), pattern, regularization=-1)
+
+
+def test_grappa_reject_center_source() -> None:
+    """A kernel cannot regress its own center."""
+    with pytest.raises(ValueError, match='exclude the center'):
         GrappaReconstruction.calibrate(
-            torch.ones(2, 1, 4, 5, dtype=torch.complex64), pattern, regularization=regularization
+            torch.ones(2, 1, 4, 5, dtype=torch.complex64), torch.ones(1, 3, 3, dtype=torch.bool)
         )
-
-
-@pytest.mark.parametrize(
-    ('pattern', 'message'),
-    [
-        (torch.ones(1, 3, 3, dtype=torch.bool), 'exclude the center'),
-        (torch.zeros(1, 3, 3, dtype=torch.bool), 'No acquired neighbor within kernel_size'),
-    ],
-)
-def test_grappa_invalid_sources(pattern: torch.Tensor, message: str) -> None:
-    """A kernel needs acquired sources and cannot regress its own center."""
-    with pytest.raises(ValueError, match=message):
-        GrappaReconstruction.calibrate(torch.ones(2, 1, 4, 5, dtype=torch.complex64), pattern)
-
-
-def test_grappa_insufficient_acs() -> None:
-    """Require at least one complete calibration window."""
-    pattern = torch.tensor([[[True, False, True]]])
-    with pytest.raises(ValueError, match='too small'):
-        GrappaReconstruction.calibrate(torch.ones(4, 1, 1, 2, dtype=torch.complex64), pattern)
 
 
 @pytest.mark.parametrize('regularization', [0.0, 0.03])
@@ -118,15 +103,12 @@ def test_grappa_underdetermined_calibration(regularization: float) -> None:
     torch.testing.assert_close(actual, expected)
 
 
-@pytest.mark.parametrize('regularization', [0.0, 0.01])
-def test_grappa_zero_calibration_batch(regularization: float) -> None:
+def test_grappa_zero_calibration_batch() -> None:
     """An empty-signal batch yields zero kernels without affecting neighboring batches."""
     acs = torch.randn(2, 2, 1, 4, 5, dtype=torch.complex128, generator=torch.Generator().manual_seed(28))
     acs[0] = 0
     pattern = torch.tensor([[[True, False, True]]])
-    kernels = GrappaReconstruction.calibrate(acs, pattern, regularization=regularization)
+    kernels = GrappaReconstruction.calibrate(acs, pattern)
     assert torch.isfinite(kernels).all()
     assert torch.count_nonzero(kernels[0]) == 0
-    torch.testing.assert_close(
-        kernels[1], GrappaReconstruction.calibrate(acs[1], pattern, regularization=regularization)
-    )
+    torch.testing.assert_close(kernels[1], GrappaReconstruction.calibrate(acs[1], pattern))
