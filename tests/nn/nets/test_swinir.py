@@ -6,6 +6,8 @@ import pytest
 import torch
 from mr2.nn.LayerNorm import LayerNorm
 from mr2.nn.nets.SwinIR import SwinIR, SwinTransformerLayer
+from mr2.nn.Sequential import Sequential
+from mr2.utils import RandomGenerator
 
 
 def test_swin_transformer_layer_normalization() -> None:
@@ -66,3 +68,28 @@ def test_swinir_backward() -> None:
     for name, parameter in swinir.named_parameters():
         assert parameter.grad is not None, f'{name}.grad is None'
         assert not parameter.grad.isnan().any(), f'{name}.grad is NaN'
+
+
+@torch.no_grad()
+def test_swinir_conditioning() -> None:
+    """Conditioning changes SwinIR output and is preserved through Sequential."""
+    net = SwinIR(
+        2,
+        1,
+        1,
+        n_channels_per_head=4,
+        n_heads=2,
+        window_size=4,
+        n_blocks=1,
+        n_attn_per_block=1,
+        emb_dim=8,
+    ).eval()
+    rng = RandomGenerator(seed=0)
+    x = rng.float32_tensor((2, 1, 8, 8))
+    cond = rng.float32_tensor((2, 8))
+    output = net(x, cond=cond)
+    unconditioned = net(x)
+    assert torch.isfinite(output).all()
+    assert torch.isfinite(unconditioned).all()
+    assert not torch.allclose(output, unconditioned)
+    torch.testing.assert_close(Sequential(net)(x, cond=cond), output)
