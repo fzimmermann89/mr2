@@ -8,6 +8,8 @@ on:
     types:
       - completed
 
+permissions: {}
+
 jobs:
   coverage_report_pr:
     name: Coverage report
@@ -20,57 +22,11 @@ jobs:
       actions: read
       pull-requests: write
     concurrency:
-      group: pytest-report-${{ github.event.workflow_run.head_repository.id }}-${{ github.event.workflow_run.head_sha }}
+      group: pytest-report-${{ github.event.workflow_run.head_repository.id }}-${{ github.event.workflow_run.head_branch }}
       cancel-in-progress: false
     steps:
-      - name: Find matching PyTest runs
-        id: report_runs
-        uses: actions/github-script@v8
-        with:
-          script: |
-            const run = context.payload.workflow_run;
-            const isCuda = run.name === 'PyTest CUDA';
-            const { data } = await github.rest.actions.listWorkflowRuns({
-              ...context.repo,
-              workflow_id: isCuda ? 'pytest.yml' : 'pytest_cuda.yml',
-              head_sha: run.head_sha,
-              event: run.event,
-              status: 'completed',
-              per_page: 100,
-            });
-            const matchingRun = data.workflow_runs.find(candidate =>
-              candidate.head_repository.id === run.head_repository.id &&
-              candidate.head_branch === run.head_branch &&
-              !['cancelled', 'skipped'].includes(candidate.conclusion)
-            );
-            core.setOutput('cpu-run-id', (isCuda ? matchingRun : run)?.id ?? '');
-            core.setOutput('cuda-run-id', (isCuda ? run : matchingRun)?.id ?? '');
-
-      # Use the recommended Python 3.12 / PyTorch 2.10 environment as target platform.
-      - name: Download recommended PyTest report artifact
-        id: download_report
-        if: steps.report_runs.outputs.cpu-run-id != ''
-        continue-on-error: true
-        uses: actions/download-artifact@v8
-        with:
-          name: pytest-report-recommended
-          run-id: ${{ steps.report_runs.outputs.cpu-run-id }}
-          # needs to be explicitly set
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Download CUDA PyTest report artifact
-        id: download_cuda
-        if: steps.report_runs.outputs.cpu-run-id != '' && steps.report_runs.outputs.cuda-run-id != ''
-        continue-on-error: true
-        uses: actions/download-artifact@v8
-        with:
-          name: pytest-report-cuda
-          run-id: ${{ steps.report_runs.outputs.cuda-run-id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Get PR number
-        id: pr-context
-        if: steps.report_runs.outputs.cpu-run-id != ''
+      - name: Find PR and test runs
+        id: reports
         uses: actions/github-script@v8
         with:
           script: |
@@ -82,32 +38,80 @@ jobs:
             });
             const pull = pulls.find(candidate =>
               candidate.head.sha === run.head_sha &&
-              candidate.head.repo.id === run.head_repository.id
+              candidate.head.repo?.id === run.head_repository.id
             );
-            if (pull) core.setOutput('number', pull.number);
+            if (!pull) return;
+
+            const isCuda = run.name === 'PyTest CUDA';
+            const isFork = pull.head.repo.id !== context.payload.repository.id;
+            if (isCuda && isFork) return;
+
+            let matchingRun;
+            if (!isFork) {
+              const { data } = await github.rest.actions.listWorkflowRuns({
+                ...context.repo,
+                workflow_id: isCuda ? 'pytest.yml' : 'pytest_cuda.yml',
+                head_sha: run.head_sha,
+                event: 'pull_request',
+                status: 'completed',
+                per_page: 100,
+              });
+              matchingRun = data.workflow_runs.find(candidate =>
+                candidate.head_repository.id === run.head_repository.id &&
+                candidate.head_branch === run.head_branch &&
+                !['cancelled', 'skipped'].includes(candidate.conclusion)
+              );
+            }
+            const cpuRun = isCuda ? matchingRun : run;
+            const cudaRun = isCuda ? run : matchingRun;
+            if (!cpuRun) return;
+
+            core.setOutput('number', pull.number);
+            core.setOutput('cpu-run-id', cpuRun.id);
+            core.setOutput('cuda-run-id', cudaRun?.id ?? '');
+
+      # Use the recommended Python 3.12 / PyTorch 2.10 environment as target platform.
+      - name: Download recommended PyTest report artifact
+        id: download_report
+        if: steps.reports.outputs.number != ''
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: pytest-report-recommended
+          path: ${{ runner.temp }}/pytest-cpu
+          run-id: ${{ steps.reports.outputs.cpu-run-id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download CUDA PyTest report artifact
+        id: download_cuda
+        if: steps.reports.outputs.number != '' && steps.reports.outputs.cuda-run-id != ''
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: pytest-report-cuda
+          path: ${{ runner.temp }}/pytest-cuda
+          run-id: ${{ steps.reports.outputs.cuda-run-id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Post PyTest Coverage Comment
         id: coverage_comment
-        if: steps.download_report.outcome == 'success' && steps.pr-context.outputs.number != ''
+        if: steps.download_report.outcome == 'success'
         uses: MishaKav/pytest-coverage-comment@v1.7.1
         with:
-          issue-number: ${{ steps.pr-context.outputs.number }}
+          issue-number: ${{ steps.reports.outputs.number }}
           title: Coverage Report${{ steps.download_cuda.outcome == 'failure' && ' (CUDA report unavailable)' || '' }}
-          pytest-coverage-path: pytest-coverage.txt
+          pytest-coverage-path: ${{ runner.temp }}/pytest-cpu/pytest-coverage.txt
           multiple-files: |
-            CPU (recommended), pytest-coverage.txt, pytest.xml
-            ${{ steps.download_cuda.outcome == 'success' && 'CUDA, , pytest-cuda.xml' || '' }}
+            CPU (recommended), ${{ runner.temp }}/pytest-cpu/pytest-coverage.txt, ${{ runner.temp }}/pytest-cpu/pytest.xml
+            ${{ steps.download_cuda.outcome == 'success' && format('CUDA, , {0}/pytest-cuda/pytest-cuda.xml', runner.temp) || '' }}
 
       - name: Post Failure Comment if Coverage Comment failed
         if: >-
-          !cancelled() && steps.pr-context.outputs.number != '' &&
+          !cancelled() && steps.reports.outputs.number != '' &&
           (steps.download_report.outcome != 'success' || steps.coverage_comment.outputs.coverageHtml == '')
         uses: edumserrano/find-create-or-update-comment@v3
         with:
-          issue-number: ${{ steps.pr-context.outputs.number }}
-          # see https://github.com/MishaKav/pytest-coverage-comment/blob/81882822c5b22af01f91bd3eacb1cefb6ad73dc2/src/index.js#L97
-          # for the generation of the unique id for comment
-          # in this particular case, there is no additional watermarkUniqueId
+          issue-number: ${{ steps.reports.outputs.number }}
           body-includes: '<!-- Pytest Coverage Comment: ${{ github.job }} -->'
           comment-author: 'github-actions[bot]'
           body: |
