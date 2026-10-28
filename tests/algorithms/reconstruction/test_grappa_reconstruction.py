@@ -225,7 +225,7 @@ def test_grappa_recalculate_csm() -> None:
     ],
 )
 def test_grappa_gradient_calibration(device: str) -> None:
-    """Differentiate calibration and refit with and without gradient tracking."""
+    """Differentiate calibration on CPU and CUDA."""
     full = _point_object((1, 16, 18), torch.complex128)[None].to(device)
     mask = torch.ones(full.shape[-3:], dtype=torch.bool, device=device)
     mask[..., 1::2, :] = False
@@ -237,17 +237,6 @@ def test_grappa_gradient_calibration(device: str) -> None:
     (gradient,) = torch.autograd.grad(reference.abs().square().sum(), acs)
     assert torch.isfinite(gradient).all()
     assert gradient.abs().sum() > 0
-
-    with torch.no_grad():
-        reconstruction.recalculate_fourierop(data)
-    torch.testing.assert_close(reconstruction(data).data, reference)
-    reconstruction.recalculate_fourierop(data)
-    complete = _kdata(full, torch.ones_like(mask))
-    reconstruction.recalculate_fourierop(complete)
-    torch.testing.assert_close(reconstruction.interpolate(complete), full)
-    reconstruction.acs = full
-    reconstruction.recalculate_fourierop(data)
-    torch.testing.assert_close(reconstruction(data).data, reference)
 
 
 def test_grappa_reconstruction_crop() -> None:

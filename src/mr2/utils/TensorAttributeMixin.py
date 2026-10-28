@@ -21,8 +21,6 @@ class TensorAttributeMixin(torch.nn.Module):
             attribute to set.
         """
         if isinstance(value, torch.Tensor) and not isinstance(value, torch.nn.Parameter) and not value.requires_grad:
-            if isinstance(self.__dict__.get(name), torch.Tensor):
-                delattr(self, name)
             self.register_buffer(name, value)
         else:
             super().__setattr__(name, value)
