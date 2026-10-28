@@ -8,6 +8,8 @@ from typing import cast
 import torch
 from pytorch_finufft.functional import finufft_type1, finufft_type2
 
+from mr2.utils.reshape import unsqueeze_at
+
 
 @torch.no_grad()
 def dcf_pipe(
@@ -72,8 +74,7 @@ def dcf_pipe(
         tuple(max(32, ceil(oversampling * size)) for size in sizes),
     )
     output_shape = (*traj.shape[:-4], *traj.shape[-3:]) if traj.ndim >= 4 else traj.shape[1:]
-    while traj.ndim < 4:
-        traj = traj.unsqueeze(1)
+    traj = unsqueeze_at(traj, dim=1, n=max(0, 4 - traj.ndim))
     batch_shape = traj.shape[:-4]
     sample_shape = traj.shape[-3:]
     options = {'eps': 1e-6, 'upsampfac': 2.0, 'modeord': 0}
