@@ -87,4 +87,6 @@ def test_conditioning_changes_output(net_factory: Callable[[], Module]) -> None:
     x = rng.float32_tensor((2, 1, 16, 16))
     output1 = net(x, cond=rng.float32_tensor((2, COND_DIM)))
     output2 = net(x, cond=rng.float32_tensor((2, COND_DIM)))
+    assert torch.isfinite(output1).all()
+    assert torch.isfinite(output2).all()
     assert not torch.allclose(output1, output2)
