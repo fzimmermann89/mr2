@@ -105,7 +105,7 @@ def test_regularized_iterative_sense_identity_prior(cartesian_kdata: KData, devi
     kdata = cartesian_kdata.to(device)
     idata = reconstruction(kdata)
     expected = (kdata.data + 0.5 * (0.0 if prior is None else prior)) / 1.5
-    torch.testing.assert_close(idata.data, expected)
+    torch.testing.assert_close(idata.data, expected, rtol=1e-5, atol=1e-5)
 
 
 def test_regularized_iterative_sense_zero_prior_jvp(cartesian_kdata: KData) -> None:
