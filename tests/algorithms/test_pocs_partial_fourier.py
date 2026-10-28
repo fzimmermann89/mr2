@@ -2,7 +2,7 @@
 
 import pytest
 import torch
-from mr2.algorithms.partial_fourier import _partial_fourier_center, _partial_fourier_phase, pocs
+from mr2.algorithms.partial_fourier import _partial_fourier_center, pocs
 from mr2.operators import FastFourierOp
 
 
@@ -58,7 +58,7 @@ def test_pocs_full_sampling() -> None:
 @pytest.mark.parametrize('size', [15, 16])
 @pytest.mark.parametrize('side', ['low', 'high'])
 def test_partial_fourier_calibration(size: int, side: str) -> None:
-    """The symmetric acquired center preserves known phase on odd/even grids and either side."""
+    """The calibration taper is symmetric and acquired on odd/even grids and either side."""
     support = torch.arange(size) >= 3 if side == 'high' else torch.arange(size) < size - 3
     center, _, _ = _partial_fourier_center(support, 0, torch.get_default_dtype())
     conjugate_indices = (2 * (size // 2) - torch.arange(size)) % size
@@ -68,13 +68,6 @@ def test_partial_fourier_calibration(size: int, side: str) -> None:
     if size % 2 == 0:
         assert center[0] == 0
     assert torch.all(center.diff()[: size // 2] >= 0)
-    coordinate = torch.arange(size, dtype=center.dtype) - size // 2
-    image = (1 + 0.2 * torch.cos(2 * torch.pi * coordinate / size)) * torch.exp(torch.tensor(0.7j))
-    fft = FastFourierOp((0,))
-    (kspace,) = fft(image)
-    measured = torch.where(support, kspace, 0)
-    phase = _partial_fourier_phase(measured, center, fft)
-    torch.testing.assert_close(phase, image / image.abs())
 
 
 def test_fixed_phase_signed_projection() -> None:

@@ -4,7 +4,9 @@ from collections.abc import Sequence
 
 import torch
 
-from mr2.algorithms.partial_fourier import _partial_fourier_center, _partial_fourier_phase, _partial_fourier_setup
+from mr2.algorithms.partial_fourier import _partial_fourier_center
+from mr2.operators.FastFourierOp import FastFourierOp
+from mr2.utils.reshape import normalize_index, normalize_indices
 
 
 def homodyne(
@@ -61,13 +63,21 @@ def homodyne(
     Fourier axis. Accuracy depends on smooth phase and sufficient calibration.
     No coil combination, cropping or oversampling removal is performed.
     """
-    mask, axis, fourier_op = _partial_fourier_setup(kspace, acquired_mask, dim, partial_fourier_dim)
+    if acquired_mask.dtype != torch.bool or acquired_mask.device != kspace.device:
+        raise ValueError('acquired_mask must be boolean and on the same device as kspace.')
+    dim = normalize_indices(kspace.ndim, dim)
+    axis = normalize_index(kspace.ndim, partial_fourier_dim)
+    if axis not in dim:
+        raise ValueError('Fourier dimensions must be non-empty and include partial_fourier_dim.')
+    mask = torch.broadcast_to(acquired_mask, kspace.shape)
+    fourier_op = FastFourierOp(dim)
     if mask.all():
         (image,) = fourier_op.H(kspace)
         return image if restore_phase else image.abs()
     center, radius, side = _partial_fourier_center(mask, axis, kspace.real.dtype)
     measured = torch.where(mask, kspace, 0)
-    phase = _partial_fourier_phase(measured, center, fourier_op)
+    (low_resolution,) = fourier_op.H(measured * center)
+    phase = torch.polar(torch.ones_like(low_resolution.real), low_resolution.angle())
     size = kspace.shape[axis]
     frequency = torch.arange(size, dtype=kspace.real.dtype, device=kspace.device) - size // 2
     weight = (1 + side * frequency / radius).clamp(0, 2)

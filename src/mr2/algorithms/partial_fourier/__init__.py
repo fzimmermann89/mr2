@@ -1,26 +1,6 @@
 """Cartesian partial Fourier reconstruction with POCS and homodyne."""
 
-from collections.abc import Sequence
-
 import torch
-
-from mr2.operators.FastFourierOp import FastFourierOp
-from mr2.utils.reshape import normalize_index, normalize_indices
-
-
-def _partial_fourier_setup(
-    kspace: torch.Tensor, acquired_mask: torch.Tensor, dim: Sequence[int], partial_fourier_dim: int
-) -> tuple[torch.Tensor, int, FastFourierOp]:
-    """Check tensor inputs and normalize axes for both partial Fourier methods."""
-    if not kspace.is_complex():
-        raise ValueError('kspace must be complex.')
-    if acquired_mask.dtype != torch.bool or acquired_mask.device != kspace.device:
-        raise ValueError('acquired_mask must be boolean and on the same device as kspace.')
-    dim = normalize_indices(kspace.ndim, dim)
-    axis = normalize_index(kspace.ndim, partial_fourier_dim)
-    if axis not in dim:
-        raise ValueError('Fourier dimensions must be non-empty and include partial_fourier_dim.')
-    return torch.broadcast_to(acquired_mask, kspace.shape), axis, FastFourierOp(dim)
 
 
 def _partial_fourier_center(
@@ -56,14 +36,8 @@ def _partial_fourier_center(
     return taper.reshape(shape), radius, -1 if first == 0 else 1
 
 
-def _partial_fourier_phase(kspace: torch.Tensor, center: torch.Tensor, fourier_op: FastFourierOp) -> torch.Tensor:
-    """Estimate a unit phase from tapered symmetric calibration data; use phase zero at image zeros."""
-    (low_resolution,) = fourier_op.H(kspace * center)
-    return torch.polar(torch.ones_like(low_resolution.real), low_resolution.angle())
-
-
-# Define shared helpers before importing the methods that use them.
+# Define the shared center helper before importing the methods that use it.
 from mr2.algorithms.partial_fourier.homodyne import homodyne  # noqa: E402
 from mr2.algorithms.partial_fourier.pocs import pocs  # noqa: E402
 
-__all__ = ['homodyne', 'pocs']  # noqa: ALL[FastFourierOp,Sequence,normalize_index,normalize_indices,torch]
+__all__ = ['homodyne', 'pocs']  # noqa: ALL[torch]
