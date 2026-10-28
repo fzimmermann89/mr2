@@ -107,11 +107,30 @@ class CartesianSamplingOp(LinearOperator):
             )
 
             inside_encoding_matrix = rearrange(inside_encoding_matrix, '... kz ky kx -> ... (kz ky kx)')
-            self._inside_encoding_matrix: torch.Tensor | None = inside_encoding_matrix
-            # Keep the acquired shape: batches can contain different numbers of valid samples.
-            # Invalid points use a safe index and are zeroed in forward and adjoint.
-            kidx = kidx.masked_fill(~inside_encoding_matrix, 0)
+            counts = inside_encoding_matrix.sum(-1, keepdim=True)
+            max_count = int(counts.max())
+            valid_indices = inside_encoding_matrix.nonzero(as_tuple=True)
+            if torch.all(counts == max_count):
+                inside_encoding_matrix_idx = valid_indices[-1].reshape(*kidx.shape[:-1], max_count).clone()
+                self._inside_encoding_matrix: torch.Tensor | None = None
+            else:
+                # Pad shorter rows to the longest valid row. Each padding slot uses its own
+                # index to avoid contention when zero contributions are scattered.
+                positions = torch.arange(max_count, device=traj_device)
+                inside_encoding_matrix_idx = positions.expand(*kidx.shape[:-1], max_count).clone()
+                ranks = inside_encoding_matrix.cumsum(-1)[inside_encoding_matrix] - 1
+                inside_encoding_matrix_idx[(*valid_indices[:-1], ranks)] = valid_indices[-1]
+                self._inside_encoding_matrix = positions < counts
+            self._inside_encoding_matrix_idx: torch.Tensor | None = inside_encoding_matrix_idx
+            kidx = torch.take_along_dim(kidx, inside_encoding_matrix_idx, dim=-1)
+            if self._inside_encoding_matrix is not None:
+                kidx = torch.where(
+                    self._inside_encoding_matrix,
+                    kidx,
+                    positions % (sorted_grid_shape.z * sorted_grid_shape.y * sorted_grid_shape.x),
+                )
         else:
+            self._inside_encoding_matrix_idx = None
             self._inside_encoding_matrix = None
 
         self._fft_idx = kidx
@@ -120,8 +139,9 @@ class CartesianSamplingOp(LinearOperator):
         self._needs_indexing = (
             not torch.all(torch.diff(kidx) == 1)
             or traj.shape[-3:] != sorted_grid_shape.zyx
-            or self._inside_encoding_matrix is not None
+            or self._inside_encoding_matrix_idx is not None
         )
+        self._has_repeated_indices: bool | None = None
 
         self._trajectory_shape = traj.shape
         self._sorted_grid_shape = sorted_grid_shape
@@ -160,6 +180,13 @@ class CartesianSamplingOp(LinearOperator):
         x_indexed = torch.take_along_dim(x_kflat, idx, dim=-1)
         if self._inside_encoding_matrix is not None:
             x_indexed = x_indexed.masked_fill(~self._inside_encoding_matrix, 0)
+        if self._inside_encoding_matrix_idx is not None:
+            x_indexed = self._broadcast_and_scatter_along_last_dim(
+                x_indexed,
+                self._trajectory_shape[-1] * self._trajectory_shape[-2] * self._trajectory_shape[-3],
+                self._inside_encoding_matrix_idx,
+                accumulate=self._inside_encoding_matrix is not None,
+            )
 
         # reshape to (... other coils, k2, k1, k0)
         x_reshaped = x_indexed.reshape(x.shape[:-3] + self._trajectory_shape[-3:])
@@ -186,11 +213,22 @@ class CartesianSamplingOp(LinearOperator):
 
         y_kflat = rearrange(y, '... coils k2 k1 k0 -> ... coils (k2 k1 k0)')
 
+        if self._inside_encoding_matrix_idx is not None:
+            idx = unsqueeze_left(self._inside_encoding_matrix_idx, y_kflat.ndim - self._inside_encoding_matrix_idx.ndim)
+            y_kflat = torch.take_along_dim(y_kflat, idx, dim=-1)
         if self._inside_encoding_matrix is not None:
             y_kflat = y_kflat.masked_fill(~self._inside_encoding_matrix, 0)
 
+        # Non-accumulating scatter is faster on CPU. Check once, without adding
+        # a large sorting allocation when constructing an operator on CUDA.
+        if y.is_cpu and self._has_repeated_indices is None:
+            self._has_repeated_indices = bool(torch.any(torch.diff(self._fft_idx.sort().values) == 0))
+
         y_scattered = self._broadcast_and_scatter_along_last_dim(
-            y_kflat, self._sorted_grid_shape.z * self._sorted_grid_shape.y * self._sorted_grid_shape.x, self._fft_idx
+            y_kflat,
+            self._sorted_grid_shape.z * self._sorted_grid_shape.y * self._sorted_grid_shape.x,
+            self._fft_idx,
+            accumulate=self._has_repeated_indices is not False,
         )
 
         # reshape to  ..., other, coils, k2_enc, k1_enc, k0_enc
@@ -205,7 +243,7 @@ class CartesianSamplingOp(LinearOperator):
 
     @staticmethod
     def _broadcast_and_scatter_along_last_dim(
-        data_to_scatter: torch.Tensor, n_last_dim: int, scatter_index: torch.Tensor
+        data_to_scatter: torch.Tensor, n_last_dim: int, scatter_index: torch.Tensor, *, accumulate: bool = True
     ) -> torch.Tensor:
         """Broadcast scatter index and scatter into zero tensor.
 
@@ -217,6 +255,8 @@ class CartesianSamplingOp(LinearOperator):
             Number of data points in last dimension
         scatter_index
             Indices describing where to scatter data
+        accumulate
+            Add contributions at repeated indices. Can be disabled for unique indices.
 
         Returns
         -------
@@ -226,14 +266,18 @@ class CartesianSamplingOp(LinearOperator):
         broadcast_shape = torch.broadcast_shapes(scatter_index.shape[:-1], data_to_scatter.shape[:-1])
         idx_expanded = torch.broadcast_to(scatter_index, (*broadcast_shape, scatter_index.shape[-1]))
 
-        # although scatter_add_ is inplace, this will not cause issues with autograd, as self
+        # Although scattering is inplace, this will not cause issues with autograd, as self
         # is always constant zero and gradients w.r.t. src work as expected.
         data_scattered = torch.zeros(
             *broadcast_shape,
             n_last_dim,
             dtype=data_to_scatter.dtype,
             device=data_to_scatter.device,
-        ).scatter_add_(dim=-1, index=idx_expanded, src=data_to_scatter)
+        )
+        if accumulate:
+            data_scattered.scatter_add_(dim=-1, index=idx_expanded, src=data_to_scatter)
+        else:
+            data_scattered.scatter_(dim=-1, index=idx_expanded, src=data_to_scatter)
 
         return data_scattered
 
@@ -250,7 +294,7 @@ class CartesianSamplingOp(LinearOperator):
     def __repr__(self) -> str:
         """Representation method for CartesianSamplingOperator."""
         device = self._fft_idx.device if self._fft_idx is not None else 'none'
-        if self._inside_encoding_matrix is None:
+        if self._inside_encoding_matrix_idx is None:
             enc_matrix_warning = ''
         else:
             enc_matrix_warning = (

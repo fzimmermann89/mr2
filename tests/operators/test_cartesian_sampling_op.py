@@ -329,8 +329,9 @@ def test_cartesian_duplicates(device: str) -> None:
         [[-1.0, -1.0, 0.0, 0.0], [3.0, -1.0, 0.0, 3.0]],
         [[-1.0, -1.0, 0.0, 3.0], [3.0, 3.0, 3.0, 3.0]],
         [[3.0, 4.0, 3.0, 4.0], [4.0, 3.0, 4.0, 3.0]],
+        [[3.0, 0.0, -1.0, 0.0], [-1.0, 3.0, 3.0, 3.0]],
     ],
-    ids=['inside', 'equal-counts', 'unequal-counts', 'empty-row', 'all-outside'],
+    ids=['inside', 'equal-counts', 'unequal-counts', 'empty-row', 'all-outside', 'padding-collides'],
 )
 def test_batched_sampling(coordinates: list[list[float]], device: str) -> None:
     """Batches independently ignore outside points, including empty rows."""
