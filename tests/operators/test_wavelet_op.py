@@ -1,6 +1,7 @@
 """Tests for Wavelet Operator."""
 
 from collections.abc import Sequence
+from typing import cast, get_args
 
 import numpy as np
 import pytest
@@ -12,6 +13,7 @@ from mr2.utils.reshape import normalize_indices
 from ptwt.conv_transform import wavedec
 from ptwt.conv_transform_2 import wavedec2
 from ptwt.conv_transform_3 import wavedec3
+from pywt import wavelist
 
 from tests import (
     dotproduct_adjointness_test,
@@ -106,6 +108,16 @@ def test_wavelet_op_mismatch_dim_domain_shape() -> None:
         WaveletOp(domain_shape=(10, 20), dim=(-2,))
 
 
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('dim', [(-1,), (-2, -1), (-3, -2, -1)])
+def test_wavelet_op_input_shape_mismatch(dim: tuple, device: str) -> None:
+    """Configured coefficient shapes require matching input dimensions."""
+    op = WaveletOp((16,) * len(dim), dim=dim, wavelet_name='db4')
+    shape = (16,) * (len(dim) - 1) + (12,)
+    with pytest.raises(ValueError, match='domain_shape'):
+        op(torch.ones(shape, device=device))
+
+
 def test_wavelet_op_error_for_odd_domain_shape() -> None:
     with pytest.raises(NotImplementedError, match='ptwt only supports wavelet transforms for tensors with even'):
         WaveletOp(domain_shape=(11, 20), dim=(-2, -1))
@@ -113,8 +125,8 @@ def test_wavelet_op_error_for_odd_domain_shape() -> None:
 
 def test_wavelet_op_complex_real_shape() -> None:
     """Test that the shape of the output tensors is the same for complex/real data."""
-    img_shape = (6, 10, 20, 30)
-    domain_shape = (20, 30, 6)
+    img_shape = (16, 10, 20, 30)
+    domain_shape = (20, 30, 16)
     dim = (-2, -1, -4)
     rng = RandomGenerator(seed=0)
     img_complex = rng.complex64_tensor(size=img_shape)
@@ -130,14 +142,14 @@ SHAPE_PARAMETERS = pytest.mark.parametrize(
     ('img_shape', 'domain_shape', 'dim'),
     [
         ((1, 5, 20, 30), (30,), (-1,)),
-        ((5, 1, 10, 20, 30), (10,), (-3,)),
+        ((5, 1, 16, 20, 30), (16,), (-3,)),
         ((1, 5, 20, 30), (20, 30), (-2, -1)),
         ((4, 10, 20, 30), (20, 30), (-2, -1)),
-        ((4, 10, 20, 30), (10, 30), (-3, -1)),
-        ((5, 10, 20, 30), (10, 20, 30), (-3, -2, -1)),
-        ((6, 10, 20, 30), (6, 20, 30), (-4, -2, -1)),
-        ((6, 10, 20, 30), (20, 30, 6), (-2, -1, -4)),
-        ((6, 10, 20, 30), (20, 30, 6), (2, 3, 0)),
+        ((4, 16, 20, 30), (16, 30), (-3, -1)),
+        ((5, 16, 20, 30), (16, 20, 30), (-3, -2, -1)),
+        ((16, 10, 20, 30), (16, 20, 30), (-4, -2, -1)),
+        ((16, 10, 20, 30), (20, 30, 16), (-2, -1, -4)),
+        ((16, 10, 20, 30), (20, 30, 16), (2, 3, 0)),
     ],
 )
 
@@ -214,8 +226,8 @@ def test_wavelet_op_forward_mode_autodiff(
 def test_wavelet_op_cuda() -> None:
     """Test Wavelet operator works on CUDA devices."""
 
-    img_shape = (6, 10, 20, 30)
-    domain_shape = (20, 30, 6)
+    img_shape = (16, 10, 20, 30)
+    domain_shape = (20, 30, 16)
     dim = (-2, -1, -4)
     random_generator = RandomGenerator(seed=0)
     img_tensor = random_generator.complex64_tensor(size=img_shape)
@@ -261,3 +273,59 @@ def test_batch_shape_preserved(dim: tuple, batch_shape: tuple, dtype: torch.dtyp
         (coefficients.conj() * dual).sum(),
         (image.conj() * operator.H(dual)[0]).sum(),
     )
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('wavelet_name', ['bior2.2', 'rbio2.2'])
+def test_wavelet_op_biorthogonal_adjoint(wavelet_name: WaveletType, device: str) -> None:
+    """Biorthogonal reconstruction must not be presented as the linear adjoint."""
+    op = WaveletOp((16,), dim=(-1,), wavelet_name=wavelet_name, level=1)
+    coefficients = op(torch.ones(16, device=device))[0]
+    with pytest.raises(NotImplementedError, match='Biorthogonal'):
+        op.H(coefficients)
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('wavelet_name', ['bior2.2', 'rbio2.2'])
+@pytest.mark.parametrize('dim', [(-1,), (-2, -1), (-3, -2, -1)])
+def test_wavelet_op_biorthogonal_level_zero(wavelet_name: WaveletType, dim: tuple, device: str) -> None:
+    """At explicit level zero no filters are applied, so the adjoint is the identity."""
+    shape = (8,) * len(dim)
+    op = WaveletOp(shape, dim=dim, wavelet_name=wavelet_name, level=0)
+    rng = RandomGenerator(seed=0)
+    image = rng.complex64_tensor(shape).to(device)
+    dual = rng.complex64_tensor((image.numel(),)).to(device)
+    torch.testing.assert_close(op(image)[0], image.flatten())
+    torch.testing.assert_close(op.H(dual)[0], dual.reshape(shape))
+    dotproduct_adjointness_test(op, image, dual)
+
+
+def test_wavelet_types_are_discrete() -> None:
+    """Every advertised wavelet is supported by a discrete wavelet transform."""
+    assert set(get_args(WaveletType)) <= set(wavelist(kind='discrete'))
+
+
+@pytest.mark.parametrize('domain_shape', [None, (16, 16)])
+@pytest.mark.parametrize('wavelet_name', ['gaus1', 'mexh', 'morl', 'cgau1', 'shan', 'fbsp', 'cmor'])  # typos: ignore
+def test_wavelet_op_continuous_wavelets(domain_shape: tuple[int, int] | None, wavelet_name: str) -> None:
+    """Continuous wavelets fail at construction even with a deferred domain."""
+    with pytest.raises(ValueError, match='wavelet'):
+        WaveletOp(domain_shape, wavelet_name=cast(WaveletType, wavelet_name))
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('dim', [(-1,), (-2, -1), (-3, -2, -1)])
+def test_wavelet_op_domain_too_small(dim: tuple, device: str) -> None:
+    """Automatic levels must not silently replace the transform with the identity."""
+    domain_shape = (16, 16, 12)[-len(dim) :]
+    with pytest.raises(ValueError, match='too small'):
+        WaveletOp(domain_shape, dim, wavelet_name='db4')
+    op = WaveletOp(dim=dim, wavelet_name='db4')
+    with pytest.raises(ValueError, match='too small'):
+        op(torch.ones(domain_shape, device=device))
+
+    # An explicitly requested level zero remains a supported identity transform.
+    image = torch.ones(domain_shape, device=device)
+    op = WaveletOp(domain_shape, dim, wavelet_name='db4', level=0)
+    torch.testing.assert_close(op(image)[0], image.flatten())
+    torch.testing.assert_close(op.H(op(image)[0])[0], image)

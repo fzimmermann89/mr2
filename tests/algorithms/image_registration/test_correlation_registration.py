@@ -1,5 +1,6 @@
 """Tests for correlation-based image registration."""
 
+import pytest
 import torch
 from mr2.algorithms.image_registration.correlation_registration import correlation_registration
 from mr2.data import SpatialDimension
@@ -78,7 +79,8 @@ def test_correlation_registration_search_mask() -> None:
     assert shift.y.item() >= 0
 
 
-def test_correlation_registration_with_mask() -> None:
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+def test_correlation_registration_with_mask(device: str) -> None:
     """Test masked correlation registration."""
     y = torch.linspace(-1.0, 1.0, 48)
     x = torch.linspace(-1.0, 1.0, 52)
@@ -90,7 +92,9 @@ def test_correlation_registration_with_mask() -> None:
     moving = torch.zeros_like(fixed)
     moving[..., :-4, 6:] = fixed[..., 4:, :-6]
 
-    mask = torch.zeros_like(fixed[:, :1])
+    fixed = fixed.to(device) * (1 + 0.5j)
+    moving = moving.to(device) * (1 + 0.5j)
+    mask = torch.zeros_like(fixed[:, :1].real)
     mask[..., 8:-8, 8:-8] = 1.0
 
     fixed_corrupted = fixed.clone()
@@ -99,6 +103,7 @@ def test_correlation_registration_with_mask() -> None:
     moving_corrupted[..., -6:, :] = -10.0
 
     shift = correlation_registration(fixed_corrupted, moving_corrupted, mask=mask)
+    assert shift.x.device.type == device
 
     torch.testing.assert_close(shift.z, torch.zeros_like(shift.z))
     torch.testing.assert_close(shift.y, torch.full_like(shift.y, 4.0), atol=1e-2, rtol=0)

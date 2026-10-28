@@ -118,7 +118,8 @@ def spline_registration(
         max_evaluations=max(1, 2 * max_iterations),
         line_search_fn='strong_wolfe',
     )
-    control_points = control_points.unflatten(1, batch_shape)
+    # Convert displacements from downsampled voxels to full-resolution voxels.
+    control_points = control_points.unflatten(1, batch_shape) * downsampling_factor
     sampling_operator = GridSamplingOp.from_bspline(
         control_points[0] if dim == 3 else None,
         control_points[-2],

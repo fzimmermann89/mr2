@@ -41,7 +41,8 @@ def test_swinir_forward(torch_compile: bool, device: str) -> None:
     x = torch.zeros(1, 1, 16, 16, device=device)
     swinir = swinir.to(device)
     if torch_compile:
-        swinir = cast(SwinIR, torch.compile(swinir))
+        # Avoid automatic dynamic-shape recompilation in older PyTorch versions.
+        swinir = cast(SwinIR, torch.compile(swinir, dynamic=False))
     y = swinir(x)
     assert y.shape == (1, 1, 16, 16)
 

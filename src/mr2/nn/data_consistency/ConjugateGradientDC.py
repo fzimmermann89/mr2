@@ -63,16 +63,15 @@ class ConjugateGradientDC(Module):
         Parameters
         ----------
         image
-            Current image estimate.
+            Current image estimate. If csm is provided, this must be a coil-combined image
+            with a singleton coil dimension.
         data
             k-space data.
         fourier_op
             Fourier operator matching the k-space data. If None and data is provided as a `~mr2.data.KData` object,
             the Fourier operator is automatically created from the data.
-            This operator can already include the coil sensitivity weighting, if gradients wrt the coil sensitivity maps
-            NOT required. Otherwise, they should be given as an additional argument.
         csm
-            Coil sensitivity maps. If None, no coil sensitivity weighting is applied.
+            Coil sensitivity maps. If provided, the result is coil-combined.
 
         Returns
         -------
@@ -96,15 +95,13 @@ class ConjugateGradientDC(Module):
 
         data_ = data.data if isinstance(data, KData) else data
 
-        if csm is None:
-            csm = torch.tensor(())
-        elif isinstance(csm, CsmData):
+        if isinstance(csm, CsmData):
             csm = csm.data
 
-        def operator_factory(csm: torch.Tensor, weight: torch.Tensor, *_):
+        def operator_factory(csm_tensor: torch.Tensor, weight: torch.Tensor, *_):
             op = fourier_op.gram
-            if csm.numel():
-                csm_op = SensitivityOp(csm)
+            if csm is not None:
+                csm_op = SensitivityOp(csm_tensor)
                 op = csm_op.H @ op @ csm_op
             op = op + weight
             return op
@@ -112,6 +109,10 @@ class ConjugateGradientDC(Module):
         def rhs_factory(_csm: torch.Tensor, weight: torch.Tensor, zero_filled: torch.Tensor, image: torch.Tensor):
             return (zero_filled + weight * image,)
 
+        (zero_filled,) = fourier_op.adjoint(data_)
+        if csm is not None:
+            (zero_filled,) = SensitivityOp(csm).adjoint(zero_filled)
+
         cg_op = ConjugateGradientOp(operator_factory=operator_factory, rhs_factory=rhs_factory)
-        (result,) = cg_op(csm, self.log_weight.exp(), fourier_op.adjoint(data_)[0], image)
+        (result,) = cg_op(csm if csm is not None else torch.tensor(()), self.log_weight.exp(), zero_filled, image)
         return result

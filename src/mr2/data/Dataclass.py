@@ -26,7 +26,7 @@ from mr2.utils.reshape import (
     normalize_indices,
 )
 from mr2.utils.summarize import summarize_object
-from mr2.utils.typing import TorchIndexerType
+from mr2.utils.typing import FileOrPath, TorchIndexerType
 
 _MR2_ATTR_PY_TYPE = 'py_type'
 _MR2_ATTR_PY_MODULE = 'py_module'
@@ -806,8 +806,10 @@ class Dataclass:
                         f"Field '{field_name}': Unsupported type {type(value).__name__} for MR2 serialization."
                     )
 
-    @staticmethod
-    def _mr2_load_from_group(group: h5py.Group) -> Any:  # noqa: ANN401
+    @classmethod
+    def _mr2_load_from_group(cls, group: h5py.Group) -> Any:  # noqa: ANN401
+        from mr2.data.Rotation import Rotation
+
         init_args: dict[str, Any] = {}
 
         module_name = group.attrs.get(_MR2_ATTR_PY_MODULE, None)
@@ -815,16 +817,20 @@ class Dataclass:
 
         if not isinstance(module_name, str) or not isinstance(class_name, str):
             raise ValueError('Missing module or class name in HDF5 group')
+        if not (module_name.startswith('mr2.') or module_name == cls.__module__):
+            raise ValueError(f"Unsupported MR2 module '{module_name}'")
 
         try:
             module = importlib.import_module(module_name)
             target_cls = getattr(module, class_name)
         except (ImportError, AttributeError) as e:
             raise ImportError(f"Could not import class '{class_name}' from module '{module_name}'. Error: {e}") from e
+        if not isinstance(target_cls, type) or not issubclass(target_cls, (Dataclass, Rotation)):
+            raise ValueError(f"Unsupported MR2 class '{class_name}'")
 
         for field_name, h5_item in group.items():
             if isinstance(h5_item, h5py.Group):
-                init_args[field_name] = Dataclass._mr2_load_from_group(h5_item)
+                init_args[field_name] = cls._mr2_load_from_group(h5_item)
 
             elif isinstance(h5_item, h5py.Dataset):
                 py_type_str = h5_item.attrs.get(_MR2_ATTR_PY_TYPE, None)
@@ -849,16 +855,20 @@ class Dataclass:
                         enum_class_name = h5_item.attrs.get(_MR2_ATTR_CLASS_NAME, None)
                         if not isinstance(enum_module_name, str) or not isinstance(enum_class_name, str):
                             raise ValueError('Missing module or class name for enum')
+                        if not (enum_module_name.startswith('mr2.') or enum_module_name == cls.__module__):
+                            raise ValueError(f"Unsupported MR2 enum module '{enum_module_name}'")
                         try:
                             enum_module = importlib.import_module(enum_module_name)
                             enum_cls = getattr(enum_module, enum_class_name)
-                            init_args[field_name] = enum_cls(data.decode() if isinstance(data, bytes) else data)
-                        except Exception as e:
+                        except (ImportError, AttributeError) as e:
                             raise RuntimeError(
                                 f"Could not load enum '{enum_class_name}' from '{enum_module_name}'. Error: {e}"
                             ) from e
+                        if not isinstance(enum_cls, type) or not issubclass(enum_cls, enum.Enum):
+                            raise ValueError(f"Unsupported MR2 enum class '{enum_class_name}'")
+                        init_args[field_name] = enum_cls(data.decode() if isinstance(data, bytes) else data)
                     case 'str':
-                        init_args[field_name] = str(data)
+                        init_args[field_name] = h5_item.asstr()[()]
                     case 'bool':
                         init_args[field_name] = bool(data)
                     case 'int':
@@ -891,18 +901,25 @@ class Dataclass:
             self._mr2_save_to_group(f)
 
     @classmethod
-    def from_mr2(cls, filepath: str | Path) -> Self:
+    def from_file(cls, filename: FileOrPath) -> Self:
         """Load a dataclass from an MR2 file.
 
         Parameters
         ----------
-        filepath
-            The path to the MR2 file.
+        filename
+            Path or seekable binary file containing MR2 data.
         """
-        filepath = Path(filepath)
-        if not filepath.exists():
-            raise FileNotFoundError(f'HDF5 file not found: {filepath}')
+        return cls._from_mr2(filename)
 
+    @staticmethod
+    def _is_mr2_file(filename: FileOrPath) -> bool:
+        """Identify MR2 storage in an HDF5 file."""
+        with h5py.File(filename, 'r') as file:
+            return _MR2_ATTR_CLASS_NAME in file.attrs and _MR2_ATTR_PY_MODULE in file.attrs
+
+    @classmethod
+    def _from_mr2(cls, filepath: FileOrPath) -> Self:
+        """Restore an MR2 dataclass, checking its stored type and version."""
         with h5py.File(filepath, 'r') as f:
             if (version := f.attrs.get('version', None)) != _MR2_VERSION:
                 warn(f'Unsupported MR2 version {version}. Only version {_MR2_VERSION} is supported.', stacklevel=2)
@@ -1028,27 +1045,31 @@ class Dataclass:
         return self.rearrange(f'{input_pattern} -> {output_pattern}')
 
     def split(self, dim: int, size: int = 1, overlap: int = 0, dilation: int = 1) -> tuple[Self, ...]:
-        """Split the dataclass along a dimension.
+        """Split the dataclass into full windows along a dimension.
+
+        Incomplete trailing windows are omitted. Each window contains `size`
+        elements and spans `(size - 1) * dilation + 1` input positions.
 
         Parameters
         ----------
         dim
             dimension to split along.
         size
-            size of the splits.
+            Number of elements in each split. Must be positive.
         overlap
-            overlap between splits.
-            The stride will be `size - overlap`.
-            Negative overlap will leave spaces between splits.
+            Number of input positions by which consecutive window spans overlap.
+            Must be smaller than `size`. The stride is
+            `(size - 1) * dilation + 1 - overlap`.
+            Negative overlap leaves gaps between window spans.
         dilation
-            dilation of elements in each split.
+            Spacing between elements in each split. Must be positive.
 
         Examples
         --------
         If the dimension has 6 elements:
 
         - split with size 2, overlap 0, dilation 1 -> elements (0,1), (2,3), and (4,5)
-        - split with size 2, overlap 1, dilation 1 -> elements (0,1), (1,2), (2,3), (3,4), (4,5), and (5,6)
+        - split with size 2, overlap 1, dilation 1 -> elements (0,1), (1,2), (2,3), (3,4), and (4,5)
         - split with size 2, overlap 0, dilation 2 -> elements (0,2), and (3,5)
         - split with size 2, overlap -1, dilation 1 -> elements (0,1), and (3,4)
 
@@ -1059,13 +1080,16 @@ class Dataclass:
         """
         shape = self.shape
         dim = normalize_index(len(shape), dim)
+        if size < 1:
+            raise ValueError('Size must be larger than 0')
         if dilation < 1:
             raise ValueError('Dilation must be larger than 0')
-        if overlap > size:
+        if overlap >= size:
             raise ValueError('Overlap must be smaller than size')
+        span = (size - 1) * dilation + 1
         indices = [
-            (*[slice(None)] * dim, slice(start, start + size * dilation, dilation))
-            for start in range(0, shape[dim] - size * dilation + 1 + max(0, overlap), size - overlap)
+            (*[slice(None)] * dim, slice(start, start + span, dilation))
+            for start in range(0, shape[dim] - span + 1, span - overlap)
         ]
         res = tuple(self[idx] for idx in indices)
         return res
@@ -1074,11 +1098,11 @@ class Dataclass:
         """Concatenate other instances to the current instance.
 
         Tensor-like fields are broadcast against each other in non-concat
-        dimensions and concatenated along `dim`. Nested objects that support
-        both `concatenate` and `expand` (e.g. `Rotation`) are first expanded
-        to the per-object broadcast shape, so a field that is broadcast
-        across siblings still gets the parent's concat size. List fields are
-        joined into a new list. Other fields are left untouched.
+        dimensions and concatenated along `dim`. Nested dataclasses use the
+        parent's per-object broadcast shapes for all their fields. Other nested
+        objects supporting both `concatenate` and `expand` (e.g. `Rotation`)
+        use the parent's concat extent while keeping shared singleton dimensions
+        elsewhere. List fields are joined into a new list. Other fields are left untouched.
 
         Parameters
         ----------
@@ -1101,28 +1125,38 @@ class Dataclass:
             target_shapes = broadcast_shapes_except(shapes, dim)
             dim = normalize_index(len(target_shapes[0]), dim)
 
-        new = shallowcopy(self)
-        for field in dataclasses.fields(new):
-            values = [getattr(obj, field.name) for obj in objects]
-            head, *tail = values
+        def concatenate_fields(objects: Sequence[Dataclass]) -> Dataclass:
+            new = shallowcopy(objects[0])
+            for field in dataclasses.fields(new):
+                values = [getattr(obj, field.name) for obj in objects]
+                head, *tail = values
 
-            if all(isinstance(v, list) for v in values):
-                # build a new list to avoid mutating the shallow-copied attribute
-                setattr(new, field.name, [item for v in values for item in v])
+                if all(isinstance(v, list) for v in values):
+                    # Build a new list to avoid mutating the shallow-copied attribute.
+                    setattr(new, field.name, [item for v in values for item in v])
 
-            elif all(isinstance(v, torch.Tensor) for v in values):
-                expanded = [v.broadcast_to(shape) for v, shape in zip(values, target_shapes, strict=True)]
-                setattr(new, field.name, broadcasted_concatenate(expanded, dim=dim))
+                elif all(isinstance(v, torch.Tensor) for v in values):
+                    expanded = [v.broadcast_to(shape) for v, shape in zip(values, target_shapes, strict=True)]
+                    setattr(new, field.name, broadcasted_concatenate(expanded, dim=dim))
 
-            elif isinstance(head, HasConcatenate) and all(isinstance(v, HasExpand) for v in values):
-                # Expand siblings to the parent broadcast shape so concat picks up dims
-                # introduced by other fields (e.g. a Rotation broadcast against a larger tensor).
-                expanded = [v.expand(*shape) for v, shape in zip(values, target_shapes, strict=True)]
-                setattr(new, field.name, expanded[0].concatenate(*expanded[1:], dim=dim))
+                elif all(isinstance(v, Dataclass) for v in values):
+                    # Keep the parent's shapes even for reduced or scalar metadata.
+                    setattr(new, field.name, concatenate_fields(values))
 
-            elif isinstance(head, HasConcatenate):
-                setattr(new, field.name, head.concatenate(*tail, dim=dim))
+                elif isinstance(head, HasConcatenate) and all(isinstance(v, HasExpand) for v in values):
+                    field_shapes = [(1,) * (len(target_shapes[0]) - len(v.shape)) + tuple(v.shape) for v in values]
+                    field_shapes = broadcast_shapes_except(field_shapes, dim)
+                    expanded = [
+                        v.expand(*shape[:dim], target[dim], *shape[dim + 1 :])
+                        for v, shape, target in zip(values, field_shapes, target_shapes, strict=True)
+                    ]
+                    setattr(new, field.name, expanded[0].concatenate(*expanded[1:], dim=dim))
 
+                elif isinstance(head, HasConcatenate):
+                    setattr(new, field.name, head.concatenate(*tail, dim=dim))
+            return new
+
+        new = cast(Self, concatenate_fields(objects))
         new._reduce_repeats_(recurse=True)
         return new
 
@@ -1156,8 +1190,13 @@ class Dataclass:
                         return False
                 except RuntimeError:
                     return False
-            elif field_self != field_other:
-                return False
+            else:
+                try:
+                    equal = field_self == field_other
+                    if not (equal.all() if isinstance(equal, torch.Tensor) else equal):
+                        return False
+                except RuntimeError:
+                    return False
         return True
 
     def __len__(self) -> int:

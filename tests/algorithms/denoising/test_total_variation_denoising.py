@@ -51,7 +51,6 @@ def test_denoising_repeated_dims() -> None:
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 @pytest.mark.parametrize('tensor_input', [True, False], ids=['tensor', 'idata'])
 @pytest.mark.parametrize('image_device', ['cpu', 'cuda'])
 def test_denoising_device(random_iheader: IHeader, tensor_input: bool, image_device: str) -> None:

@@ -219,7 +219,7 @@ def test_ktype_along_k210(
 
 def test_traj_from_ismrmrd(ismrmrd_cart_random_us) -> None:
     """Test reading trajectory from ISMRMRD file."""
-    traj = KTrajectory.from_ismrmrd(ismrmrd_cart_random_us.filename)
+    traj = KTrajectory.from_file(ismrmrd_cart_random_us.filename)
     n_other = (
         ismrmrd_cart_random_us.matrix_size // ismrmrd_cart_random_us.acceleration * ismrmrd_cart_random_us.repetitions
         + ismrmrd_cart_random_us.n_noise_samples
@@ -233,7 +233,7 @@ def test_traj_from_ismrmrd(ismrmrd_cart_random_us) -> None:
 def test_traj_from_ismrmrd_discards(ismrmrd_cart) -> None:
     """A standalone trajectory excludes discarded samples and can be supplied to KData."""
     reference = KData.from_file(ismrmrd_cart.filename, KTrajectoryCartesian())
-    traj = KTrajectory.from_ismrmrd(ismrmrd_cart.filename, acquisition_filter_criterion=is_image_acquisition)
+    traj = KTrajectory.from_file(ismrmrd_cart.filename, acquisition_filter_criterion=is_image_acquisition)
     actual = KData.from_file(ismrmrd_cart.filename, traj)
 
     torch.testing.assert_close(actual.traj.as_tensor(), reference.traj.as_tensor())
@@ -241,7 +241,7 @@ def test_traj_from_ismrmrd_discards(ismrmrd_cart) -> None:
 
 def test_traj_from_ismrmrd_normalize(ismrmrd_rad) -> None:
     """Test reading trajectory from ISMRMRD file with normalization."""
-    traj = KTrajectory.from_ismrmrd(ismrmrd_rad.filename, normalize=True)
+    traj = KTrajectory.from_file(ismrmrd_rad.filename, normalize=True)
     n_other = (
         ismrmrd_rad.matrix_size // ismrmrd_rad.acceleration * ismrmrd_rad.repetitions + ismrmrd_rad.n_noise_samples
     )
@@ -256,11 +256,11 @@ def test_traj_from_ismrmrd_normalize(ismrmrd_rad) -> None:
 def test_traj_from_ismrmrd_filter(ismrmrd_cart_bodycoil_and_surface_coil) -> None:
     """Test reading trajectory from ISMRMRD file using a filter."""
     with pytest.raises(ValueError, match=r'No matching acquisitions found'):
-        _ = KTrajectory.from_ismrmrd(
+        _ = KTrajectory.from_file(
             ismrmrd_cart_bodycoil_and_surface_coil.filename,
             acquisition_filter_criterion=lambda x: has_n_coils(1, x),  # there are no 1-coil acquisitions
         )
-    traj = KTrajectory.from_ismrmrd(
+    traj = KTrajectory.from_file(
         ismrmrd_cart_bodycoil_and_surface_coil.filename,
         acquisition_filter_criterion=lambda x: has_n_coils(2, x),
     )

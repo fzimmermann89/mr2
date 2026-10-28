@@ -1,3 +1,4 @@
+import pytest
 import torch
 from mr2.operators import ConstraintsOp, FunctionalType, OptimizerOp
 from mr2.operators.functionals import L2NormSquared
@@ -47,3 +48,22 @@ def test_optimizer_op_gradcheck() -> None:
     m0, t1 = (constraints_op @ op)(m0_reg, t1_reg, lambda_m0, lambda_t1, signal)
     torch.testing.assert_close(m0, true_m0, atol=1e-3, rtol=1e-2)
     torch.testing.assert_close(t1, true_t1, atol=1e-3, rtol=1e-2)
+
+
+@pytest.mark.cuda
+def test_optimizer_op_cuda_implicit_gradient() -> None:
+    """The implicit gradient of a quadratic optimum matches its target gradient."""
+    target = torch.tensor([1.25, -0.75], device='cuda', requires_grad=True)
+
+    def factory(value: torch.Tensor):
+        return lambda x: ((x - value).square().sum() / 2,)
+
+    op = OptimizerOp(factory=factory, initializer=lambda value: (torch.zeros_like(value),))
+    (solution,) = op(target)
+    solution.sum().backward()
+
+    torch.testing.assert_close(solution, target.detach(), atol=1e-5, rtol=1e-5)
+    assert target.grad is not None
+    torch.testing.assert_close(target.grad, torch.ones_like(target), atol=1e-5, rtol=1e-5)
+    assert solution.is_cuda
+    assert torch.isfinite(target.grad).all()

@@ -1,12 +1,15 @@
 """Tests the base Dataclass."""
 
+import io
 from dataclasses import field
 from pathlib import Path
 
 import einops
+import h5py
 import pytest
 import torch
 from mr2.data import Dataclass, IData, KData, Rotation, SpatialDimension
+from mr2.data.AcqInfo import AcqInfo
 from mr2.utils import RandomGenerator
 from typing_extensions import Any
 
@@ -345,11 +348,11 @@ def test_dataclass_split() -> None:
     a = A()
 
     split = a.split(dim=0, size=2, overlap=1, dilation=2)
-    # 0 2, 1 3,..., 7,9
-    assert len(split) == 8
+    # The dilated span is 3, so overlap 1 gives stride 2.
+    assert len(split) == 4
     assert split[0].shape == (2, 20)
-    assert split[1] == a[(1, 3), ...]
-    assert split[-1] == a[(7, 9), ...]
+    assert split[1] == a[(2, 4), ...]
+    assert split[-1] == a[(6, 8), ...]
 
     split = a.split(dim=0, size=2, overlap=0, dilation=1)
     # 0 1, 2 3, 4 5, 6 7, 8 9
@@ -379,6 +382,51 @@ def test_dataclass_split_invalid() -> None:
         a.split(dim=-4, size=2, overlap=3)
     with pytest.raises(ValueError):
         a.split(dim=0, size=-2)
+
+
+@pytest.mark.parametrize(
+    ('length', 'size', 'overlap', 'dilation', 'expected'),
+    [
+        (6, 2, 0, 1, [[0, 1], [2, 3], [4, 5]]),
+        (6, 2, 1, 1, [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5]]),
+        (6, 3, 2, 1, [[0, 1, 2], [1, 2, 3], [2, 3, 4], [3, 4, 5]]),
+        (6, 2, 0, 2, [[0, 2], [3, 5]]),
+        (6, 2, 1, 2, [[0, 2], [2, 4]]),
+        (6, 2, -1, 1, [[0, 1], [3, 4]]),
+        (9, 2, -1, 2, [[0, 2], [4, 6]]),
+        (6, 3, 0, 2, [[0, 2, 4]]),
+        (3, 2, 0, 2, [[0, 2]]),
+        (3, 1, 0, 4, [[0], [1], [2]]),
+        (3, 4, 0, 1, []),
+        (0, 2, 0, 1, []),
+    ],
+)
+def test_dataclass_split_windows(length, size, overlap, dilation, expected) -> None:
+    """Splits contain full windows spaced by their dilated span minus overlap."""
+
+    class Sample(Dataclass, auto_reduce_repeats=False):
+        """One tensor to split."""
+
+        data: torch.Tensor
+
+    sample = Sample(torch.arange(length))
+    chunks = sample.split(dim=-1, size=size, overlap=overlap, dilation=dilation)
+    assert [chunk.data.tolist() for chunk in chunks] == expected
+
+
+@pytest.mark.parametrize(
+    ('kwargs', 'message'),
+    [
+        ({'size': 0}, 'Size must be larger than 0'),
+        ({'size': -1, 'overlap': -2}, 'Size must be larger than 0'),
+        ({'size': 2, 'overlap': 2}, 'Overlap must be smaller than size'),
+        ({'size': 2, 'overlap': 3}, 'Overlap must be smaller than size'),
+    ],
+)
+def test_dataclass_split_window_invalid(kwargs, message) -> None:
+    """Reject empty windows and overlap at least as large as the window size."""
+    with pytest.raises(ValueError, match=message):
+        A().split(dim=0, **kwargs)
 
 
 def test_dataclass_stack() -> None:
@@ -471,6 +519,92 @@ def test_dataclass_concatenate_scalar_shape() -> None:
     assert c.spatial_dimension == SpatialDimension(1, 2, 3)
     assert torch.equal(c.data, expected_data)
     assert torch.equal(c.orientation.as_quat(), expected_orientation.as_quat())
+
+
+@pytest.mark.parametrize('dim', [0, 1, -1])
+@pytest.mark.parametrize('same', [False, True])
+def test_dataclass_concatenate_nested_rotation_storage(dim: int, same: bool) -> None:
+    """Concatenated rotations keep unrelated dimensions broadcasted in storage."""
+
+    class Child(Dataclass):
+        """Nested orientation metadata."""
+
+        orientation: Rotation
+
+    class Parent(Dataclass):
+        """Data with a broadcasted orientation."""
+
+        data: torch.Tensor
+        child: Child
+
+    a = Parent(torch.arange(2 * 16 * 32).reshape(2, 16, 32), Child(Rotation.identity()))
+    b = Parent(a.data, Child(Rotation.from_euler('z', 0.0 if same else 1.0).reshape(1, 1)))
+    result = a.concatenate(b, dim=dim)
+    orientation = result.child.orientation
+    expected_shape = [1, 1, 1]
+    expected_shape[dim] = 1 if same else a.shape[dim] * 2
+    assert orientation.shape == tuple(expected_shape)
+    expected = torch.cat([obj.child.orientation.as_quat().expand(*obj.shape, 4) for obj in (a, b)], dim=dim % a.ndim)
+    torch.testing.assert_close(orientation.as_quat().expand(*result.shape, 4), expected)
+    quaternions = orientation._quaternions
+    assert quaternions.untyped_storage().nbytes() <= 2 * a.shape[dim] * 4 * quaternions.element_size()
+
+
+@pytest.mark.parametrize('dim', [0, 1, -1, -2])
+@pytest.mark.parametrize('same', [False, True])
+def test_dataclass_concatenate_nested_broadcast(dim: int, same: bool) -> None:
+    """Nested fields inherit the parent's extent even with fewer dimensions."""
+
+    class Child(Dataclass):
+        """Broadcasted metadata with a scalar matrix size."""
+
+        value: torch.Tensor
+        position: SpatialDimension[torch.Tensor]
+        matrix: SpatialDimension[int]
+
+    class Parent(Dataclass):
+        """Data supplying the full broadcast shape."""
+
+        data: torch.Tensor
+        child: Child
+
+    a = Parent(
+        torch.arange(12).reshape(3, 4),
+        Child(torch.tensor(1), SpatialDimension(*(torch.tensor([1]) for _ in range(3))), SpatialDimension(1, 2, 3)),
+    )
+    b = a.clone()
+    b.data = b.data + 12
+    b.child.value = torch.tensor(1 if same else 2)
+    b.child.position.x = torch.tensor([1 if same else 2])
+    result = a.concatenate(b, dim=dim)
+    shape = list(a.shape)
+    shape[dim] *= 2
+    assert result.shape == tuple(shape)
+    assert result.child.matrix == a.child.matrix
+    for field_a, field_b, actual in [
+        (a.child.value, b.child.value, result.child.value),
+        (a.child.position.x, b.child.position.x, result.child.position.x),
+    ]:
+        expected = torch.cat((field_a.expand(a.shape), field_b.expand(b.shape)), dim=dim)
+        torch.testing.assert_close(actual.expand(shape), expected)
+        assert actual.shape[dim] == (1 if same else shape[dim])
+
+
+def test_dataclass_equal_nested_spatial_dimension() -> None:
+    """Deep equality reduces tensor comparisons in nested SpatialDimensions."""
+    position = SpatialDimension(*(torch.arange(3).reshape(3, 1, 1, 1, 1) for _ in range(3)))
+    original = AcqInfo(position=position)
+    copy = original.clone()
+    assert original == copy
+    unequal = original != copy
+    assert unequal is False
+    copy.position.x = copy.position.x.expand(3, 1, 1, 2, 1)
+    assert original == copy
+    copy.position.x = copy.position.x + 1
+    assert original != copy
+    copy.position.x = torch.arange(2).reshape(2, 1, 1, 1, 1)
+    copy.position.y = copy.position.z = copy.position.x
+    assert original != copy
 
 
 def test_dataclass_equal() -> None:
@@ -596,7 +730,7 @@ def test_dataclass_save_as_mr2_roundtrip(tmp_path: Path) -> None:
     filepath = tmp_path / 'dataclass_a.mr2'
 
     dataclass.save_as_mr2(filepath)
-    reloaded = A.from_mr2(filepath)
+    reloaded = A.from_file(filepath)
 
     torch.testing.assert_close(reloaded.floattensor, dataclass.floattensor)
     torch.testing.assert_close(reloaded.floattensor2, dataclass.floattensor2)
@@ -611,7 +745,7 @@ def test_kdata_save_as_mr2_roundtrip(consistently_shaped_kdata: KData, tmp_path:
     filepath = tmp_path / 'kdata.mr2'
 
     consistently_shaped_kdata.save_as_mr2(filepath)
-    reloaded = KData.from_mr2(filepath)
+    reloaded = KData.from_file(filepath)
 
     torch.testing.assert_close(reloaded.data, consistently_shaped_kdata.data)
     torch.testing.assert_close(reloaded.traj.as_tensor(), consistently_shaped_kdata.traj.as_tensor())
@@ -634,13 +768,17 @@ def test_kdata_save_as_mr2_roundtrip(consistently_shaped_kdata: KData, tmp_path:
     assert reloaded.header.encoding_fov == consistently_shaped_kdata.header.encoding_fov
 
 
-def test_idata_save_as_mr2_roundtrip(random_kheader, random_test_data, tmp_path: Path) -> None:
+@pytest.mark.parametrize('use_buffer', [False, True])
+def test_idata_save_as_mr2_roundtrip(random_kheader, random_test_data, tmp_path: Path, use_buffer) -> None:
     """Test MR2 roundtrip for IData."""
     idata = IData.from_tensor_and_kheader(data=random_test_data, header=random_kheader)
     filepath = tmp_path / 'idata.mr2'
 
     idata.save_as_mr2(filepath)
-    reloaded = IData.from_mr2(filepath)
+    source = io.BytesIO(filepath.read_bytes()) if use_buffer else filepath
+    reloaded = IData.from_file(source)
+    if isinstance(source, io.BytesIO):
+        assert not source.closed
 
     torch.testing.assert_close(reloaded.data, idata.data)
     torch.testing.assert_close(reloaded.header.position.z, idata.header.position.z)
@@ -657,4 +795,23 @@ def test_dataclass_from_mr2_wrong_type_raises(tmp_path: Path) -> None:
     dataclass.save_as_mr2(filepath)
 
     with pytest.raises(ValueError, match='does not match requested type'):
-        B.from_mr2(filepath)
+        B.from_file(filepath)
+
+
+@pytest.mark.parametrize(('module_name', 'class_name'), [('os', 'system'), ('mr2.utils', 'RandomGenerator')])
+@pytest.mark.parametrize('stored_type', ['group', 'enum'])
+def test_mr2_rejects_arbitrary_callables(tmp_path, module_name, class_name, stored_type):
+    """File metadata cannot select arbitrary callables for nested values."""
+    filename = tmp_path / 'invalid.mr2'
+    A().save_as_mr2(filename)
+    with h5py.File(filename, 'a') as file:
+        del file['rotation']
+        if stored_type == 'group':
+            item = file.create_group('rotation')
+        else:
+            item = file.create_dataset('rotation', data='unused')
+            item.attrs['py_type'] = 'enum'
+        item.attrs['py_module'] = module_name
+        item.attrs['class_name'] = class_name
+    with pytest.raises(ValueError, match='Unsupported MR2'):
+        A.from_file(filename)
