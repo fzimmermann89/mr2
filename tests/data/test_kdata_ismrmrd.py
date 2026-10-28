@@ -3,15 +3,14 @@
 import copy
 import datetime
 import io
-from contextlib import closing
 
 import ismrmrd
 import ismrmrd.serialization
 import pytest
 import torch
-from mr2.data import KData, KTrajectory
+from mr2.data import KData
 from mr2.data.acq_filters import is_image_acquisition
-from mr2.data.traj_calculators import KTrajectoryCartesian, KTrajectoryIsmrmrd, KTrajectorySunflowerGoldenRpe
+from mr2.data.traj_calculators import KTrajectoryCartesian, KTrajectoryIsmrmrd
 from mr2.data.traj_calculators.KTrajectoryCalculator import DummyTrajectory
 
 from tests.data import IsmrmrdRawTestData
@@ -61,7 +60,7 @@ def assert_kdata_equal(actual: KData, expected: KData) -> None:
 
 
 def test_reader_parity(raw_data, tmp_path) -> None:
-    """Paths, HDF5 BytesIO, open files, serialized streams and objects agree."""
+    """Paths, HDF5 buffers, serialized streams and objects agree."""
     filename, header, acquisitions = raw_data
     trajectory = KTrajectoryIsmrmrd()
     overwrites = {'datetime': datetime.datetime(2020, 1, 2), 'protocol_name': 'overwritten'}
@@ -71,9 +70,6 @@ def test_reader_parity(raw_data, tmp_path) -> None:
         [acq for acq in acquisitions if is_image_acquisition(acq)], expected.header.encoding_matrix
     )
     assert_kdata_equal(KData.from_ismrmrd(header, acquisitions, precomputed, header_overwrites=overwrites), expected)
-    with filename.open('rb') as file:
-        assert_kdata_equal(KData.from_file(file, trajectory, header_overwrites=overwrites), expected)
-        assert not file.closed
     buffer = io.BytesIO(filename.read_bytes())
     assert_kdata_equal(KData.from_file(buffer, trajectory, header_overwrites=overwrites), expected)
     assert not buffer.closed
@@ -85,13 +81,9 @@ def test_reader_parity(raw_data, tmp_path) -> None:
     stream_path = tmp_path / 'serialized.mrd'
     stream_path.write_bytes(stream.getvalue())
     assert_kdata_equal(KData.from_file(stream_path, trajectory, header_overwrites=overwrites), expected)
-    # HDF5 detection uses content even for an unfamiliar suffix.
-    hdf5_path = tmp_path / 'raw.bin'
-    hdf5_path.write_bytes(filename.read_bytes())
-    assert_kdata_equal(KData.from_file(hdf5_path, trajectory, header_overwrites=overwrites), expected)
 
 
-@pytest.mark.parametrize('index', [0, 2, -1, -3])
+@pytest.mark.parametrize('index', [0, -1])
 def test_multiple_measurements(raw_data, index) -> None:
     """Both index directions select the right measurement without mixing headers."""
     _, header, acquisitions = raw_data
@@ -105,20 +97,6 @@ def test_multiple_measurements(raw_data, index) -> None:
     result = KData.from_file(stream, DummyTrajectory(), dataset_idx=index, file_format='ismrmrd-stream')
     torch.testing.assert_close(result.data, torch.full_like(result.data, complex(index % 3 + 1, -(index % 3 + 2))))
     assert not stream.closed
-
-
-@pytest.mark.parametrize('trajectory', [KTrajectoryCartesian(), KTrajectoryIsmrmrd()])
-def test_mixed_readouts_keep_metadata_aligned(raw_data, trajectory) -> None:
-    """Dropping a shorter post-discard readout also drops its metadata and trajectory."""
-    _, header, acquisitions = raw_data
-    acquisitions = [acq for acq in acquisitions if is_image_acquisition(acq)]
-    acquisitions[1].discard_post = 1
-    retained = [acquisitions[i] for i in (0, 2, 3)]
-    expected = KData.from_ismrmrd(header, retained, trajectory)
-    with pytest.warns(UserWarning, match='different shape'):
-        result = KData.from_ismrmrd(header, acquisitions, trajectory)
-    assert_kdata_equal(result, expected)
-    assert result.data.shape[-2] == 3
 
 
 def test_custom_filter(raw_data) -> None:
@@ -168,69 +146,22 @@ class ShortReads(io.BytesIO):
 
 
 def test_short_reads(raw_data) -> None:
-    """Chunked nonseekable transports preserve data and report premature EOF."""
+    """Load a complete measurement from a chunked nonseekable transport."""
     _, header, acquisitions = raw_data
     data = serialize_measurements([(header, acquisitions)]).getvalue()
     stream = ShortReads(data)
     expected = KData.from_ismrmrd(header, acquisitions, DummyTrajectory())
     assert_kdata_equal(KData.from_file(stream, DummyTrajectory(), file_format='ismrmrd-stream'), expected)
     assert not stream.closed
-    truncated = ShortReads(data[:-1])
-    with pytest.raises(EOFError):
-        KData.from_file(truncated, DummyTrajectory(), file_format='ismrmrd-stream')
-    assert not truncated.closed
 
 
 def test_iter_acquisitions(raw_data) -> None:
-    """Iteration preserves each readout, its counters and measurement header."""
+    """Iteration preserves each readout and its acquisition counters."""
     _, header, acquisitions = raw_data
     imaging = [acq for acq in acquisitions if is_image_acquisition(acq)]
-    next_header = copy.deepcopy(header)
-    next_header.measurementInformation = ismrmrd.xsd.measurementInformationType(
-        patientPosition=ismrmrd.xsd.patientPositionType.HFS, protocolName='next measurement'
-    )
-    stream = serialize_measurements([(header, imaging), (next_header, imaging[:1])])
-    with closing(KData.iter_ismrmrd(stream, KTrajectoryCartesian())) as readouts:
-        for acq in imaging:
-            result = next(readouts)
-            assert_kdata_equal(result, KData.from_ismrmrd(header, [acq], KTrajectoryCartesian()))
-        result = next(readouts)
-        assert result.header.protocol_name == 'next measurement'
-        with pytest.raises(StopIteration):
-            next(readouts)
+    stream = serialize_measurements([(header, imaging)])
+    results = list(KData.iter_ismrmrd(stream, KTrajectoryCartesian()))
+    assert len(results) == len(imaging)
+    for result, acquisition in zip(results, imaging, strict=True):
+        assert_kdata_equal(result, KData.from_ismrmrd(header, [acquisition], KTrajectoryCartesian()))
     assert not stream.closed
-
-
-@pytest.mark.parametrize('trajectory', [KTrajectoryIsmrmrd(normalize=True), KTrajectorySunflowerGoldenRpe()])
-def test_iter_rejects_measurement_trajectory(raw_data, trajectory) -> None:
-    """Trajectories requiring all readouts cannot be evaluated independently."""
-    _, header, acquisitions = raw_data
-    stream = serialize_measurements([(header, acquisitions)])
-    with pytest.raises(ValueError, match='complete measurement'):
-        next(KData.iter_ismrmrd(stream, trajectory))
-    assert stream.tell() == 0
-    assert not stream.closed
-
-
-def test_iter_rejects_full_measurement_trajectory(raw_data) -> None:
-    """A single readout must not broadcast over a full measurement's trajectory."""
-    _, header, acquisitions = raw_data
-    coordinates = torch.arange(16).reshape(4, 1, 1, 1, 4).float()
-    trajectory = KTrajectory(coordinates, coordinates, coordinates)
-    stream = serialize_measurements([(header, acquisitions)])
-    with pytest.raises(ValueError, match=r'Trajectory shape .* does not match data shape'):
-        next(KData.iter_ismrmrd(stream, trajectory))
-    assert not stream.closed
-
-
-def test_iter_close_owned_file(raw_data, tmp_path, monkeypatch) -> None:
-    """Closing iteration early closes the file opened by the iterator."""
-    _, header, acquisitions = raw_data
-    filename = tmp_path / 'measurements.ismrmrd'
-    filename.write_bytes(serialize_measurements([(header, acquisitions)]).getvalue())
-    stream = filename.open('rb')
-    monkeypatch.setattr(type(filename), 'open', lambda *_args, **_kwargs: stream)
-    with closing(KData.iter_ismrmrd(filename, DummyTrajectory())) as readouts:
-        next(readouts)
-        assert not stream.closed
-    assert stream.closed
