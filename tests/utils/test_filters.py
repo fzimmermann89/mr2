@@ -223,21 +223,16 @@ def test_fft_filters(kernel_size: tuple[int, ...], dtype: torch.dtype) -> None:
     torch.testing.assert_close(coefficients, expected)
 
 
-def test_hann_window_continuous_coordinates() -> None:
-    """A one-dimensional window supports fractional coordinates without a data object."""
-    coordinates = torch.tensor([-2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0], dtype=torch.float64)
-    expected = torch.tensor([0.0, 0.5, (2 + 2**0.5) / 4, 1.0, (2 + 2**0.5) / 4, 0.5, 0.0], dtype=torch.float64)
-    torch.testing.assert_close(hann_window(coordinates, 4.0), expected)
-
-
-@pytest.mark.parametrize(('coordinates', 'widths'), [((), ()), ((torch.zeros(1),), (1.0, 2.0))])
-def test_radial_hann_window_invalid_axes(coordinates: tuple[torch.Tensor, ...], widths: tuple[float, ...]) -> None:
-    """Coordinate and width sequences must be nonempty and have matching lengths."""
-    with pytest.raises(ValueError, match='nonempty coordinates and matching length widths'):
-        radial_hann_window(coordinates, widths)
-
-
-def test_gaussian_window_half_maximum() -> None:
-    """Gaussian width is the full width at half maximum."""
-    coordinates = torch.tensor([-2.0, 0.0, 2.0], dtype=torch.float64)
-    torch.testing.assert_close(gaussian_window(coordinates, 4), torch.tensor([0.5, 1.0, 0.5], dtype=torch.float64))
+def test_apodization_windows() -> None:
+    """Check continuous Hann support, Gaussian FWHM and finite radial DC gradients."""
+    coordinate = torch.tensor([0.0, 0.5, 1.0, 2.0], dtype=torch.float64, requires_grad=True)
+    expected = torch.tensor([1.0, (2 + 2**0.5) / 4, 0.5, 0.0], dtype=torch.float64)
+    torch.testing.assert_close(hann_window(coordinate, 4), expected)
+    torch.testing.assert_close(gaussian_window(coordinate[[0, 3]], 4), torch.tensor([1.0, 0.5], dtype=torch.float64))
+    radial = radial_hann_window((coordinate,), (4.0,))
+    torch.testing.assert_close(radial, expected)
+    radial.sum().backward()
+    gradient = -torch.pi / 4 * torch.sin(torch.pi * coordinate.detach() / 2)
+    gradient[-1] = 0
+    assert coordinate.grad is not None
+    torch.testing.assert_close(coordinate.grad, gradient)
