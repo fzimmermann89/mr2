@@ -3,8 +3,9 @@
 from math import isfinite, prod
 
 import torch
+from einops import rearrange
 
-from mr2.utils.sliding_window import sliding_window
+from mr2.utils import pad_or_crop, sliding_window
 
 
 def grappa_calibration(
@@ -23,46 +24,40 @@ def grappa_calibration(
         Only complete ACS windows are used.
     regularization
         Nonnegative ridge strength, relative to the mean diagonal of ``S.H @ S``
-        for source matrix S. Zero uses a minimum-norm pseudoinverse.
+        for source matrix S. Zero uses a minimum-norm pseudoinverse. Batches
+        with zero source energy return zero kernels.
 
     Returns
     -------
         Complex kernel with shape ``(..., coils_out, coils_in, *kernel_size)``.
-        Unused offsets are zero. Apply using `grappa_interpolation`. Unbatched
-        kernels also work with `~mr2.operators.ConvolutionOp` using constant
-        padding and correlation.
+        Unused offsets are zero. Apply using `grappa_interpolation`.
     """
     kernel_size = tuple(source_pattern.shape)
-    n_spatial = len(kernel_size)
-    if n_spatial != 3 or any(k % 2 != 1 for k in kernel_size):
+    if len(kernel_size) != 3 or any(k % 2 != 1 for k in kernel_size):
         raise ValueError('source_pattern must have three positive odd widths (use width one for 2D data).')
-    if (
-        source_pattern.dtype != torch.bool
-        or not source_pattern.any()
-        or source_pattern.flatten()[prod(kernel_size) // 2]
-    ):
-        raise ValueError('source_pattern must select boolean source offsets excluding the center.')
+    if source_pattern.dtype != torch.bool or source_pattern.flatten()[prod(kernel_size) // 2]:
+        raise ValueError('source_pattern must be boolean and exclude the center.')
+    if not source_pattern.any():
+        raise ValueError('No acquired neighbor within kernel_size; increase the neighborhood widths.')
     if not isfinite(regularization) or regularization < 0:
         raise ValueError('regularization must be finite and nonnegative.')
-    n_batch = acs.ndim - n_spatial - 1
-    n_coils = acs.shape[-n_spatial - 1]
-    windows = sliding_window(acs, kernel_size, dim=tuple(range(-n_spatial, 0)))
-    windows = windows.movedim(tuple(range(n_spatial)), tuple(range(n_batch, n_batch + n_spatial)))
-    calibration = windows.reshape(*acs.shape[:n_batch], -1, n_coils, prod(kernel_size))
-    targets = calibration[..., prod(kernel_size) // 2]
-    sources = calibration[..., source_pattern.flatten()].flatten(start_dim=-2)
-    if sources.shape[-2] < sources.shape[-1]:
-        raise ValueError('Insufficient ACS: calibration must have at least as many rows as source features.')
+    n_coils = acs.shape[-4]
+    windows = sliding_window(acs, kernel_size, dim=(-3, -2, -1))
+    cz, cy, cx = (k // 2 for k in kernel_size)
+    targets = rearrange(windows[..., cz, cy, cx], 'z y x ... c -> ... (z y x) c')
+    sources = rearrange(windows[..., source_pattern], 'z y x ... c s -> ... (z y x) (c s)')
     if regularization == 0:
         weights = torch.linalg.pinv(sources) @ targets
     else:
         gram = sources.mH @ sources
-        ridge = regularization * gram.diagonal(dim1=-2, dim2=-1).real.mean(-1)
+        energy = gram.diagonal(dim1=-2, dim2=-1).real.mean(-1)
+        # Any positive diagonal selects the zero minimum-norm kernel when S is zero.
+        ridge = torch.where(energy == 0, 1.0, regularization * energy)
         identity = torch.eye(gram.shape[-1], device=acs.device, dtype=acs.dtype)
         weights = torch.linalg.solve(gram + ridge[..., None, None] * identity, sources.mH @ targets)
-    kernel = acs.new_zeros(*acs.shape[:n_batch], n_coils, n_coils, prod(kernel_size))
+    kernel = acs.new_zeros(*acs.shape[:-4], n_coils, n_coils, prod(kernel_size))
     kernel[..., source_pattern.flatten()] = weights.unflatten(-2, (n_coils, -1)).movedim(-1, -3)
-    return kernel.reshape(*acs.shape[:n_batch], n_coils, n_coils, *kernel_size)
+    return kernel.reshape(*acs.shape[:-4], n_coils, n_coils, *kernel_size)
 
 
 def grappa_interpolation(
@@ -86,23 +81,16 @@ def grappa_interpolation(
     -------
         Interpolated k-space with the input shape, dtype and device.
     """
-    kernel_size = tuple(kernel.shape[-3:])
-    data = kspace.flatten(start_dim=-3).transpose(-1, -2)
-    result = data.clone()
+    kernel_size = kernel.shape[-3:]
+    spatial_shape = kspace.shape[-3:]
+    padded_shape = tuple(n + k - 1 for n, k in zip(spatial_shape, kernel_size, strict=True))
+    windows = sliding_window(pad_or_crop(kspace, padded_shape), kernel_size, dim=(-3, -2, -1))
+    result = kspace.flatten(start_dim=-3).clone()
     if target_indices is None:
-        target_indices = torch.arange(data.shape[-2], device=kspace.device)
-    weights = kernel.flatten(start_dim=-3).flatten(start_dim=-2).transpose(-1, -2)
-    coordinates = torch.stack(
-        torch.unravel_index(torch.arange(prod(kernel_size), device=kspace.device), kernel_size), dim=-1
-    )
-    offsets = coordinates - coordinates.new_tensor(kernel_size) // 2
-    strides = offsets.new_tensor([prod(kspace.shape[-2:]), kspace.shape[-1], 1])
+        target_indices = torch.arange(prod(spatial_shape), device=kspace.device)
+    weights = rearrange(kernel, '... o i kz ky kx -> ... (i kz ky kx) o')
     for locations in target_indices.split(1024):
-        positions = torch.stack(torch.unravel_index(locations, kspace.shape[-3:]), dim=-1)
-        neighbors = positions[:, None, :] + offsets
-        inside = ((neighbors >= 0) & (neighbors < neighbors.new_tensor(kspace.shape[-3:]))).all(-1)
-        indices = (neighbors * strides).sum(-1).clamp(0, data.shape[-2] - 1)
-        sources = torch.where(inside[..., None], data[..., indices, :], 0)
-        sources = sources.transpose(-1, -2).flatten(start_dim=-2)
-        result[..., locations, :] = sources @ weights
-    return result.transpose(-1, -2).reshape(kspace.shape)
+        patches = windows[torch.unravel_index(locations, spatial_shape)]
+        sources = rearrange(patches, 'p ... c kz ky kx -> ... p (c kz ky kx)')
+        result[..., locations] = (sources @ weights).transpose(-1, -2)
+    return result.reshape(kspace.shape)

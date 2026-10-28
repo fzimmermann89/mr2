@@ -5,7 +5,6 @@ from math import prod
 from typing import Literal
 
 import torch
-from torch.nn.functional import pad
 from typing_extensions import Self
 
 from mr2.algorithms.grappa import grappa_calibration, grappa_interpolation
@@ -17,9 +16,8 @@ from mr2.data.KData import KData
 from mr2.data.KNoise import KNoise
 from mr2.operators.CartesianSamplingOp import CartesianSamplingOp
 from mr2.operators.FastFourierOp import FastFourierOp
-from mr2.operators.FourierOp import FourierOp
 from mr2.operators.SensitivityOp import SensitivityOp
-from mr2.utils.sliding_window import sliding_window
+from mr2.utils import pad_or_crop, sliding_window
 
 
 class GrappaReconstruction(Reconstruction):
@@ -60,10 +58,11 @@ class GrappaReconstruction(Reconstruction):
         csm
             Coil combination maps, operator or calculation from completed coil
             images, following `~mr2.algorithms.reconstruction.DirectReconstruction`.
-            Set to None to return separate coil images.
+            Set to None to return separate coil images. For differentiable
+            reconstruction, construct on the target device.
         """
         super().__init__()
-        self.register_buffer('acs', acs)
+        self.acs = acs
         self.kernel_size = kernel_size
         self.regularization = regularization
         self.noise = None
@@ -85,17 +84,19 @@ class GrappaReconstruction(Reconstruction):
         """
         if not all(t & TrajType.ONGRID for t in kdata.traj.type_along_kzyx):
             raise ValueError('GRAPPA reconstruction requires Cartesian data.')
-        if len(self.kernel_size) != 3 or any(k < 1 or k % 2 != 1 for k in self.kernel_size):
-            raise ValueError('kernel_size must contain three positive odd widths.')
         if self.acs.shape[-4] != kdata.data.shape[-4]:
             raise ValueError('ACS and acquisition must have the same number of coils.')
         if torch.broadcast_shapes(self.acs.shape[:-4], kdata.shape[:-4]) != kdata.shape[:-4]:
             raise ValueError('ACS batch dimensions must broadcast to the acquisition batches.')
         sampling_op = CartesianSamplingOp(kdata.header.encoding_matrix, kdata.traj)
-        fourier_op = FourierOp.from_kdata(kdata)
         image_fourier_op = FastFourierOp(
-            recon_matrix=kdata.header.recon_matrix, encoding_matrix=kdata.header.encoding_matrix
+            dim=tuple(
+                d for d, t in zip((-3, -2, -1), kdata.traj.type_along_kzyx, strict=True) if not t & TrajType.SINGLEVALUE
+            ),
+            recon_matrix=kdata.header.recon_matrix,
+            encoding_matrix=kdata.header.encoding_matrix,
         )
+        fourier_op = sampling_op @ image_fourier_op
         ones = kdata.data.new_ones(*kdata.shape[:-4], 1, *kdata.shape[-3:])
         (support,) = sampling_op.H(ones)
         support = support.real.bool().reshape(-1, *support.shape[-3:])
@@ -105,8 +106,9 @@ class GrappaReconstruction(Reconstruction):
             raise ValueError('GRAPPA reconstruction requires a shared sampling pattern across batches.')
         acquired = support[0]
         missing_indices = (~acquired).flatten().nonzero().flatten()
-        padding = tuple(p for k in reversed(self.kernel_size) for p in (k // 2, k // 2))
-        neighborhoods = sliding_window(pad(acquired, padding), self.kernel_size).reshape(-1, prod(self.kernel_size))
+        padded_shape = tuple(n + k - 1 for n, k in zip(acquired.shape, self.kernel_size, strict=True))
+        neighborhoods = sliding_window(pad_or_crop(acquired, padded_shape), self.kernel_size)
+        neighborhoods = neighborhoods.reshape(-1, prod(self.kernel_size))
         patterns, assignments = torch.unique(neighborhoods[missing_indices], dim=0, return_inverse=True)
         kernels = [
             grappa_calibration(self.acs, pattern.reshape(self.kernel_size), regularization=self.regularization)
@@ -119,7 +121,7 @@ class GrappaReconstruction(Reconstruction):
         self.image_fourier_op = image_fourier_op
         self.missing_indices = missing_indices
         self.assignments = assignments
-        self.register_buffer('kernels', fitted_kernels)
+        self.kernels = fitted_kernels
         return self
 
     def interpolate(self, kdata: KData) -> torch.Tensor:

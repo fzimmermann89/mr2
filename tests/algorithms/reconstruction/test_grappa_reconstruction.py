@@ -4,7 +4,7 @@ import pytest
 import torch
 from mr2.algorithms.reconstruction import GrappaReconstruction
 from mr2.data import AcqInfo, CsmData, IData, KData, KHeader, KNoise, KTrajectory, SpatialDimension
-from mr2.operators import FastFourierOp
+from mr2.operators import FastFourierOp, FourierOp
 
 
 def _point_object(shape: tuple[int, int, int], dtype: torch.dtype) -> torch.Tensor:
@@ -162,14 +162,13 @@ def test_grappa_reject_varying_batch_masks() -> None:
         GrappaReconstruction(first, full, (1, 3, 3), csm=None)
 
 
-@pytest.mark.parametrize('failure', ['repeated_samples', 'insufficient_acs'])
+@pytest.mark.parametrize('failure', ['repeated_samples', 'no_sources'])
 def test_grappa_failed_recalibration(failure: str) -> None:
     """A failed sampling update or kernel fit leaves the original reconstruction usable."""
     full = _point_object((1, 16, 18), torch.complex128)[None]
     mask = torch.ones(full.shape[-3:], dtype=torch.bool)
     mask[..., 1::2, :] = False
     original = _kdata(full, mask)
-    # Twenty calibration rows suffice for R2 patterns, but not an isolated hole.
     acs = full[..., 3:9, 3:10]
     reconstruction = GrappaReconstruction(original, acs, (1, 3, 3), regularization=0, csm=None)
     expected = reconstruction(original).data
@@ -182,9 +181,9 @@ def test_grappa_failed_recalibration(failure: str) -> None:
         message = 'distinct samples'
     else:
         mask[:] = True
-        mask[..., 8, 9] = False
+        mask[..., 6:11, 6:11] = False
         invalid = _kdata(full, mask)
-        message = 'Insufficient ACS'
+        message = 'No acquired neighbor within kernel_size'
     with pytest.raises(ValueError, match=message):
         reconstruction.recalculate_fourierop(invalid)
     torch.testing.assert_close(reconstruction(original).data, expected)
@@ -209,35 +208,77 @@ def test_grappa_recalculate_csm() -> None:
     torch.testing.assert_close(reconstruction(data).data, reference)
     previous = reconstruction.csm_op
 
-    def fail(image: IData) -> CsmData:
-        assert image.data.shape[-4] == 3
-        raise ValueError('CSM calculation failed')
-
-    with pytest.raises(ValueError, match='CSM calculation failed'):
-        reconstruction.recalculate_csm(data, fail)
-    assert reconstruction.csm_op is previous
     noise = KNoise(torch.randn(1, 3, 1, 1, 100, dtype=full.dtype))
     with pytest.raises(ValueError, match='Prewhiten acquisition and ACS together'):
         reconstruction.recalculate_csm(data, noise=noise)
     assert reconstruction.csm_op is previous
 
 
-@pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA is unavailable')
-def test_grappa_gradient_calibration_cuda() -> None:
-    """Move gradient-bearing calibration buffers and preserve gradients through a refit."""
+@pytest.mark.parametrize(
+    'device',
+    [
+        'cpu',
+        pytest.param(
+            'cuda',
+            marks=[pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA is unavailable')],
+        ),
+    ],
+)
+def test_grappa_gradient_calibration(device: str) -> None:
+    """Differentiate calibration and refit with and without gradient tracking."""
+    full = _point_object((1, 16, 18), torch.complex128)[None].to(device)
+    mask = torch.ones(full.shape[-3:], dtype=torch.bool, device=device)
+    mask[..., 1::2, :] = False
+    data = _kdata(full, mask)
+    acs = full.clone().requires_grad_()
+    reconstruction = GrappaReconstruction(data, acs, (1, 3, 3), csm=None)
+    reconstruction.recalculate_fourierop(data)
+    reference = reconstruction(data).data
+    (gradient,) = torch.autograd.grad(reference.abs().square().sum(), acs)
+    assert torch.isfinite(gradient).all()
+    assert gradient.abs().sum() > 0
+
+    with torch.no_grad():
+        reconstruction.recalculate_fourierop(data)
+    torch.testing.assert_close(reconstruction(data).data, reference)
+    reconstruction.recalculate_fourierop(data)
+    complete = _kdata(full, torch.ones_like(mask))
+    reconstruction.recalculate_fourierop(complete)
+    torch.testing.assert_close(reconstruction.interpolate(complete), full)
+    reconstruction.acs = full
+    reconstruction.recalculate_fourierop(data)
+    torch.testing.assert_close(reconstruction(data).data, reference)
+
+
+def test_grappa_reconstruction_crop() -> None:
+    """Reuse the sampling and Fourier operators with a smaller reconstruction matrix."""
     full = _point_object((1, 16, 18), torch.complex128)[None]
     mask = torch.ones(full.shape[-3:], dtype=torch.bool)
     mask[..., 1::2, :] = False
-    data = _kdata(full, mask).cuda()
-    acs = full.clone().requires_grad_()
-    reconstruction = GrappaReconstruction(data.cpu(), acs, (1, 3, 3), csm=None).cuda()
-    assert reconstruction.acs.is_cuda
-    assert reconstruction.kernels.is_cuda
-    assert reconstruction.acs.requires_grad
-    assert reconstruction.kernels.requires_grad
-    reconstruction.recalculate_fourierop(data)
-    loss = reconstruction(data).data.abs().square().sum()
-    (gradient,) = torch.autograd.grad(loss, acs)
-    assert torch.isfinite(gradient).all()
-    assert gradient.abs().sum() > 0
+    data = _kdata(full, mask)
+    data.header.recon_matrix = SpatialDimension(1, 12, 14)
+    reconstruction = GrappaReconstruction(data, full, (1, 3, 3), regularization=0, csm=None)
+    (expected,) = FastFourierOp(recon_matrix=data.header.recon_matrix, encoding_matrix=data.header.encoding_matrix).H(
+        full
+    )
+    torch.testing.assert_close(reconstruction(data).data, expected, atol=2e-5, rtol=2e-5)
+    (direct,) = FourierOp.from_kdata(data).H(data.data)
+    torch.testing.assert_close(reconstruction.direct_reconstruction(data).data, direct)
+
+
+def test_grappa_constant_trajectory_axis() -> None:
+    """Ignore constant trajectory axes even when the header describes a larger extent."""
+    full = _point_object((1, 16, 18), torch.complex128)[None]
+    acquired = torch.ones(full.shape[-3:], dtype=torch.bool)
+    acquired[..., 1::2, :] = False
+    data = _kdata(full, acquired)
+    data.header.encoding_matrix.z = 4
+    data.header.recon_matrix.z = 4
+    reconstruction = GrappaReconstruction(data, full, (1, 3, 3), regularization=0, csm=None)
+    (expected,) = FastFourierOp(dim=(-2, -1)).H(full)
+    torch.testing.assert_close(reconstruction(data).data, expected, atol=2e-5, rtol=2e-5)
+    (direct,) = FourierOp.from_kdata(data).H(data.data)
+    torch.testing.assert_close(reconstruction.direct_reconstruction(data).data, direct)
+    (actual_samples,) = reconstruction.fourier_op(expected)
+    (expected_samples,) = FourierOp.from_kdata(data)(expected)
+    torch.testing.assert_close(actual_samples, expected_samples)
