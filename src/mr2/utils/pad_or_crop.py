@@ -1,6 +1,5 @@
 """Zero pad and crop data tensor."""
 
-import math
 from collections.abc import Sequence
 from typing import Literal
 
@@ -17,7 +16,7 @@ def pad_or_crop(
     mode: Literal['constant', 'reflect', 'replicate', 'circular'] = 'constant',
     value: float = 0.0,
 ) -> torch.Tensor:
-    """Change shape of data by center cropping or symmetric padding.
+    """Change shape of data by cropping or padding, preserving the fftshift center at ``size // 2``.
 
     Parameters
     ----------
@@ -58,8 +57,8 @@ def pad_or_crop(
 
     for old, new in zip(data.shape, new_shape, strict=True):
         diff = new - old
-        after = math.trunc(diff / 2)
-        before = diff - after
+        before = new // 2 - old // 2
+        after = diff - before
         pad.extend((before, after))
 
     return pad_nd(data, pad, dims=range(data.ndim), mode=mode, value=value) if any(pad) else data

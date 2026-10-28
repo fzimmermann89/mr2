@@ -36,12 +36,17 @@ class _AutogradWrapper(torch.autograd.Function):
         inputs: tuple[Callable[[torch.Tensor], torch.Tensor], Callable[[torch.Tensor], torch.Tensor], torch.Tensor],
         _output: torch.Tensor,
     ) -> None:
-        ctx.fw, ctx.bw, _ = inputs
+        ctx.fw, ctx.bw, x = inputs
+        ctx.input_is_complex = x.is_complex()
         return None
 
     @staticmethod
     def backward(ctx: Any, *grad_output: torch.Tensor) -> tuple[None, None, torch.Tensor]:  # noqa: ANN401
-        return None, None, _AutogradWrapper.apply(ctx.bw, ctx.fw, grad_output[0])
+        grad_input = _AutogradWrapper.apply(ctx.bw, ctx.fw, grad_output[0])
+        # A real input only receives the real part of the complex adjoint.
+        if not ctx.input_is_complex:
+            grad_input = grad_input.real
+        return None, None, grad_input
 
     @staticmethod
     def jvp(ctx: Any, *grad_inputs: Any) -> torch.Tensor:  # noqa: ANN401
@@ -192,7 +197,7 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
 
         gram = self.gram  # self.H@self
 
-        vector = initial_value
+        vector = initial_value / norm_initial_value
         for _ in range(max_iterations):
             # apply the operator to the vector
             (vector_new,) = gram(vector)
@@ -222,6 +227,11 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
     def __matmul__(self, other: LinearOperator) -> LinearOperator: ...
 
     @overload
+    def __matmul__(  # type: ignore[overload-overlap]
+        self, other: mr2.operators.LinearOperatorMatrix
+    ) -> mr2.operators.LinearOperatorMatrix: ...
+
+    @overload
     def __matmul__(
         self, other: Operator[Unpack[Tin2], tuple[torch.Tensor,]] | Operator[Unpack[Tin2], tuple[torch.Tensor, ...]]
     ) -> Operator[Unpack[Tin2], tuple[torch.Tensor,]]: ...
@@ -230,21 +240,32 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
         self,
         other: Operator[Unpack[Tin2], tuple[torch.Tensor,]]
         | LinearOperator
+        | mr2.operators.LinearOperatorMatrix
         | Operator[Unpack[Tin2], tuple[torch.Tensor, ...]],
     ) -> (
-        Operator[Unpack[Tin2], tuple[torch.Tensor,]] | LinearOperator | Operator[Unpack[Tin2], tuple[torch.Tensor, ...]]
+        Operator[Unpack[Tin2], tuple[torch.Tensor,]]
+        | LinearOperator
+        | mr2.operators.LinearOperatorMatrix
+        | Operator[Unpack[Tin2], tuple[torch.Tensor, ...]]
     ):
         """Operator composition.
 
-        Returns ``lambda x: self(other(x))``
+        Returns ``lambda x: self(other(x))``.
+        For a `~mr2.operators.LinearOperatorMatrix`, the operator is applied to each output of the matrix,
+        see `mr2.operators.LinearOperatorMatrix.__rmatmul__`.
         """
-        if isinstance(other, mr2.operators.IdentityOp):
+        if isinstance(other, mr2.operators.LinearOperatorMatrix):
+            # handled by LinearOperatorMatrix.__rmatmul__
+            return NotImplemented
+        elif isinstance(other, mr2.operators.IdentityOp):
             # neutral element of composition
             return self
         elif isinstance(self, mr2.operators.IdentityOp):
             return other
-        elif isinstance(self, mr2.operators.ZeroOp) or isinstance(other, mr2.operators.ZeroOp):
-            # zero operator composition with any operator is zero
+        elif (isinstance(self, mr2.operators.ZeroOp) and not self.keep_shape) or (
+            isinstance(other, mr2.operators.ZeroOp) and not other.keep_shape
+        ):
+            # Only scalar zeros can discard the other operator's output shape.
             return mr2.operators.ZeroOp()
         elif isinstance(other, LinearOperator):
             # LinearOperator@LinearOperator is linear
@@ -261,8 +282,20 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
         """
         return self + other
 
+    def __neg__(self) -> LinearOperator:
+        """Operator negation.
+
+        Returns ``lambda x: -self(x)``
+        """
+        return (-1) * self
+
     @overload  # type: ignore[override]
     def __add__(self, other: LinearOperator | torch.Tensor | complex) -> LinearOperator: ...
+
+    @overload
+    def __add__(  # type: ignore[overload-overlap]
+        self, other: mr2.operators.LinearOperatorMatrix
+    ) -> mr2.operators.LinearOperatorMatrix: ...
 
     @overload
     def __add__(
@@ -270,14 +303,24 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
     ) -> Operator[torch.Tensor, tuple[torch.Tensor,]]: ...
 
     def __add__(
-        self, other: Operator[torch.Tensor, tuple[torch.Tensor,]] | LinearOperator | torch.Tensor | complex
-    ) -> Operator[torch.Tensor, tuple[torch.Tensor,]] | LinearOperator:
+        self,
+        other: Operator[torch.Tensor, tuple[torch.Tensor,]]
+        | LinearOperator
+        | mr2.operators.LinearOperatorMatrix
+        | torch.Tensor
+        | complex,
+    ) -> Operator[torch.Tensor, tuple[torch.Tensor,]] | LinearOperator | mr2.operators.LinearOperatorMatrix:
         """Operator addition.
 
         Returns ``lambda x: self(x) + other(x)`` if other is a operator,
-        ``lambda x: self(x) + other`` if other is a tensor
+        ``lambda x: self(x) + other`` if other is a tensor.
+        For a `~mr2.operators.LinearOperatorMatrix`, the operator is added to the diagonal blocks,
+        see `mr2.operators.LinearOperatorMatrix.__radd__`.
         """
-        if isinstance(other, torch.Tensor | complex | int | float):
+        if isinstance(other, mr2.operators.LinearOperatorMatrix):
+            # handled by LinearOperatorMatrix.__radd__
+            return NotImplemented
+        elif isinstance(other, torch.Tensor | complex | int | float):
             # tensor addition
             return LinearOperatorSum(self, mr2.operators.IdentityOp() * other)
         elif isinstance(self, mr2.operators.ZeroOp):
@@ -291,7 +334,8 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
             return LinearOperatorSum(self, other)
         elif isinstance(other, Operator):
             # for general operators
-            return OperatorSum(self, other)
+            # cast due to https://github.com/python/mypy/issues/16335
+            return OperatorSum(self, cast(Operator[torch.Tensor, tuple[torch.Tensor,]], other))
         else:
             return NotImplemented
 

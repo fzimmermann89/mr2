@@ -3,7 +3,7 @@
 import pytest
 import torch
 from einops import repeat
-from mr2.data import DcfData, KTrajectory
+from mr2.data import DcfData, KTrajectory, SpatialDimension
 from mr2.utils import RandomGenerator
 
 
@@ -125,3 +125,162 @@ def test_dcf_broadcast() -> None:
     trajectory = KTrajectory(kz, ky, kx)
     dcf = DcfData.from_traj_voronoi(trajectory)
     assert dcf.data.shape == trajectory.shape
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+def test_dcf_pipe_mixed_batch(device: str) -> None:
+    """Mixed radial/Cartesian factors work with dense, broadcast and batched geometry."""
+    trajectory = example_traj_rpe(12, 32, 8)
+    # Scale radial coordinates to the encoded matrix, and use a full Cartesian readout.
+    trajectory = KTrajectory(trajectory.kz * 32, trajectory.ky * 32, trajectory.kx * 8).to(device)
+    sizes = SpatialDimension(32, 32, 8)
+    reference = DcfData.from_traj_pipe(trajectory, sizes)
+    radial = DcfData.from_traj_pipe(
+        KTrajectory(trajectory.kz, trajectory.ky, torch.zeros_like(trajectory.kx[..., :1])), sizes
+    )
+    torch.testing.assert_close(reference.data, radial.data)
+    # Change the second batch geometry, retaining broadcast singleton coil/k0 axes.
+    batch = KTrajectory(
+        trajectory.kz.expand(2, -1, -1, -1, -1), torch.cat((trajectory.ky, trajectory.ky * 0.7)), trajectory.kx
+    )
+    batched = DcfData.from_traj_pipe(batch, sizes)
+    torch.testing.assert_close(batched.data[0:1], reference.data)
+    second = KTrajectory(batch.kz, batch.ky[1:2], batch.kx)
+    torch.testing.assert_close(batched.data[1:2], DcfData.from_traj_pipe(second, sizes).data)
+    dense = KTrajectory.from_tensor(batch.as_tensor(), repeat_detection_tolerance=None)
+    torch.testing.assert_close(DcfData.from_traj_pipe(dense, sizes).data, batched.data)
+    data = torch.ones(2, 4, 12, 32, 8, dtype=torch.complex64, device=device)
+    (weighted,) = batched.as_operator()(data)
+    torch.testing.assert_close(weighted, batched.data.expand_as(data).to(data.dtype))
+
+
+def test_dcf_pipe_singleton() -> None:
+    """Constant batch geometries give unit weights without a gridding plan."""
+    k = torch.zeros(2, 1, 1, 1, 1)
+    result = DcfData.from_traj_pipe(KTrajectory(k, k, k), SpatialDimension(1, 1, 1))
+    torch.testing.assert_close(result.data.expand_as(k), torch.ones_like(k))
+
+
+def test_dcf_pipe_coupled_3d() -> None:
+    """Three coupled coordinate directions form one group, including across leading batch axes."""
+    from mr2.algorithms.dcf import dcf_pipe
+
+    kz = torch.linspace(-4, 3, 8).reshape(1, 1, 1, 8, 1, 1)
+    kx = torch.linspace(-4, 3, 8).reshape(1, 1, 1, 1, 1, 8)
+    ky = torch.stack((kz + kx, kz - kx), dim=0).squeeze(1)
+    traj = KTrajectory(kz, ky, kx)
+    result = DcfData.from_traj_pipe(traj, SpatialDimension(8, 16, 8), n_iterations=5)
+    coordinates = traj.as_tensor().expand(3, *traj.shape)
+    for i in range(2):
+        expected = dcf_pipe(coordinates[:, i, 0, 0], (8, 16, 8), n_iterations=5)
+        torch.testing.assert_close(result.data[i, 0, 0].expand_as(expected), expected)
+
+
+def test_dcf_pipe_coil_axis() -> None:
+    """Coils must broadcast over one geometry rather than create independent DCFs."""
+    k = torch.arange(8.0).reshape(1, 2, 1, 1, 4)
+    with pytest.raises(ValueError, match='coil'):
+        DcfData.from_traj_pipe(KTrajectory(k, k, k), SpatialDimension(8, 8, 8))
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+def test_dcf_pipe_batch_constant_directions(device: str) -> None:
+    """Unrelated batch entries must not change active directions or normalization."""
+    kx = torch.arange(-4, 4, dtype=torch.float32, device=device).reshape(1, 1, 1, 1, 8)
+    ky = torch.cat((torch.zeros_like(kx), kx))
+    kz = torch.zeros_like(kx)
+    sizes = SpatialDimension(1, 8, 8)
+    batched = DcfData.from_traj_pipe(KTrajectory(kz, ky, kx), sizes).data
+    for index in range(2):
+        single = DcfData.from_traj_pipe(KTrajectory(kz, ky[index : index + 1], kx), sizes).data
+        torch.testing.assert_close(batched[index : index + 1], single)
+
+
+@pytest.mark.parametrize('varying', [False, True])
+@pytest.mark.parametrize('invalid', ['nan_coordinate', 'iterations', 'oversampling', 'encoding'])
+def test_dcf_pipe_constant_input_validation(varying: bool, invalid: str) -> None:
+    """Constant directions and singleton geometries must not bypass input validation."""
+    zero = torch.zeros(1, 1, 1, 1, 1)
+    kz = torch.full_like(zero, float('nan')) if invalid == 'nan_coordinate' else zero
+    kx = torch.arange(8.0).reshape(1, 1, 1, 1, 8) if varying else zero
+    traj = KTrajectory(kz, zero, kx, repeat_detection_tolerance=None)
+    with pytest.raises(ValueError):
+        DcfData.from_traj_pipe(
+            traj,
+            SpatialDimension(0 if invalid == 'encoding' else 1, 1, 8),
+            n_iterations=0 if invalid == 'iterations' else 10,
+            oversampling=0.5 if invalid == 'oversampling' else 2.0,
+        )
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('method', ['voronoi', 'pipe'])
+@pytest.mark.parametrize('geometry', ['singleton', 'cartesian', 'spiral', 'rpe'])
+def test_dcf_constructor_float64(device: str, method: str, geometry: str) -> None:
+    """Constructors preserve float64 for constant, separable, coupled and mixed geometry."""
+    if geometry == 'singleton':
+        k = torch.zeros(1, 1, 1, 1, 1)
+        traj = KTrajectory(k, k, k)
+    elif geometry == 'cartesian':
+        kx = torch.arange(-4, 4).reshape(1, 1, 1, 1, 8)
+        traj = KTrajectory(torch.zeros_like(kx[..., :1]), torch.zeros_like(kx[..., :1]), kx)
+    elif geometry == 'spiral':
+        traj = example_traj_spiral_2d(40, 2, 4)
+    else:
+        traj = example_traj_rpe(6, 16, 8)
+    traj = traj.to(device=device, dtype=torch.float64)
+    dcf = (
+        DcfData.from_traj_voronoi(traj)
+        if method == 'voronoi'
+        else DcfData.from_traj_pipe(traj, SpatialDimension(32, 32, 32))
+    )
+    assert dcf.data.dtype == torch.float64
+    assert dcf.data.device == traj.kx.device
+    assert (dcf.data.isfinite() & (dcf.data > 0)).all()
+    assert torch.broadcast_shapes(dcf.data.shape, traj.shape) == traj.shape
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('dtype', [torch.float32, torch.float64])
+def test_dcf_pipe_repeated_readouts(device: str, dtype: torch.dtype) -> None:
+    """Reducing duplicate sample axes preserves their multiplicity in each geometry."""
+    from mr2.algorithms.dcf import dcf_pipe
+
+    repeated = (torch.arange(8, dtype=dtype, device=device) - 4).expand(3, 8)
+    distinct = torch.arange(24, dtype=dtype, device=device).reshape(3, 8) / 3 - 4
+    kx = torch.stack((repeated, distinct)).reshape(2, 1, 1, 3, 8)
+    zero = torch.zeros(1, 1, 1, 1, 1, dtype=dtype, device=device)
+    traj = KTrajectory(zero, zero, kx)
+    result = DcfData.from_traj_pipe(traj, SpatialDimension(1, 1, 8)).data.expand(traj.shape)
+    expected = dcf_pipe(kx, (8,)).unsqueeze(-4)
+    torch.testing.assert_close(result, expected)
+    torch.testing.assert_close(result.sum((-3, -2, -1)), torch.full((2, 1), 8.0, dtype=dtype, device=device))
+    # The same readouts arranged along a single sample axis must have the same weights.
+    flat_traj = KTrajectory(zero, zero, kx.reshape(2, 1, 1, 1, 24))
+    flat = DcfData.from_traj_pipe(flat_traj, SpatialDimension(1, 1, 8)).data
+    torch.testing.assert_close(result.reshape(flat.shape), flat)
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('method', ['voronoi', 'pipe'])
+@pytest.mark.parametrize('dense', [False, True])
+def test_dcf_connected_directions(device: str, method: str, dense: bool) -> None:
+    """A direction shared by two sample axes belongs to one coupled group."""
+    from mr2.algorithms.dcf import dcf_1d, dcf_2d3d_voronoi, dcf_pipe
+
+    kz = torch.tensor([-2.0, 0.0, 2.0], device=device).reshape(1, 1, 3, 1, 1)
+    ky = RandomGenerator(0).float32_tensor((1, 1, 1, 5, 8)).to(device)
+    kx = torch.arange(-4, 4, dtype=torch.float32, device=device).reshape(1, 1, 1, 1, 8)
+    group = torch.cat(torch.broadcast_tensors(ky[0], kx[0]), dim=0)
+    if method == 'voronoi':
+        expected = dcf_1d(kz.flatten()).reshape(kz.shape) * dcf_2d3d_voronoi(group)
+    else:
+        expected = dcf_pipe(kz[0], (6,)).unsqueeze(0) * dcf_pipe(group, (8, 8))
+    coordinates = torch.broadcast_tensors(kz, ky, kx) if dense else (kz, ky, kx)
+    traj = KTrajectory(coordinates[0], coordinates[1], coordinates[2], repeat_detection_tolerance=None)
+    result = (
+        DcfData.from_traj_voronoi(traj)
+        if method == 'voronoi'
+        else DcfData.from_traj_pipe(traj, SpatialDimension(6, 8, 8))
+    )
+    torch.testing.assert_close(result.data.expand(traj.shape), expected.expand(traj.shape))
