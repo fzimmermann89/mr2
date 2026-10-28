@@ -397,7 +397,7 @@ def hann_window(coordinate: torch.Tensor, width: float) -> torch.Tensor:
     if not math.isfinite(width) or width <= 0:
         raise ValueError('width must be finite and positive.')
     normalized = coordinate / (width / 2)
-    return torch.where(normalized.abs() < 1, (1 + torch.cos(torch.pi * normalized)) / 2, 0)
+    return torch.where(normalized.abs() < 1, (1 + torch.cos(torch.pi * normalized.clamp(-1, 1))) / 2, 0)
 
 
 def gaussian_window(coordinate: torch.Tensor, width: float) -> torch.Tensor:

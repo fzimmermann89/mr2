@@ -236,3 +236,7 @@ def test_apodization_windows() -> None:
     gradient[-1] = 0
     assert coordinate.grad is not None
     torch.testing.assert_close(coordinate.grad, gradient)
+    outside = torch.tensor([30000.0], dtype=torch.float16, requires_grad=True)
+    hann_window(outside, 2).sum().backward()
+    assert outside.grad is not None
+    torch.testing.assert_close(outside.grad, torch.zeros_like(outside))
