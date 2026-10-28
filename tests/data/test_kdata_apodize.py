@@ -2,24 +2,18 @@
 
 import pytest
 import torch
-from mr2.data import KData, KHeader, KTrajectory, SpatialDimension
+from mr2.data import KData, KTrajectory, SpatialDimension
 
 
-@pytest.fixture
-def kdata() -> KData:
-    """Cartesian acquisition with odd/even spatial axes and two coils."""
-    shape = SpatialDimension(1, 5, 6)
-    fov = SpatialDimension(0.01, 0.2, 0.3)
-    header = KHeader(shape, shape.clone(), fov, fov.clone())
+def test_apodize_copy_and_coordinates(consistently_shaped_kdata: KData) -> None:
+    """Default encoding widths, copies and weights are independent of sample order."""
+    kdata = consistently_shaped_kdata
+    kdata.header.encoding_matrix = SpatialDimension(1, 5, 6)
     ky = torch.arange(-2, 3).reshape(1, 1, 1, 5, 1).float()
     kx = torch.arange(-3, 3).reshape(1, 1, 1, 1, 6).float()
-    data = torch.randn((1, 2, 1, 5, 6), dtype=torch.complex128, generator=torch.Generator().manual_seed(1))
-    data[..., 0] = 0
-    return KData(header, data, KTrajectory(torch.zeros(1, 1, 1, 1, 1), ky, kx))
-
-
-def test_apodize_copy_and_coordinates(kdata: KData) -> None:
-    """Default encoding widths, copies and weights are independent of sample order."""
+    kdata.traj = KTrajectory(torch.zeros(1, 1, 1, 1, 1), ky, kx)
+    kdata.data = torch.randn((1, 2, 1, 5, 6), dtype=torch.complex128, generator=torch.Generator().manual_seed(1))
+    kdata.data[..., 0] = 0
     original = kdata.clone()
     result = kdata.apodize()
     expected = kdata.data * (1 + (torch.pi * kdata.traj.ky / 2.5).cos()) / 2
@@ -43,8 +37,9 @@ def test_apodize_copy_and_coordinates(kdata: KData) -> None:
 
 
 @pytest.mark.parametrize('radial', [False, True])
-def test_apodize_nonuniform_support(kdata: KData, radial: bool) -> None:
+def test_apodize_nonuniform_support(consistently_shaped_kdata: KData, radial: bool) -> None:
     """Fractional batched coordinates determine Hann support and Gaussian FWHM."""
+    kdata = consistently_shaped_kdata
     kx = torch.tensor([0, 0.5, 1, 2, 3, 4, 1.0, 1, 1, 1, 1, 1]).reshape(2, 1, 1, 1, 6)
     ky = torch.ones(1, 1, 1, 1, 1)
     kdata.traj = KTrajectory(torch.zeros_like(ky), ky, kx)
@@ -58,9 +53,10 @@ def test_apodize_nonuniform_support(kdata: KData, radial: bool) -> None:
     torch.testing.assert_close(gaussian.data.expand_as(kdata.data)[:, 0, 0, 0, 0].real, torch.tensor([0.5, 2**-1.25]))
 
 
-def test_apodize_constructor_and_invalid_width(kdata: KData) -> None:
+def test_apodize_constructor_and_invalid_width(consistently_shaped_kdata: KData) -> None:
     """Use normal constructor repeat reduction and reject nonpositive widths."""
+    kdata = consistently_shaped_kdata
     kdata.data = torch.zeros_like(kdata.data)
-    assert kdata.apodize().data.shape == (1, 1, 1, 1, 1)
+    assert kdata.apodize().data.shape == (1,) * kdata.data.ndim
     with pytest.raises(ValueError, match='width'):
         kdata.apodize(0)
