@@ -106,7 +106,7 @@ def ssim3d(
         # Set weights to 0 for windows that are not fully inside the mask.
         valid = local_mean((weight > 0).to(dtype=weight.dtype)) == 1
         weight = local_mean(weight) * valid
-        weight /= weight.sum(dim=(-3, -2, -1), keepdim=True).clamp_min(1)
+        weight /= weight.sum(dim=(-3, -2, -1), keepdim=True).clamp_min(1e-12)
 
     if data_range is None:
         if weight is None:

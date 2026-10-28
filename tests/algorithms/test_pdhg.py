@@ -3,6 +3,7 @@
 import pytest
 import torch
 from mr2.algorithms.optimizers import pdhg
+from mr2.algorithms.optimizers.pdhg import PDHGStatus
 from mr2.operators import (
     FastFourierOp,
     IdentityOp,
@@ -13,6 +14,32 @@ from mr2.operators import (
 )
 from mr2.operators.functionals import L1Norm, L1NormViewAsReal, L2NormSquared, ZeroFunctional
 from mr2.utils import RandomGenerator
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('stepsize', [None, 0.5])
+def test_pdhg_default_functionals(device: str, stepsize: float | None) -> None:
+    """PDHG evaluates batched objectives with default scalar weights on the input device."""
+    if device == 'cuda' and not torch.cuda.is_available():
+        pytest.skip('CUDA unavailable')
+    initial = torch.tensor([[-3.0, 0.0, 4.0], [1.0, 2.0, -1.0]], device=device)
+
+    def callback(status: PDHGStatus) -> None:
+        objective = status['objective'](*status['solution'])
+        assert objective.device == initial.device
+        assert torch.isfinite(objective).all()
+
+    (result,) = pdhg(
+        f=L1Norm(dim=-1),
+        g=ZeroFunctional(dim=-1),
+        operator=None,
+        initial_values=(initial,),
+        primal_stepsize=stepsize,
+        dual_stepsize=stepsize,
+        max_iterations=128,
+        callback=callback,
+    )
+    torch.testing.assert_close(result, torch.zeros_like(initial), atol=1e-5, rtol=0)
 
 
 def test_l2_l1_identification1() -> None:
