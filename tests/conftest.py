@@ -2,6 +2,7 @@
 
 import sys
 import tempfile
+import warnings
 from collections.abc import Sequence
 from typing import Any
 
@@ -38,10 +39,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Skip CUDA tests when unavailable or when GPU results are reported separately."""
     skip_cuda = config.getoption('--skip-cuda')
-    cuda_skip = pytest.mark.skipif(
-        skip_cuda or not torch.cuda.is_available(),
-        reason='CUDA results are reported separately' if skip_cuda else 'CUDA unavailable',
-    )
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', message='CUDA initialization:', category=UserWarning)
+        cuda_skip = pytest.mark.skipif(
+            skip_cuda or not torch.cuda.is_available(),
+            reason='CUDA results are reported separately' if skip_cuda else 'CUDA unavailable',
+        )
     for item in items:
         if item.get_closest_marker('cuda'):
             item.add_marker(cuda_skip, append=False)
