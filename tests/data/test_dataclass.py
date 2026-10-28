@@ -1,9 +1,11 @@
 """Tests the base Dataclass."""
 
+import io
 from dataclasses import field
 from pathlib import Path
 
 import einops
+import h5py
 import pytest
 import torch
 from mr2.data import Dataclass, IData, KData, Rotation, SpatialDimension
@@ -728,7 +730,7 @@ def test_dataclass_save_as_mr2_roundtrip(tmp_path: Path) -> None:
     filepath = tmp_path / 'dataclass_a.mr2'
 
     dataclass.save_as_mr2(filepath)
-    reloaded = A.from_mr2(filepath)
+    reloaded = A.from_file(filepath)
 
     torch.testing.assert_close(reloaded.floattensor, dataclass.floattensor)
     torch.testing.assert_close(reloaded.floattensor2, dataclass.floattensor2)
@@ -743,7 +745,7 @@ def test_kdata_save_as_mr2_roundtrip(consistently_shaped_kdata: KData, tmp_path:
     filepath = tmp_path / 'kdata.mr2'
 
     consistently_shaped_kdata.save_as_mr2(filepath)
-    reloaded = KData.from_mr2(filepath)
+    reloaded = KData.from_file(filepath)
 
     torch.testing.assert_close(reloaded.data, consistently_shaped_kdata.data)
     torch.testing.assert_close(reloaded.traj.as_tensor(), consistently_shaped_kdata.traj.as_tensor())
@@ -766,13 +768,17 @@ def test_kdata_save_as_mr2_roundtrip(consistently_shaped_kdata: KData, tmp_path:
     assert reloaded.header.encoding_fov == consistently_shaped_kdata.header.encoding_fov
 
 
-def test_idata_save_as_mr2_roundtrip(random_kheader, random_test_data, tmp_path: Path) -> None:
+@pytest.mark.parametrize('use_buffer', [False, True])
+def test_idata_save_as_mr2_roundtrip(random_kheader, random_test_data, tmp_path: Path, use_buffer) -> None:
     """Test MR2 roundtrip for IData."""
     idata = IData.from_tensor_and_kheader(data=random_test_data, header=random_kheader)
     filepath = tmp_path / 'idata.mr2'
 
     idata.save_as_mr2(filepath)
-    reloaded = IData.from_mr2(filepath)
+    source = io.BytesIO(filepath.read_bytes()) if use_buffer else filepath
+    reloaded = IData.from_file(source)
+    if isinstance(source, io.BytesIO):
+        assert not source.closed
 
     torch.testing.assert_close(reloaded.data, idata.data)
     torch.testing.assert_close(reloaded.header.position.z, idata.header.position.z)
@@ -789,4 +795,23 @@ def test_dataclass_from_mr2_wrong_type_raises(tmp_path: Path) -> None:
     dataclass.save_as_mr2(filepath)
 
     with pytest.raises(ValueError, match='does not match requested type'):
-        B.from_mr2(filepath)
+        B.from_file(filepath)
+
+
+@pytest.mark.parametrize(('module_name', 'class_name'), [('os', 'system'), ('mr2.utils', 'RandomGenerator')])
+@pytest.mark.parametrize('stored_type', ['group', 'enum'])
+def test_mr2_rejects_arbitrary_callables(tmp_path, module_name, class_name, stored_type):
+    """File metadata cannot select arbitrary callables for nested values."""
+    filename = tmp_path / 'invalid.mr2'
+    A().save_as_mr2(filename)
+    with h5py.File(filename, 'a') as file:
+        del file['rotation']
+        if stored_type == 'group':
+            item = file.create_group('rotation')
+        else:
+            item = file.create_dataset('rotation', data='unused')
+            item.attrs['py_type'] = 'enum'
+        item.attrs['py_module'] = module_name
+        item.attrs['class_name'] = class_name
+    with pytest.raises(ValueError, match='Unsupported MR2'):
+        A.from_file(filename)

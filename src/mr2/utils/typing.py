@@ -219,7 +219,7 @@ if TYPE_CHECKING:
         return f
 
     class ReadSeekable(Protocol):
-        def read(self, size: int | None = -1) -> bytes:
+        def read(self, size: int = -1) -> bytes:
             """Read up to size bytes. Returns fewer if EOF is reached."""
             ...
 

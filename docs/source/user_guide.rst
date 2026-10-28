@@ -50,6 +50,11 @@ from MRD or calculated from a `pulseq <http://pulseq.github.io/>`_ file. See `~m
 for available trajectory calculators and :doc:`_notebooks/comparison_trajectory_calculators` for an example.
 
 
+Use `~mr2.data.KData.from_file` for MR2 storage and ISMRMRD files. MR2 files include their trajectory.
+Reconstruction servers can pass an XML header and received acquisitions to
+`~mr2.data.KData.from_ismrmrd` without writing an intermediate file.
+
+
 .. note::
     In MRtwo, we use the convention ``(z, y, x)`` for spatial dimensions and ``(k2, k1, k0)`` for k-space dimensions.
     Here, `k0` is the readout direction, `k1` and `k2` are phase encoding directions.

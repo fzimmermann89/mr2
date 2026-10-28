@@ -155,12 +155,10 @@ class KHeader(Dataclass):
 
         # These are guaranteed to exist
         parameters = {
+            **(defaults or {}),
             'lamor_frequency_proton': header.experimentalConditions.H1resonanceFrequency_Hz,
             'acq_info': acq_info,
         }
-
-        if defaults is not None:
-            parameters.update(defaults)
 
         if header.sequenceParameters is not None:
             if header.sequenceParameters.TR:

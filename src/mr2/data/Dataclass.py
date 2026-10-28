@@ -26,7 +26,7 @@ from mr2.utils.reshape import (
     normalize_indices,
 )
 from mr2.utils.summarize import summarize_object
-from mr2.utils.typing import TorchIndexerType
+from mr2.utils.typing import FileOrPath, TorchIndexerType
 
 _MR2_ATTR_PY_TYPE = 'py_type'
 _MR2_ATTR_PY_MODULE = 'py_module'
@@ -806,8 +806,10 @@ class Dataclass:
                         f"Field '{field_name}': Unsupported type {type(value).__name__} for MR2 serialization."
                     )
 
-    @staticmethod
-    def _mr2_load_from_group(group: h5py.Group) -> Any:  # noqa: ANN401
+    @classmethod
+    def _mr2_load_from_group(cls, group: h5py.Group) -> Any:  # noqa: ANN401
+        from mr2.data.Rotation import Rotation
+
         init_args: dict[str, Any] = {}
 
         module_name = group.attrs.get(_MR2_ATTR_PY_MODULE, None)
@@ -815,16 +817,20 @@ class Dataclass:
 
         if not isinstance(module_name, str) or not isinstance(class_name, str):
             raise ValueError('Missing module or class name in HDF5 group')
+        if not (module_name.startswith('mr2.') or module_name == cls.__module__):
+            raise ValueError(f"Unsupported MR2 module '{module_name}'")
 
         try:
             module = importlib.import_module(module_name)
             target_cls = getattr(module, class_name)
         except (ImportError, AttributeError) as e:
             raise ImportError(f"Could not import class '{class_name}' from module '{module_name}'. Error: {e}") from e
+        if not isinstance(target_cls, type) or not issubclass(target_cls, (Dataclass, Rotation)):
+            raise ValueError(f"Unsupported MR2 class '{class_name}'")
 
         for field_name, h5_item in group.items():
             if isinstance(h5_item, h5py.Group):
-                init_args[field_name] = Dataclass._mr2_load_from_group(h5_item)
+                init_args[field_name] = cls._mr2_load_from_group(h5_item)
 
             elif isinstance(h5_item, h5py.Dataset):
                 py_type_str = h5_item.attrs.get(_MR2_ATTR_PY_TYPE, None)
@@ -849,16 +855,20 @@ class Dataclass:
                         enum_class_name = h5_item.attrs.get(_MR2_ATTR_CLASS_NAME, None)
                         if not isinstance(enum_module_name, str) or not isinstance(enum_class_name, str):
                             raise ValueError('Missing module or class name for enum')
+                        if not (enum_module_name.startswith('mr2.') or enum_module_name == cls.__module__):
+                            raise ValueError(f"Unsupported MR2 enum module '{enum_module_name}'")
                         try:
                             enum_module = importlib.import_module(enum_module_name)
                             enum_cls = getattr(enum_module, enum_class_name)
-                            init_args[field_name] = enum_cls(data.decode() if isinstance(data, bytes) else data)
-                        except Exception as e:
+                        except (ImportError, AttributeError) as e:
                             raise RuntimeError(
                                 f"Could not load enum '{enum_class_name}' from '{enum_module_name}'. Error: {e}"
                             ) from e
+                        if not isinstance(enum_cls, type) or not issubclass(enum_cls, enum.Enum):
+                            raise ValueError(f"Unsupported MR2 enum class '{enum_class_name}'")
+                        init_args[field_name] = enum_cls(data.decode() if isinstance(data, bytes) else data)
                     case 'str':
-                        init_args[field_name] = str(data)
+                        init_args[field_name] = h5_item.asstr()[()]
                     case 'bool':
                         init_args[field_name] = bool(data)
                     case 'int':
@@ -891,18 +901,25 @@ class Dataclass:
             self._mr2_save_to_group(f)
 
     @classmethod
-    def from_mr2(cls, filepath: str | Path) -> Self:
+    def from_file(cls, filename: FileOrPath) -> Self:
         """Load a dataclass from an MR2 file.
 
         Parameters
         ----------
-        filepath
-            The path to the MR2 file.
+        filename
+            Path or seekable binary file containing MR2 data.
         """
-        filepath = Path(filepath)
-        if not filepath.exists():
-            raise FileNotFoundError(f'HDF5 file not found: {filepath}')
+        return cls._from_mr2(filename)
 
+    @staticmethod
+    def _is_mr2_file(filename: FileOrPath) -> bool:
+        """Identify MR2 storage in an HDF5 file."""
+        with h5py.File(filename, 'r') as file:
+            return _MR2_ATTR_CLASS_NAME in file.attrs and _MR2_ATTR_PY_MODULE in file.attrs
+
+    @classmethod
+    def _from_mr2(cls, filepath: FileOrPath) -> Self:
+        """Restore an MR2 dataclass, checking its stored type and version."""
         with h5py.File(filepath, 'r') as f:
             if (version := f.attrs.get('version', None)) != _MR2_VERSION:
                 warn(f'Unsupported MR2 version {version}. Only version {_MR2_VERSION} is supported.', stacklevel=2)

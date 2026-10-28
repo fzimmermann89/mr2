@@ -4,8 +4,11 @@ import datetime
 import re
 import warnings
 from collections.abc import Iterable
+from os import PathLike
 from pathlib import Path
+from typing import cast
 
+import h5py
 import nibabel
 import numpy as np
 import pydicom
@@ -22,6 +25,7 @@ from mr2.data.KHeader import KHeader
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.utils.reshape import unsqueeze_right
 from mr2.utils.summarize import summarize_values
+from mr2.utils.typing import FileOrPath
 from mr2.utils.unit_conversion import m_to_mm, rad_to_deg, s_to_ms
 
 
@@ -103,7 +107,30 @@ class IData(Dataclass):
         return cls(header=iheader, data=data)
 
     @classmethod
-    def from_dicom_files(cls, filenames: Iterable[str | Path] | str | Path) -> Self:
+    def from_file(cls, filename: FileOrPath | Iterable[str | Path], *, suffix: str | None = 'dcm') -> Self:
+        """Load image data from MR2 storage, DICOM files or a DICOM folder.
+
+        Parameters
+        ----------
+        filename
+            Path to an MR2 or DICOM file, a DICOM folder, or an iterable of DICOM paths.
+            Seekable binary inputs must contain MR2 data.
+        suffix
+            File extension to select in DICOM folders. None includes all files.
+        """
+        if isinstance(filename, (str, PathLike)):
+            filename = Path(filename)
+            if filename.is_dir():
+                return cls._from_dicom_folder(filename, suffix)
+            if h5py.is_hdf5(filename):
+                return super().from_file(filename)
+            return cls._from_dicom_files(filename)
+        if hasattr(filename, 'read'):
+            return super().from_file(cast(FileOrPath, filename))
+        return cls._from_dicom_files(cast(Iterable[str | Path], filename))
+
+    @classmethod
+    def _from_dicom_files(cls, filenames: Iterable[str | Path] | str | Path) -> Self:
         """Read multiple DICOM files and return IData object.
 
         DICOM images can be saved as single-frame or multi-frame images [DCMMF]_.
@@ -160,7 +187,7 @@ class IData(Dataclass):
         return cls(data=data, header=header)
 
     @classmethod
-    def from_dicom_folder(cls, foldername: str | Path, suffix: str | None = 'dcm') -> Self:
+    def _from_dicom_folder(cls, foldername: str | Path, suffix: str | None = 'dcm') -> Self:
         """Read all DICOM files from a folder and return IData object.
 
         Parameters
@@ -176,7 +203,7 @@ class IData(Dataclass):
             raise ValueError(f'No dicom files with suffix {suffix} found in {foldername}')
 
         # Pass on sorted file list as order of dicom files is often the same as the required order
-        return cls.from_dicom_files(filenames=sorted(file_paths))
+        return cls._from_dicom_files(filenames=sorted(file_paths))
 
     def to_nifti(self, filename: str | Path, magnitude_only: bool = False) -> None:
         """Save image data as NIFTI file.
