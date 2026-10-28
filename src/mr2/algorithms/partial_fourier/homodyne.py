@@ -11,7 +11,7 @@ from mr2.algorithms.partial_fourier._shared import (
 )
 
 
-def homodyne_partial_fourier(
+def homodyne(
     kspace: torch.Tensor,
     acquired_mask: torch.Tensor,
     dim: Sequence[int],
@@ -23,7 +23,7 @@ def homodyne_partial_fourier(
 
     Returns :math:`\operatorname{Re}(\overline{p} F^H(w k))`, where :math:`p`
     is the unit phase estimated from the same tapered symmetric center as
-    `~mr2.algorithms.pocs_partial_fourier`. With ``restore_phase=True``, multiply
+    `~mr2.algorithms.partial_fourier.pocs`. With ``restore_phase=True``, multiply
     this signed real image by :math:`p`. For partial sampling, neither output takes a magnitude.
 
     Parameters

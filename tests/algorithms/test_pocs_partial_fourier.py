@@ -2,7 +2,7 @@
 
 import pytest
 import torch
-from mr2.algorithms import pocs_partial_fourier
+from mr2.algorithms.partial_fourier import pocs
 from mr2.algorithms.partial_fourier._shared import _partial_fourier_center, _partial_fourier_phase
 from mr2.operators import FastFourierOp
 
@@ -21,7 +21,7 @@ def test_pocs_recovery(size: int, side: str, axis: int) -> None:
     mask = support[:, None] if axis == 0 else support[None, :]
     measured = torch.where(mask, kspace, 0)
 
-    completed = pocs_partial_fourier(measured, mask, (0, -1), axis, n_iterations=20)
+    completed = pocs(measured, mask, (0, -1), axis, n_iterations=20)
     (recovered,) = fft.H(completed)
     (zero_fill,) = fft.H(measured)
 
@@ -39,7 +39,7 @@ def test_pocs_preserves_measurements() -> None:
     original = kspace.clone()
     kspace[..., :4, :] = torch.tensor(complex(float('nan'), 0))
     for iterations in (0, 1, 4):
-        completed = pocs_partial_fourier(kspace, mask, (-2, -1), -2, iterations)
+        completed = pocs(kspace, mask, (-2, -1), -2, iterations)
         assert torch.equal(completed[..., mask], original[..., mask])
         assert completed.isfinite().all()
         assert completed.device == kspace.device
@@ -52,7 +52,7 @@ def test_pocs_preserves_measurements() -> None:
 def test_pocs_full_sampling() -> None:
     """Full sampling preserves arbitrary complex data exactly, even for singleton axes."""
     kspace = torch.tensor([[-1 + 2j, 0, 3j]], dtype=torch.complex128)
-    completed = pocs_partial_fourier(kspace, torch.tensor(True), (0, 1), 0)
+    completed = pocs(kspace, torch.tensor(True), (0, 1), 0)
     assert torch.equal(completed, kspace)
 
 
@@ -90,7 +90,7 @@ def test_fixed_phase_signed_projection() -> None:
     demodulated = (phase.conj() * image).real
     assert (demodulated < 0).any()
     (expected,) = fft(phase * demodulated)
-    completed = pocs_partial_fourier(kspace, mask, (0,), 0, 1)
+    completed = pocs(kspace, mask, (0,), 0, 1)
     torch.testing.assert_close(completed, torch.where(mask, kspace, expected))
 
 
@@ -114,7 +114,7 @@ def test_pocs_unsupported_inputs(
     acquired = torch.tensor(mask)
     kspace = torch.ones(acquired.shape, dtype=torch.complex64)
     with pytest.raises(error):
-        pocs_partial_fourier(kspace, acquired, dim, axis)
+        pocs(kspace, acquired, dim, axis)
 
 
 @pytest.mark.cuda
@@ -122,10 +122,10 @@ def test_pocs_cuda() -> None:
     """CUDA completion matches CPU and preserves acquired zeros and outer samples exactly."""
     kspace = torch.tensor([0, 0, 1 + 4j, 0, 2 - 1j, -4j, 2, -3j], dtype=torch.complex64)
     mask = torch.arange(8) >= 2
-    expected = pocs_partial_fourier(kspace, mask, (0,), 0)
+    expected = pocs(kspace, mask, (0,), 0)
     data = kspace.cuda()
     acquired = mask.cuda()
-    actual = pocs_partial_fourier(data, acquired, (0,), 0)
+    actual = pocs(data, acquired, (0,), 0)
     torch.testing.assert_close(actual.cpu(), expected)
     assert torch.equal(actual[acquired], data[acquired])
     assert actual.device == data.device

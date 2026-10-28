@@ -11,7 +11,7 @@ from mr2.algorithms.partial_fourier._shared import (
 )
 
 
-def pocs_partial_fourier(
+def pocs(
     kspace: torch.Tensor,
     acquired_mask: torch.Tensor,
     dim: Sequence[int],

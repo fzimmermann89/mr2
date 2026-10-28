@@ -2,7 +2,7 @@
 
 import pytest
 import torch
-from mr2.algorithms import homodyne_partial_fourier
+from mr2.algorithms.partial_fourier import homodyne
 from mr2.operators import FastFourierOp
 
 
@@ -19,8 +19,8 @@ def test_homodyne_ramp(size: int, side: str) -> None:
     (kspace,) = fft(image)
     mask = torch.arange(size) >= 4 if side == 'high' else torch.arange(size) < size - 4
     measured = torch.where(mask, kspace, torch.nan)
-    corrected = homodyne_partial_fourier(measured, mask, (0,), -1)
-    restored = homodyne_partial_fourier(measured, mask, (0,), 0, restore_phase=True)
+    corrected = homodyne(measured, mask, (0,), -1)
+    restored = homodyne(measured, mask, (0,), 0, restore_phase=True)
     torch.testing.assert_close(corrected, amplitude)
     torch.testing.assert_close(restored, image)
     assert corrected.min() < 0
@@ -40,7 +40,7 @@ def test_homodyne_smooth_phase(size: int, axis: int, side: str) -> None:
     support = torch.arange(size) >= size // 4 if side == 'high' else torch.arange(size) < size - size // 4
     mask = support[:, None] if axis == 0 else support[None, :]
     measured = torch.where(mask, kspace, 0)
-    restored = homodyne_partial_fourier(measured, mask, (0, -1), axis, restore_phase=True)
+    restored = homodyne(measured, mask, (0, -1), axis, restore_phase=True)
     (zero_fill,) = fft.H(measured)
     assert torch.linalg.vector_norm(restored - image) < 0.7 * torch.linalg.vector_norm(zero_fill - image)
     assert restored.dtype == image.dtype
@@ -52,11 +52,11 @@ def test_homodyne_full_and_batched() -> None:
     fft = FastFourierOp((-1,))
     (image,) = fft.H(kspace)
     full = torch.tensor(True)
-    torch.testing.assert_close(homodyne_partial_fourier(kspace, full, (-1,), -1), image.abs())
-    torch.testing.assert_close(homodyne_partial_fourier(kspace, full, (-1,), -1, restore_phase=True), image)
+    torch.testing.assert_close(homodyne(kspace, full, (-1,), -1), image.abs())
+    torch.testing.assert_close(homodyne(kspace, full, (-1,), -1, restore_phase=True), image)
     mask = torch.arange(16) >= 4
-    batched = homodyne_partial_fourier(kspace, mask, (-1,), -1)
-    single = homodyne_partial_fourier(kspace[0, 0], mask, (0,), 0)
+    batched = homodyne(kspace, mask, (-1,), -1)
+    single = homodyne(kspace[0, 0], mask, (0,), 0)
     torch.testing.assert_close(batched, single.expand_as(batched))
     assert batched.device == kspace.device
     assert batched.dtype == kspace.real.dtype
@@ -73,7 +73,7 @@ def test_homodyne_linear_transition() -> None:
     weight = kspace.real.new_tensor([1, 0, 0, 0.5, 1, 1.5, 2, 2])
     (weighted,) = fft.H(kspace * weight)
     expected = (phase.conj() * weighted).real
-    torch.testing.assert_close(homodyne_partial_fourier(kspace, mask, (0,), 0), expected)
+    torch.testing.assert_close(homodyne(kspace, mask, (0,), 0), expected)
 
 
 @pytest.mark.cuda
@@ -84,8 +84,8 @@ def test_homodyne_cuda() -> None:
     data = kspace.cuda()
     acquired = mask.cuda()
     for restore_phase in (False, True):
-        expected = homodyne_partial_fourier(kspace, mask, (0,), 0, restore_phase=restore_phase)
-        actual = homodyne_partial_fourier(data, acquired, (0,), 0, restore_phase=restore_phase)
+        expected = homodyne(kspace, mask, (0,), 0, restore_phase=restore_phase)
+        actual = homodyne(data, acquired, (0,), 0, restore_phase=restore_phase)
         torch.testing.assert_close(actual.cpu(), expected)
         assert actual.device == data.device
         assert actual.dtype == expected.dtype
