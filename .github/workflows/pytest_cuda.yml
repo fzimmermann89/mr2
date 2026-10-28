@@ -11,6 +11,34 @@ permissions:
   contents: read
 
 jobs:
+  queue_timeout:
+    name: Limit CUDA queue wait
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel CUDA if it does not start within five minutes
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const run_id = context.runId;
+            const deadline = Date.now() + 5 * 60 * 1000;
+            while (true) {
+              const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+                ...context.repo, run_id, per_page: 100,
+              });
+              const cuda = jobs.find(job => job.name === 'Test CUDA (Python 3.12)');
+              if (cuda && ['in_progress', 'completed'].includes(cuda.status)) return;
+              if (Date.now() >= deadline) {
+                core.notice('CUDA did not start within five minutes; cancelling this run.');
+                await github.rest.actions.cancelWorkflowRun({ ...context.repo, run_id });
+                return;
+              }
+              await new Promise(resolve => setTimeout(resolve, 15000));
+            }
+
   test:
     name: Test CUDA (Python 3.12)
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
