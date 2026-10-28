@@ -5,6 +5,7 @@ import datetime
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from importlib.metadata import version
+from math import prod
 from types import EllipsisType
 from typing import TYPE_CHECKING, Literal, cast
 from xml.etree import ElementTree as ET
@@ -656,18 +657,21 @@ class KData(Dataclass):
             coordinate.to(device=self.data.device, dtype=self.data.real.dtype)
             for coordinate in (self.traj.kz, self.traj.ky, self.traj.kx)
         )
-        if window == 'hann' and radial:
-            weight = radial_hann_window(coordinates, widths)
-        else:
-            if window == 'hann':
-                window_function = hann_window
-            elif window == 'gaussian':
-                window_function = gaussian_window
-            else:
+        match window, radial:
+            case 'hann', True:
+                weight = radial_hann_window(coordinates, widths)
+            case 'hann', False:
+                weight = prod(
+                    (hann_window(k, w) for k, w in zip(coordinates, widths, strict=True)),
+                    start=self.data.real.new_ones(()),
+                )
+            case 'gaussian', _:
+                weight = prod(
+                    (gaussian_window(k, w) for k, w in zip(coordinates, widths, strict=True)),
+                    start=self.data.real.new_ones(()),
+                )
+            case _:
                 raise ValueError("window must be 'hann' or 'gaussian'.")
-            weight = self.data.real.new_ones(())
-            for coordinate, axis_width in zip(coordinates, widths, strict=True):
-                weight = weight * window_function(coordinate, axis_width)
         return type(self)(self.header.clone(), self.data * weight, self.traj.clone())
 
     def remove_readout_os(self: Self) -> Self:
