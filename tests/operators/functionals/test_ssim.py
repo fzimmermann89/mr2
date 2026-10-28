@@ -12,8 +12,6 @@ from mr2.utils import RandomGenerator
 @pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
 def test_ssim_weight_scale(soft_weight: bool, device: str) -> None:
     """Scaling mask or soft weights must not change SSIM."""
-    if device == 'cuda' and not torch.cuda.is_available():
-        pytest.skip('CUDA unavailable')
     rng = RandomGenerator(0)
     target = rng.float32_tensor((2, 1, 10, 10)).to(device)
     prediction = 0.8 * target + 0.2 * rng.rand_like(target)

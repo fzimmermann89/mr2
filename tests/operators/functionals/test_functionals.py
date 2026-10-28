@@ -19,7 +19,6 @@ from tests.operators.functionals.conftest import (
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 @pytest.mark.parametrize('functional', FUNCTIONALS)
 @pytest.mark.parametrize('dtype', [torch.float32, torch.complex64])
 def test_functional_cuda_defaults(functional: type[ElementaryFunctional], dtype: torch.dtype) -> None:
@@ -35,7 +34,6 @@ def test_functional_cuda_defaults(functional: type[ElementaryFunctional], dtype:
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_l1_cuda_tensor_weight_requires_move() -> None:
     """L1 conjugate prox requires tensor weight arrays on the input device."""
     x = torch.tensor([-2.0, 0.5, 3.0])

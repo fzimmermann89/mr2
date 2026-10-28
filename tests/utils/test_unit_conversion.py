@@ -84,16 +84,7 @@ def test_unit_conversion(
 
 @CONVERSIONS
 @pytest.mark.parametrize('dtype', [torch.float32, torch.float64])
-@pytest.mark.parametrize(
-    'device',
-    [
-        'cpu',
-        pytest.param(
-            'cuda',
-            marks=[pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')],
-        ),
-    ],
-)
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
 def test_unit_conversion_tensor(
     function: Callable[[torch.Tensor], torch.Tensor],
     reference: Callable[[torch.Tensor], torch.Tensor],
