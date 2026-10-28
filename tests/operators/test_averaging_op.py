@@ -51,7 +51,16 @@ def test_averageingop_no_domain_size() -> None:
 @pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
 @pytest.mark.parametrize(
     'group',
-    [[0, 0, 1], (0, 0, 1), [0, -2], torch.tensor([0, -2]), [], slice(0, 0), torch.tensor([False, False])],
+    [
+        [0, 0, 1],
+        (0, 0, 1),
+        [0, -2],
+        torch.tensor([0, -2]),
+        [],
+        slice(0, 0),
+        torch.tensor([False, False]),
+        torch.zeros(2, dtype=torch.uint8),
+    ],
 )
 def test_averaging_adjoint_invalid_groups(
     group: list[int] | tuple[int, ...] | slice | torch.Tensor, device: str
@@ -75,3 +84,14 @@ def test_averaging_adjoint_sequence_group(
     x = torch.tensor([2.0, 3.0, 4.0], device=device)
     y = torch.tensor([3.0], device=device)
     dotproduct_adjointness_test(op, x, y)
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('mask', [[1, 1, 1], [2, 0, 3]])
+def test_averaging_adjoint_byte_mask(mask: list[int], device: str) -> None:
+    """Legacy byte masks select nonzero entries rather than integer indices."""
+    op = AveragingOp(-1, [torch.tensor(mask, dtype=torch.uint8, device=device)], domain_size=3)
+    x = torch.tensor([2.0, 3.0, 4.0], device=device)
+    y = torch.tensor([3.0], device=device)
+    with pytest.warns(UserWarning, match='indexing with dtype torch.uint8'):
+        dotproduct_adjointness_test(op, x, y)

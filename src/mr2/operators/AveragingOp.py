@@ -113,8 +113,8 @@ class AveragingOp(LinearOperator):
                 n = len(range(*group.indices(self.domain_size)))
             else:
                 indices = torch.as_tensor(group)
-                if indices.dtype == torch.bool:
-                    n = int(indices.sum())
+                if indices.dtype in (torch.bool, torch.uint8):
+                    n = int(indices.count_nonzero())
                 else:
                     n = indices.numel()
                     indices = torch.where(indices < 0, indices + self.domain_size, indices)
