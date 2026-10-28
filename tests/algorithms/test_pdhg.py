@@ -20,6 +20,8 @@ from mr2.utils import RandomGenerator
 @pytest.mark.parametrize('stepsize', [None, 0.5])
 def test_pdhg_default_functionals(device: str, stepsize: float | None) -> None:
     """PDHG evaluates batched objectives with default scalar weights on the input device."""
+    if device == 'cuda' and not torch.cuda.is_available():
+        pytest.skip('CUDA unavailable')
     initial = torch.tensor([[-3.0, 0.0, 4.0], [1.0, 2.0, -1.0]], device=device)
 
     def callback(status: PDHGStatus) -> None:
