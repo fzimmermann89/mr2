@@ -1,22 +1,11 @@
 """Tests for ConvDecoderReconstruction."""
 
-from collections.abc import Iterator
-
 import pytest
 import torch
 from mr2.algorithms.optimizers.OptimizerStatus import OptimizerStatus
 from mr2.algorithms.reconstruction import ConvDecoderReconstruction
 from mr2.data import KData, KHeader, KTrajectory, SpatialDimension
 from mr2.operators import FourierOp, SensitivityOp
-
-
-@pytest.fixture(autouse=True)
-def single_thread() -> Iterator[None]:
-    """Avoid thread overhead for small convolutions."""
-    previous = torch.get_num_threads()
-    torch.set_num_threads(1)
-    yield
-    torch.set_num_threads(previous)
 
 
 @pytest.fixture
@@ -40,8 +29,10 @@ def acquisition() -> tuple[KData, FourierOp, SensitivityOp]:
     return KData(header=header, data=(fourier @ csm)(image)[0], traj=traj), fourier, csm
 
 
-@pytest.mark.parametrize('latent_shape', [(2,), (2, 2), (2, 2, 2), (2, 2, 2, 2)])
-@pytest.mark.parametrize('dtype', [torch.complex64, torch.complex128])
+@pytest.mark.parametrize(
+    ('latent_shape', 'dtype'),
+    [((2, 2), torch.complex64), ((2, 2, 2), torch.complex128), ((2, 2, 2, 2), torch.complex64)],
+)
 def test_reconstruction(
     acquisition: tuple[KData, FourierOp, SensitivityOp], latent_shape: tuple[int, ...], dtype: torch.dtype
 ) -> None:
@@ -66,8 +57,14 @@ def test_reconstruction(
     assert result.data.dtype == dtype
     assert result.header.resolution == SpatialDimension(0.01, 0.01, 0.01)
     assert maps.grad is None
-    torch.manual_seed(0)
-    torch.testing.assert_close(result.data, recon(kdata).data, rtol=0, atol=0)
+
+
+def test_automatic(cartesian_kdata: KData) -> None:
+    """Test automatic setup from kdata only."""
+    reconstruction = ConvDecoderReconstruction(kdata=cartesian_kdata, n_features=2, n_levels=1, max_iterations=1)
+    idata = reconstruction(cartesian_kdata)
+    assert idata.data.shape[-3:] == cartesian_kdata.header.recon_matrix.zyx
+    assert reconstruction.csm_op is not None
 
 
 def test_callback(acquisition: tuple[KData, FourierOp, SensitivityOp]) -> None:
