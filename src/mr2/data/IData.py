@@ -190,14 +190,16 @@ class IData(Dataclass):
             otherwise the complex image data is saved as a NIFTI2 file.
             Many software packages do not support complex data.
         """
-        # Build the voxel-to-LPS transform in xyz order and millimeters.
-        orientation = self.header.orientation.mean().as_matrix().flip([0, 1]).numpy()
-        resolution = np.array(self.header.resolution.apply(m_to_mm).zyx[::-1])
-        position = m_to_mm(torch.stack([p.mean() for p in self.header.position.zyx[::-1]])).numpy()
+        orientation = self.header.orientation.mean()
+        resolution = self.header.resolution.apply(m_to_mm)
         nz, ny, nx = self.data.shape[-3:]
-        center = [nx / 2, ny / 2, nz / 2 if nz > 1 else 0]  # A single slice is already at its center.
-        voxel_basis = orientation * resolution
-        affine = nibabel.affines.from_matvec(voxel_basis, position - voxel_basis @ center)
+        center = SpatialDimension(z=nz / 2 if nz > 1 else 0, y=ny / 2, x=nx / 2)
+        position = self.header.position.apply(torch.mean).apply(m_to_mm) - orientation(resolution * center)
+        # Convert mr2's zyx LPS coordinates to NIfTI's xyz RAS coordinates.
+        affine = nibabel.affines.from_matvec(
+            orientation.as_matrix().flip([0, 1]).numpy() * resolution.zyx[::-1],
+            torch.stack(position.zyx[::-1]).numpy(),
+        )
         affine[:2] *= -1  # LPS to RAS
         data = rearrange(self.data, '... other coils z y x-> x y z 1 other (...) coils')
         if magnitude_only:
