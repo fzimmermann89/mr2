@@ -88,12 +88,15 @@ def test_KData_from_file(ismrmrd_cart) -> None:
     assert kdata is not None
 
 
-def test_KData_from_file_discards(ismrmrd_cart) -> None:
-    """Stored and calculated trajectories agree after discarding padded samples."""
+def test_KData_from_file_discards(ismrmrd_cart, ismrmrd_cart_single_rep) -> None:
+    """Discarding padding preserves the data and aligns stored and calculated trajectories."""
     calculated = KData.from_file(ismrmrd_cart.filename, KTrajectoryCartesian())
     stored = KData.from_file(ismrmrd_cart.filename, KTrajectoryIsmrmrd())
+    reference = KData.from_file(ismrmrd_cart_single_rep.filename, KTrajectoryCartesian())
     n_k0 = ismrmrd_cart.matrix_size * ismrmrd_cart.oversampling
 
+    expected_data = reference.data.expand_as(calculated.data[:1])
+    torch.testing.assert_close(calculated.data[:1], expected_data, atol=10 * ismrmrd_cart.noise_level, rtol=0)
     torch.testing.assert_close(calculated.traj.kx.squeeze(), torch.arange(n_k0, dtype=torch.float32) - n_k0 // 2)
     torch.testing.assert_close(stored.traj.as_tensor(), calculated.traj.as_tensor())
 
