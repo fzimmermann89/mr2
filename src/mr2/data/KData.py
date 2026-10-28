@@ -769,10 +769,7 @@ class KData(Dataclass):
             shape[d] = size
             setattr(header.acq_info.idx, label, torch.arange(size, device=data.device).reshape(shape))
         trajectory = KTrajectory(coordinates[0], coordinates[1], coordinates[2])
-        result = type(self)(header, completed, trajectory)
-        # Keep measured values exact rather than reducing nearly repeated data axes.
-        result.data = completed
-        return result
+        return type(self)(header, completed, trajectory)
 
     def select_other_subset(
         self: Self,
