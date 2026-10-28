@@ -659,6 +659,11 @@ def test_KData_prewhiten() -> None:
 def test_KData_to_file(ismrmrd_cart, tmp_path_factory):
     """Read in data to file."""
     kdata = KData.from_file(ismrmrd_cart.filename, DummyTrajectory())
+    kdata.header.acq_info.patient_table_position = SpatialDimension(
+        z=torch.full_like(kdata.header.acq_info.position.z, 0.1),
+        y=torch.full_like(kdata.header.acq_info.position.y, -0.02),
+        x=torch.full_like(kdata.header.acq_info.position.x, 0.003),
+    )
     # We need to make sure that the trajectory fits to the data
     random_generator = RandomGenerator(seed=0)
     traj = random_generator.float32_tensor(size=(3, kdata.data.shape[0], 1, *kdata.data.shape[2:]))
@@ -676,6 +681,9 @@ def test_KData_to_file(ismrmrd_cart, tmp_path_factory):
     torch.testing.assert_close(kdata.header.acq_info.position.z, kdata_reload.header.acq_info.position.z)
     torch.testing.assert_close(kdata.header.acq_info.position.y, kdata_reload.header.acq_info.position.y)
     torch.testing.assert_close(kdata.header.acq_info.position.x, kdata_reload.header.acq_info.position.x)
+    torch.testing.assert_close(
+        kdata.header.acq_info.patient_table_position.zyx, kdata_reload.header.acq_info.patient_table_position.zyx
+    )
     torch.testing.assert_close(
         kdata.header.acq_info.acquisition_time_stamp, kdata_reload.header.acq_info.acquisition_time_stamp
     )
