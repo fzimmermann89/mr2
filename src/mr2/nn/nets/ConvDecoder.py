@@ -8,7 +8,6 @@ import torch
 from torch import nn
 from torchnd import ConvNd
 
-from mr2.nn.ndmodules import instanceNormND
 from mr2.nn.Sequential import Sequential
 from mr2.utils.interpolate import interpolate
 
@@ -73,9 +72,7 @@ class ConvDecoder(nn.Module):
             Sequential(
                 convolution(n_channels_in if level == 0 else n_features, n_features, 3, padding=1),
                 nn.ReLU(),
-                instanceNormND(n_dim)(n_features, affine=True, track_running_stats=False)
-                if n_dim <= 3
-                else nn.GroupNorm(n_features, n_features),
+                nn.GroupNorm(n_features, n_features),
             )
             for level in range(n_levels + 1)
         )
@@ -97,8 +94,6 @@ class ConvDecoder(nn.Module):
                 )
                 if level == self.n_levels - 1:
                     size = self.output_shape
-                if level == 0 and math.prod(size) <= 1:
-                    raise ValueError('The first decoder stage must contain more than one pixel for InstanceNorm.')
                 x = interpolate(x, size, dim=dim, mode='nearest')
             x = block(x)
         return self.output(x)

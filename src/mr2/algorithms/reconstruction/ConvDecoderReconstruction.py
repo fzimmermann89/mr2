@@ -26,7 +26,7 @@ class ConvDecoderReconstruction(DirectReconstruction):
     Each call fits fresh `~mr2.nn.nets.ConvDecoder` networks with Adam.
     `latent_shape` selects the spatial dimensions modeled jointly; remaining
     dimensions use independent generators. Two real output channels form one
-    complex object image. Fitting uses adjoint RMS scaling and returns an
+    complex object image. Fitting uses density-compensated adjoint RMS scaling and returns an
     image in the input units. The callback and iteration budget control stopping.
 
     This variant uses InstanceNorm instead of the authors' BatchNorm
@@ -73,8 +73,8 @@ class ConvDecoderReconstruction(DirectReconstruction):
             Explicit sensitivity maps are not transformed; supply maps calibrated
             from equivalently whitened data, as for `DirectReconstruction`.
         dcf
-            Density compensation used only for sensitivity estimation, not for
-            weighting the fitting loss. If omitted, estimate from `kdata`.
+            Density compensation for sensitivity estimation and intensity scaling,
+            not loss weighting. If omitted, estimate from `kdata`.
         max_iterations
             Finite number of Adam updates. Zero returns the initial generator output.
         learning_rate
@@ -119,7 +119,8 @@ class ConvDecoderReconstruction(DirectReconstruction):
         acquisition = self.fourier_op @ self.csm_op if self.csm_op is not None else self.fourier_op
         data = kdata.data.detach()
         with torch.no_grad():
-            (adjoint,) = acquisition.H(data)
+            adjoint_op = acquisition.H @ self.dcf_op if self.dcf_op is not None else acquisition.H
+            (adjoint,) = adjoint_op(data)
             shape = adjoint.shape
 
         if shape[-4] != 1:
@@ -163,9 +164,9 @@ class ConvDecoderReconstruction(DirectReconstruction):
             optimizer.step()
             if self.callback is not None:
                 with torch.no_grad():
-                    solution = (image() * scale).detach().clone()
+                    solution = image() * scale
                 if self.callback({'solution': (solution,), 'iteration_number': iteration}) is False:
                     break
         with torch.no_grad():
-            result = (image() * scale).detach()
+            result = image() * scale
         return IData.from_tensor_and_kheader(result, kdata.header)
