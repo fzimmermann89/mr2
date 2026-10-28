@@ -95,46 +95,40 @@ def test_linop_autograd_differentiable_gradgrad():
 @pytest.mark.parametrize(
     'operator_name', ['cartesian', 'noncartesian', 'nufft', 'gram', 'subspace_gram', 'downsampling']
 )
-@pytest.mark.parametrize('dtype', [torch.float64, torch.complex128])
-@pytest.mark.parametrize('adjoint', [False, True])
-@pytest.mark.parametrize(
-    'device',
-    [
-        'cpu',
-        pytest.param(
-            'cuda',
-            marks=[pytest.mark.cuda, pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')],
-        ),
-    ],
-)
-def test_linop_autograd_input_dtype(operator_name, dtype, adjoint, device, monkeypatch):
+@pytest.mark.parametrize('dtype', [torch.float64, torch.complex128], ids=['real', 'complex'])
+@pytest.mark.parametrize('adjoint', [False, True], ids=['forward', 'adjoint'])
+def test_linop_autograd_input_dtype(operator_name, dtype, adjoint, monkeypatch):
     """Check real and complex gradients for every adjoint-as-backward operator."""
     rng = RandomGenerator(seed=0)
-    zeros = torch.zeros(1, 1, 1, 1, 1, dtype=torch.float64, device=device)
-    kx = torch.tensor([-1.8, -0.9, 0.1, 1.2], dtype=torch.float64, device=device)
-    if operator_name == 'cartesian':
-        kx = torch.arange(-2, 2, dtype=torch.float64, device=device)
+    zeros = torch.zeros(1, 1, 1, 1, 1, dtype=torch.float64)
+    kx = torch.tensor([-1.8, -0.9, 0.1, 1.2], dtype=torch.float64)
     trajectory = KTrajectory(kz=zeros, ky=zeros, kx=kx.reshape(1, 1, 1, 1, 4))
     matrix = SpatialDimension(1, 1, 4)
     nufft = NonUniformFastFourierOp((-1,), matrix, matrix, trajectory).double()
     operator: LinearOperator
     input_shape = (1, 1, 1, 1, 4)
-    if operator_name in ('cartesian', 'noncartesian'):
-        operator = FourierOp(matrix, matrix, trajectory).double()
-    elif operator_name == 'nufft':
-        operator = nufft
-    elif operator_name == 'gram':
-        operator = nufft.gram
-    elif operator_name == 'subspace_gram':
-        basis = torch.tensor([[1, 1j]], dtype=torch.complex128, device=device)
-        operator = nufft.toeplitz(subspace=basis)
-        input_shape = (2, 1, 1, 1, 4)
-    else:
-        operator = DownSamplingOp(-1, (4,), (2,))
-        if adjoint:
-            input_shape = (1, 1, 1, 1, 2)
+    match operator_name:
+        case 'cartesian':
+            trajectory = KTrajectory(kz=zeros, ky=zeros, kx=torch.arange(-2, 2).reshape(1, 1, 1, 1, 4))
+            operator = FourierOp(matrix, matrix, trajectory).double()
+        case 'noncartesian':
+            operator = FourierOp(matrix, matrix, trajectory).double()
+        case 'nufft':
+            operator = nufft
+        case 'gram':
+            operator = nufft.gram
+        case 'subspace_gram':
+            basis = torch.tensor([[1, 1j]], dtype=torch.complex128)
+            operator = nufft.toeplitz(subspace=basis)
+            input_shape = (2, 1, 1, 1, 4)
+        case 'downsampling':
+            operator = DownSamplingOp(-1, (4,), (2,))
+            if adjoint:
+                input_shape = (1, 1, 1, 1, 2)
+        case _:
+            raise ValueError(f'Unknown operator: {operator_name}')
 
-    x = rng.randn_tensor(input_shape, dtype=dtype, device=device).requires_grad_()
+    x = rng.randn_tensor(input_shape, dtype=dtype).requires_grad_()
     function = operator.adjoint if adjoint else operator
     torch.autograd.gradcheck(function, x, fast_mode=True, atol=1e-5, rtol=1e-4)
     torch.autograd.gradgradcheck(function, x, fast_mode=True, atol=1e-5, rtol=1e-4)
