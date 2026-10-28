@@ -70,11 +70,8 @@ class ConjugateGradientDC(Module):
         fourier_op
             Fourier operator matching the k-space data. If None and data is provided as a `~mr2.data.KData` object,
             the Fourier operator is automatically created from the data.
-            This operator can already include the coil sensitivity weighting, if gradients wrt the coil sensitivity maps
-            NOT required. Otherwise, they should be given as an additional argument.
         csm
             Coil sensitivity maps. If provided, the result is coil-combined.
-            If None, no additional coil sensitivity weighting is applied.
 
         Returns
         -------
@@ -98,15 +95,13 @@ class ConjugateGradientDC(Module):
 
         data_ = data.data if isinstance(data, KData) else data
 
-        if csm is None:
-            csm = torch.tensor(())
-        elif isinstance(csm, CsmData):
+        if isinstance(csm, CsmData):
             csm = csm.data
 
-        def operator_factory(csm: torch.Tensor, weight: torch.Tensor, *_):
+        def operator_factory(csm_tensor: torch.Tensor, weight: torch.Tensor, *_):
             op = fourier_op.gram
-            if csm.numel():
-                csm_op = SensitivityOp(csm)
+            if csm is not None:
+                csm_op = SensitivityOp(csm_tensor)
                 op = csm_op.H @ op @ csm_op
             op = op + weight
             return op
@@ -115,9 +110,9 @@ class ConjugateGradientDC(Module):
             return (zero_filled + weight * image,)
 
         (zero_filled,) = fourier_op.adjoint(data_)
-        if csm.numel():
+        if csm is not None:
             (zero_filled,) = SensitivityOp(csm).adjoint(zero_filled)
 
         cg_op = ConjugateGradientOp(operator_factory=operator_factory, rhs_factory=rhs_factory)
-        (result,) = cg_op(csm, self.log_weight.exp(), zero_filled, image)
+        (result,) = cg_op(csm if csm is not None else torch.tensor(()), self.log_weight.exp(), zero_filled, image)
         return result
