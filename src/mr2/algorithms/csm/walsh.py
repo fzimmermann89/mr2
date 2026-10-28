@@ -1,6 +1,7 @@
 """Walsh method for coil sensitivity map calculation."""
 
 import torch
+from einops import einsum, reduce
 
 from mr2.algorithms.csm.extrapolate import extrapolate_csm
 from mr2.data.SpatialDimension import SpatialDimension
@@ -89,13 +90,12 @@ def walsh(
         )
 
     # Pointwise covariance
-    if pool_dim is None:
-        coil_covariance = torch.einsum('... a z y x, ... b z y x -> ... a b z y x', coil_images, coil_images.conj())
-    else:
-        pooled = coil_images.movedim(pool_dim, -5)
-        coil_covariance = torch.einsum(
-            '... e a z y x, ... e b z y x -> ... a b z y x', pooled, pooled.conj()
-        ).unsqueeze(pool_dim)
+    images = coil_images.unsqueeze(-1) if pool_dim is None else coil_images.movedim(pool_dim, -1).unsqueeze(pool_dim)
+    coil_covariance = einsum(
+        images,
+        images.conj(),
+        '... coil_out z y x pool, ... coil_in z y x pool -> ... coil_out coil_in z y x',
+    )
 
     # Smooth covariance
     coil_covariance = uniform_filter(coil_covariance, width=smoothing_width.zyx, dim=(-3, -2, -1))
@@ -104,21 +104,19 @@ def walsh(
     v = coil_covariance.sum(dim=-4)
     for _ in range(n_power_iterations):
         v = v / (v.norm(dim=-4, keepdim=True) + eps)
-        v = torch.einsum('... a b z y x, ... b z y x -> ... a z y x', coil_covariance, v)
+        v = einsum(coil_covariance, v, '... coil_out coil_in z y x, ... coil_in z y x -> ... coil_out z y x')
 
     csm = v / (v.norm(dim=-4, keepdim=True) + eps)
 
     if align_phase:
-        phase_reference = coil_images if pool_dim is None else coil_images.narrow(pool_dim, 0, 1)
-        d_sum = torch.sum(phase_reference, dim=(-3, -2, -1))
+        phase_reference = images[..., 0]
+        d_sum = reduce(phase_reference, '... coils z y x -> ... coils', 'sum')
         d_sum = d_sum / (d_sum.norm(dim=-1, keepdim=True) + eps)
-        phase_map = torch.einsum('... c, ... c z y x -> ... z y x', d_sum.conj(), csm).angle()
+        phase_map = einsum(d_sum.conj(), csm, '... coils, ... coils z y x -> ... z y x').angle()
         csm = csm * torch.exp(-1j * phase_map).unsqueeze(-4)
 
     if extrapolate:
-        energy = coil_images.abs().square().sum(dim=-4)
-        if pool_dim is not None:
-            energy = energy.sum(dim=pool_dim, keepdim=True)
+        energy = reduce(images.abs().square(), '... coils z y x pool -> ... z y x', 'sum')
         csm = extrapolate_csm(csm, energy.sqrt(), smoothing_width)
 
     norm = csm.norm(dim=-4, keepdim=True)
