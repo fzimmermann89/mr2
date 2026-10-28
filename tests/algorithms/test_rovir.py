@@ -78,3 +78,17 @@ def test_rovir_raises_for_invalid_roi() -> None:
 
     with pytest.raises(ValueError, match='roi covers the full image'):
         rovir(img, torch.ones((3, 5, 6), dtype=torch.bool), n_compressed_coils=2)
+
+
+@pytest.mark.cuda
+def test_rovir_cuda_image_with_cpu_roi() -> None:
+    """ROVir accepts a CPU ROI with CUDA coil images and preserves orthonormality."""
+    img = RandomGenerator(1).complex64_tensor((4, 2, 3, 4)).cuda()
+    roi = torch.zeros((2, 3, 4), dtype=torch.bool)
+    roi[:, :2, :2] = True
+
+    operator = rovir(img, roi, n_compressed_coils=2)
+    gram = operator.matrix @ operator.matrix.conj().mT
+
+    assert operator.matrix.is_cuda
+    torch.testing.assert_close(gram, torch.eye(2, dtype=img.dtype, device='cuda'), atol=1e-5, rtol=1e-5)

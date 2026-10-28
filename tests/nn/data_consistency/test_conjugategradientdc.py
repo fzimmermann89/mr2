@@ -27,13 +27,18 @@ def csm_problem() -> tuple[torch.Tensor, torch.Tensor, KData]:
     return image, csm, kdata
 
 
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
 def test_conjugate_gradient_dc(
-    image_noisy: torch.Tensor, kdata_us: KData, image: torch.Tensor, image_us: torch.Tensor
+    image_noisy: torch.Tensor, kdata_us: KData, image: torch.Tensor, image_us: torch.Tensor, device: str
 ) -> None:
-    image_noisy = image_noisy.clone().requires_grad_(True)
-    dc = ConjugateGradientDC(initial_regularization_weight=1.0)
+    kdata_us = kdata_us.to(device)
+    image = image.to(device)
+    image_us = image_us.to(device)
+    image_noisy = image_noisy.to(device).detach().requires_grad_(True)
+    dc = ConjugateGradientDC(initial_regularization_weight=1.0).to(device)
     result = dc(image_noisy, kdata_us)
-    analytic_dc = AnalyticCartesianDC(initial_regularization_weight=1.0)
+    assert result.device.type == device
+    analytic_dc = AnalyticCartesianDC(initial_regularization_weight=1.0).to(device)
     torch.testing.assert_close(result, analytic_dc(image_noisy, kdata_us), rtol=1e-5, atol=1e-5)
     loss = (result - image).abs().mean()
     assert loss < (image_noisy - image).abs().mean()
@@ -41,8 +46,10 @@ def test_conjugate_gradient_dc(
     loss.backward()
     assert image_noisy.grad is not None
     assert dc.log_weight.grad is not None
-    assert not dc.log_weight.grad.isnan()
-    assert not image_noisy.grad.isnan().any()
+    assert dc.log_weight.grad.device.type == device
+    assert torch.isfinite(dc.log_weight.grad)
+    assert image_noisy.grad.device.type == device
+    assert torch.isfinite(image_noisy.grad).all()
 
 
 def test_conjugate_gradient_dc_csm(csm_problem: tuple[torch.Tensor, torch.Tensor, KData]) -> None:
