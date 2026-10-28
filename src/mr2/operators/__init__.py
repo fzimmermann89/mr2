@@ -29,6 +29,7 @@ from mr2.operators.LinearOperatorMatrix import LinearOperatorMatrix
 from mr2.operators.LookupTableOp import LookupTableOp
 from mr2.operators.MagnitudeOp import MagnitudeOp
 from mr2.operators.MultiIdentityOp import MultiIdentityOp
+from mr2.operators.MultiBandOp import MultiBandOp
 from mr2.operators.NonUniformFastFourierOp import NonUniformFastFourierOp
 from mr2.operators.OptimizerOp import OptimizerOp
 from mr2.operators.PatchOp import PatchOp
@@ -72,6 +73,7 @@ __all__ = [
     'LinearOperatorMatrix',
     'LookupTableOp',
     'MagnitudeOp',
+    'MultiBandOp',
     'MultiFrequencyFourierOp',
     'MultiIdentityOp',
     'NonUniformFastFourierOp',
