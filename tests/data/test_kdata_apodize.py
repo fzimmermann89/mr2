@@ -54,8 +54,8 @@ def test_apodize_nonuniform_support(kdata: KData, radial: bool) -> None:
     torch.testing.assert_close(
         kdata.apodize(4, radial=radial).data.expand_as(kdata.data), expected.expand_as(kdata.data).to(kdata.data.dtype)
     )
-    gaussian = kdata.apodize(SpatialDimension(2.0, 2.0, 2.0), window='gaussian', radial=radial)
-    torch.testing.assert_close(gaussian.data.expand_as(kdata.data)[:, 0, 0, 0, 0].real, torch.tensor([0.5, 0.25]))
+    gaussian = kdata.apodize(SpatialDimension(2.0, 2.0, 4.0), window='gaussian', radial=radial)
+    torch.testing.assert_close(gaussian.data.expand_as(kdata.data)[:, 0, 0, 0, 0].real, torch.tensor([0.5, 2**-1.25]))
 
 
 def test_apodize_constructor_and_invalid_width(kdata: KData) -> None:
