@@ -226,6 +226,8 @@ class NonUniformFastFourierOp(LinearOperator, adjoint_as_backward=True):
                 raise ValueError('Only oversampling 1.25 and 2.0 are supported on CPU')
             elif x.device.type not in ('cuda', 'cpu'):
                 raise ValueError('Only CPU and CUDA are supported')
+            if not x.is_complex():
+                x = x.to(x.dtype.to_complex())
             # We rearrange x into (sep_dims, joint_dims, nufft_directions)
             sep_dims_zyx, permute_zyx, _, permute_210 = self._separate_joint_dimensions(x.ndim)
             unpermute_210 = torch.tensor(permute_210).argsort().tolist()
@@ -266,6 +268,8 @@ class NonUniformFastFourierOp(LinearOperator, adjoint_as_backward=True):
                 raise ValueError('Only oversampling 1.25 and 2.0 are supported on CPU')
             elif x.device.type not in ('cuda', 'cpu'):
                 raise ValueError('Only CPU and CUDA are supported')
+            if not x.is_complex():
+                x = x.to(x.dtype.to_complex())
             # We rearrange x into (sep_dims, joint_dims, nufft_directions)
             _, permute_zyx, sep_dims_210, permute_210 = self._separate_joint_dimensions(x.ndim)
             unpermute_zyx = torch.tensor(permute_zyx).argsort().tolist()
@@ -375,7 +379,7 @@ def gram_nufft_kernel(
     kernel = torch.zeros(
         *weight.shape[:2], *[r * 2 for r in recon_shape], dtype=weight.dtype.to_complex(), device=weight.device
     )
-    shifts = (torch.tensor(recon_shape) / 2).unsqueeze(-1).to(trajectory)
+    shifts = (torch.tensor(recon_shape) // 2).unsqueeze(-1).to(trajectory)
     for flips in list(product([1, -1], repeat=rank)):
         flipped_trajectory = trajectory * torch.tensor(flips).to(trajectory).unsqueeze(-1)
         kernel_part = adjnufft(flipped_trajectory, torch.polar(weight, (shifts * flipped_trajectory).sum(-2, True)))

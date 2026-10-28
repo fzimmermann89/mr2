@@ -3,6 +3,7 @@
 from mr2.algorithms import csm, dcf, optimizers, reconstruction, image_registration, denoising
 from mr2.algorithms.prepare_acs import prepare_acs
 from mr2.algorithms.prewhiten_kspace import prewhiten_kspace
+from mr2.algorithms import partial_fourier
 from mr2.algorithms.rovir import rovir
 from mr2.algorithms.varimax import varimax
 
@@ -12,6 +13,7 @@ __all__ = [
     'denoising',
     'image_registration',
     'optimizers',
+    'partial_fourier',
     'prepare_acs',
     'prewhiten_kspace',
     'reconstruction',

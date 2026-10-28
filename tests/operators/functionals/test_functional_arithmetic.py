@@ -11,6 +11,7 @@ from tests.operators.functionals.conftest import (
     PROXIMABLE_FUNCTIONALS,
     FunctionalTestCase,
     functional_test_cases,
+    make_functional,
 )
 
 
@@ -22,7 +23,7 @@ def test_functional_scaling_forward(
     """Test if forward method is scaled."""
     rng = RandomGenerator(1)
     x = rng.complex64_tensor((10, 10))
-    f = functional()
+    f = make_functional(functional)
     match scale_type:
         case 'negative':
             scale: float | torch.Tensor = -4.0
@@ -47,7 +48,7 @@ def test_functional_negative_scale(
     def case(scale):
         x = torch.zeros(2)
         with pytest.raises((ValueError, TypeError)):
-            getattr(scale * functional(keepdim=True), function)(x)
+            getattr(scale * make_functional(functional, keepdim=True), function)(x)
 
     # all these cases should throw an exception:
     case(scale=-1)  # negative
@@ -61,7 +62,7 @@ def test_functional_scaling_zero_forward(functional: type[ElementaryFunctional])
     """Test if zero scaled forward is zero."""
     rng = RandomGenerator(1)
     x = rng.complex64_tensor((10, 10))
-    f = cast(ProximableFunctional, torch.zeros(10) * functional(dim=1))
+    f = cast(ProximableFunctional, torch.zeros(10) * make_functional(functional, dim=0))
     (fx,) = f(x)
     torch.testing.assert_close(fx, 0 * fx)
 

@@ -105,15 +105,18 @@ class ShiftedWindowAttention(Module):
         if not self.features_last:
             x = x.moveaxis(1, -1)  # now it is features last
 
-        padding = []
-        for s in x.shape[-self.n_dim - 1 : -1]:
-            target = ((s + self.window_size - 1) // self.window_size) * self.window_size
-            padding.extend([target - s, 0])
-        x_padded = torch.nn.functional.pad(x, (0, 0, *padding[::-1]), mode='circular') if any(padding) else x
+        spatial_shape = x.shape[-self.n_dim - 1 : -1]
         spatial_dims = tuple(range(-self.n_dim - 1, -1))
-        apply_shift = self.shifted and all(size > self.window_size for size in x_padded.shape[-self.n_dim - 1 : -1])
+        padding = [-size % self.window_size for size in spatial_shape]
+        x_padded = x
+        for dim, size, n_pad in zip(spatial_dims, spatial_shape, padding, strict=True):
+            if n_pad:
+                x_padded = x_padded.index_select(dim, torch.arange(size + n_pad, device=x.device) % size)
+        padded_shape = x_padded.shape[-self.n_dim - 1 : -1]
+        apply_shift = self.shifted and all(size > self.window_size for size in padded_shape)
+        shift = self.window_size // 2
         if apply_shift:
-            x_padded = torch.roll(x_padded, (-(self.window_size // 2),) * self.n_dim, dims=spatial_dims)
+            x_padded = torch.roll(x_padded, (-shift,) * self.n_dim, dims=spatial_dims)
 
         qkv = self.to_qkv(x_padded)
         windowed = sliding_window(
@@ -127,9 +130,8 @@ class ShiftedWindowAttention(Module):
         )
         bias = rearrange(self.relative_position_bias_table[self.rel_position_index], 'wd1 wd2 heads -> 1 heads wd1 wd2')
         if apply_shift:
-            shift = self.window_size // 2
-            region_mask = torch.zeros(x_padded.shape[-self.n_dim - 1 : -1], device=x.device, dtype=torch.int64)
-            for dim, size in enumerate(region_mask.shape):
+            region_mask = torch.zeros(padded_shape, device=x.device, dtype=torch.int64)
+            for dim, size in enumerate(padded_shape):
                 coordinate = torch.arange(size, device=x.device)
                 region = (coordinate >= size - self.window_size).to(torch.int64)
                 region += (coordinate >= size - shift).to(torch.int64)
@@ -139,8 +141,8 @@ class ShiftedWindowAttention(Module):
             windowed_mask = sliding_window(
                 region_mask, window_shape=self.window_size, stride=self.window_size, dim=range(self.n_dim)
             ).flatten(-self.n_dim)
-            windowed_mask = windowed_mask[..., :, None] != windowed_mask[..., None, :]
-            bias = bias + windowed_mask[..., None, None, :, :] * torch.finfo(q.dtype).min
+            allowed = windowed_mask[..., :, None] == windowed_mask[..., None, :]
+            bias = torch.where(allowed[..., None, None, :, :], bias, float('-inf'))
         attention = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=bias)
         attention = rearrange(attention, '... head sequence channels->... sequence (head channels)')
         attention = attention.unflatten(-2, windowed.shape[-self.n_dim - 1 : -1])
@@ -148,11 +150,11 @@ class ShiftedWindowAttention(Module):
         attention = attention.moveaxis(list(range(self.n_dim)), list(range(1, 2 * self.n_dim, 2)))
         attention = attention.reshape(x_padded.shape)
         if apply_shift:
-            attention = torch.roll(attention, (self.window_size // 2,) * self.n_dim, dims=spatial_dims)
+            attention = torch.roll(attention, (shift,) * self.n_dim, dims=spatial_dims)
         if any(padding):
             crop_idx: tuple[EllipsisType | slice, ...] = (
                 Ellipsis,
-                *[slice(0, s) for s in x.shape[-self.n_dim - 1 : -1]],
+                *[slice(0, s) for s in spatial_shape],
                 slice(None),
             )
             attention = attention[crop_idx]

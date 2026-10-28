@@ -238,7 +238,9 @@ class GridSamplingOp(LinearOperator):
 
         if not grid.is_floating_point():
             raise ValueError(f'Grid should be a real floating dtype, got {grid.dtype}')
-        if grid.max() > 1.0 or grid.min() < -1.0:
+        # Interpolating grids can put boundary coordinates a few ULPs outside the range.
+        tolerance = 4 * torch.finfo(grid.dtype).eps
+        if grid.max() > 1.0 + tolerance or grid.min() < -1.0 - tolerance:
             warnings.warn('Grid has values outside range [-1,1].', stacklevel=1)
 
         self.interpolation_mode = interpolation_mode

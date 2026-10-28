@@ -1,9 +1,23 @@
 """Tests for filters."""
 
+import math
+
 import pytest
 import torch
 from einops import repeat
-from mr2.utils.filters import filter_separable, gaussian_filter, uniform_filter
+from mr2.utils.filters import (
+    dct_filters,
+    dct_matrix,
+    fft_filters,
+    filter_separable,
+    gabor_filters_2d,
+    gaussian_filter,
+    gaussian_window,
+    hann_window,
+    radial_hann_window,
+    uniform_filter,
+)
+from scipy.fft import dct, dctn
 
 
 @pytest.fixture
@@ -149,3 +163,80 @@ def test_uniform_invalid_width(data):
         uniform_filter(data, width=2)
     with pytest.raises(ValueError, match='length'):
         uniform_filter(data, width=(3.0, 3.0))  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize('kernel_size', [(9, 9), (7, 9)])
+def test_gabor_filters_2d(kernel_size: tuple[int, int]) -> None:
+    """Gabor banks have the requested shape, zero mean, and unit filter norms."""
+    filters = gabor_filters_2d(4, kernel_size)
+    assert filters.shape == (4, *kernel_size)
+    torch.testing.assert_close(filters.mean(dim=(-2, -1)), torch.zeros(4), atol=1e-7, rtol=0)
+    torch.testing.assert_close(torch.linalg.vector_norm(filters, dim=(-2, -1)), torch.ones(4))
+
+
+@pytest.mark.parametrize('sigma', [0.0, -1.0, float('nan'), float('inf')])
+def test_gabor_invalid_sigma(sigma: float) -> None:
+    """Invalid Gaussian widths fail before generating nonfinite filters."""
+    with pytest.raises(ValueError):
+        gabor_filters_2d(4, (7, 7), sigma=sigma)
+
+
+def test_gabor_orientation() -> None:
+    """A ninety-degree carrier rotation rotates the corresponding spatial filter."""
+    filters = gabor_filters_2d(4, (9, 9))
+    torch.testing.assert_close(filters[2], filters[0].rot90(1, (-2, -1)))
+
+
+def test_dct_matrix() -> None:
+    """The matrix agrees with SciPy's orthonormal DCT-II."""
+    matrix = dct_matrix(5, dtype=torch.float64)
+    expected = dct(torch.eye(5, dtype=torch.float64).numpy(), axis=0, norm='ortho')
+    torch.testing.assert_close(matrix, torch.from_numpy(expected))
+
+
+@pytest.mark.parametrize('kernel_size', [(5,), (3, 5), (2, 3, 4)])
+@pytest.mark.parametrize('dtype', [torch.float32, torch.float64])
+def test_dct_filters(kernel_size: tuple[int, ...], dtype: torch.dtype) -> None:
+    """Flattened filters give the same patch transform as SciPy's N-dimensional DCT."""
+    size = math.prod(kernel_size)
+    filters = dct_filters(kernel_size, dtype=dtype)
+    patches = torch.eye(size, dtype=dtype).reshape(size, *kernel_size)
+    transformed = dctn(patches.numpy(), axes=tuple(range(1, patches.ndim)), norm='ortho')
+    expected = torch.from_numpy(transformed).reshape(size, size).T
+    assert filters.shape == (size, *kernel_size)
+    assert filters.dtype == dtype
+    torch.testing.assert_close(filters.flatten(1), expected)
+
+
+@pytest.mark.parametrize('kernel_size', [(5,), (3, 5), (3, 3, 3)])
+@pytest.mark.parametrize('dtype', [torch.complex64, torch.complex128])
+def test_fft_filters(kernel_size: tuple[int, ...], dtype: torch.dtype) -> None:
+    """Hermitian inner products with Fourier modes reproduce the orthonormal FFT."""
+    size = math.prod(kernel_size)
+    filters = fft_filters(kernel_size, dtype=dtype)
+    patch = torch.arange(size, dtype=filters.real.dtype).reshape(kernel_size).to(dtype)
+    patch = patch + 1j * patch.flip(-1)
+    coefficients = filters.flatten(1).conj() @ patch.flatten()
+    expected = torch.fft.fftn(patch, norm='ortho').flatten()
+    assert filters.shape == (size, *kernel_size)
+    assert filters.dtype == dtype
+    torch.testing.assert_close(coefficients, expected)
+
+
+def test_apodization_windows() -> None:
+    """Check continuous Hann support, Gaussian FWHM and finite radial DC gradients."""
+    coordinate = torch.tensor([0.0, 0.5, 1.0, 2.0], dtype=torch.float64, requires_grad=True)
+    expected = torch.tensor([1.0, (2 + 2**0.5) / 4, 0.5, 0.0], dtype=torch.float64)
+    torch.testing.assert_close(hann_window(coordinate, 4), expected)
+    torch.testing.assert_close(gaussian_window(coordinate[[0, 3]], 4), torch.tensor([1.0, 0.5], dtype=torch.float64))
+    radial = radial_hann_window((coordinate,), (4.0,))
+    torch.testing.assert_close(radial, expected)
+    radial.sum().backward()
+    gradient = -torch.pi / 4 * torch.sin(torch.pi * coordinate.detach() / 2)
+    gradient[-1] = 0
+    assert coordinate.grad is not None
+    torch.testing.assert_close(coordinate.grad, gradient)
+    outside = torch.tensor([60000.0], dtype=torch.float16, requires_grad=True)
+    (hann_window(outside, 2) + radial_hann_window((outside,), (2.0,)) + gaussian_window(outside, 2)).sum().backward()
+    assert outside.grad is not None
+    torch.testing.assert_close(outside.grad, torch.zeros_like(outside))

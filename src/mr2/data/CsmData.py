@@ -11,6 +11,7 @@ from mr2.data.IData import IData
 from mr2.data.IHeader import IHeader
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.utils.interpolate import apply_lowres
+from mr2.utils.pad_or_crop import pad_or_crop
 from mr2.utils.smap import smap
 
 if TYPE_CHECKING:
@@ -93,7 +94,6 @@ class CsmData(IData, init=False):
             geometry is not a crop of the encoded image grid.
         """
         from mr2.algorithms.csm.espirit import espirit
-        from mr2.operators.FourierOp import FourierOp
 
         # FourierOp uses encoding-grid voxel spacing and centered image cropping.
         expected_fov = acs.header.encoding_fov * (acs.header.recon_matrix / acs.header.encoding_matrix)
@@ -120,7 +120,7 @@ class CsmData(IData, init=False):
             kspace_data,
             passed_dimensions=(-4, -3, -2, -1),  # coils, z, y, x
         )
-        csm_data = FourierOp.from_kdata(acs).crop_to_recon(csm_data)
+        csm_data = pad_or_crop(csm_data, acs.header.recon_matrix.zyx)
         return cls(header=IHeader.from_kheader(acs.header), data=csm_data)
 
     @classmethod

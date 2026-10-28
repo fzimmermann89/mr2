@@ -87,7 +87,6 @@ def test_downsampling_op_invalid() -> None:
 
 
 @pytest.mark.cuda
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
 def test_downsampling_op_cuda() -> None:
     """Test DownSamplingOp works on cuda devices."""
     rng = RandomGenerator(seed=3)

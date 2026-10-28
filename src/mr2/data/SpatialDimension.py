@@ -333,19 +333,47 @@ class SpatialDimension(Dataclass, Generic[T_co]):
         """Negate SpatialDimension."""
         return SpatialDimension(-self.z, -self.y, -self.x)
 
+    # Tensor masks specialize the bool return required by object comparisons.
+    @overload
+    def __eq__(  # type: ignore[overload-overlap]
+        self: SpatialDimension[T_co_scalar], other: SpatialDimension[T_co_vector]
+    ) -> T_co_vector: ...
     @overload
     def __eq__(self: SpatialDimension[T_co_scalar], other: object) -> bool: ...
     @overload
-    def __eq__(self: SpatialDimension[T_co_vector], other: SpatialDimension[T_co_vector]) -> T_co_vector: ...
+    def __eq__(
+        self: SpatialDimension[T_co_vector], other: SpatialDimension[T_co_vector] | SpatialDimension[T_co_scalar]
+    ) -> T_co_vector: ...
 
     def __eq__(
         self: SpatialDimension[T_co_scalar] | SpatialDimension[T_co_vector],
         other: object | SpatialDimension[T_co_vector],
     ) -> bool | T_co_vector:
-        """Check if self is equal to other."""
+        """Compare components, returning an elementwise mask for tensor values."""
         if not isinstance(other, SpatialDimension):
             return NotImplemented
         return (self.z == other.z) & (self.y == other.y) & (self.x == other.x)
+
+    @overload
+    def __ne__(  # type: ignore[overload-overlap]
+        self: SpatialDimension[T_co_scalar], other: SpatialDimension[T_co_vector]
+    ) -> T_co_vector: ...
+    @overload
+    def __ne__(self: SpatialDimension[T_co_scalar], other: object) -> bool: ...
+    @overload
+    def __ne__(
+        self: SpatialDimension[T_co_vector], other: SpatialDimension[T_co_vector] | SpatialDimension[T_co_scalar]
+    ) -> T_co_vector: ...
+
+    def __ne__(
+        self: SpatialDimension[T_co_scalar] | SpatialDimension[T_co_vector],
+        other: object | SpatialDimension[T_co_vector],
+    ) -> bool | T_co_vector:
+        """Return the complement of equality, elementwise for tensor values."""
+        if not isinstance(other, SpatialDimension):
+            return NotImplemented
+        equal = self == other
+        return ~equal if isinstance(equal, torch.Tensor) else not equal
 
     @overload
     def __lt__(self: SpatialDimension[T_co_vector], other: SpatialDimension[T_co_vector]) -> T_co_vector: ...

@@ -623,6 +623,48 @@ def test_as_euler_degenerate_symmetric_axes(seq_tuple: Sequence[str], intrinsic:
     torch.testing.assert_close(mat_expected, mat_estimated)
 
 
+@pytest.mark.parametrize('seq_tuple', tuple(permutations('xyz')), ids=str)
+@pytest.mark.parametrize('intrinsic', [False, True])
+@pytest.mark.parametrize('symmetric', [False, True])
+@pytest.mark.parametrize('dtype', [torch.float32, torch.float64])
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+def test_as_euler_roundtrip(
+    seq_tuple: Sequence[str], intrinsic: bool, symmetric: bool, dtype: torch.dtype, device: str
+) -> None:
+    """Euler conversion preserves batched rotations at and near singularities."""
+    if symmetric:
+        seq = ''.join([seq_tuple[0], seq_tuple[1], seq_tuple[0]])
+    else:
+        seq = ''.join(seq_tuple)
+    if intrinsic:
+        seq = seq.upper()
+
+    middle_angles = torch.tensor([0, -torch.pi / 2, torch.pi / 2, torch.pi], dtype=torch.float64)
+    offsets = torch.tensor([0, -1e-8, 1e-8, -1e-6, 1e-6], dtype=torch.float64)
+    middle_angles = (middle_angles[:, None] + offsets).flatten()
+    angles = RandomGenerator(0).float64_tensor((2, len(middle_angles) + 16, 3), low=-torch.pi, high=torch.pi)
+    angles[:, : len(middle_angles), 1] = middle_angles
+    angles = angles.to(device=device, dtype=dtype)
+
+    rotation = Rotation.from_euler(seq, angles)
+    recovered = rotation.as_euler(seq)
+    assert recovered.shape == angles.shape
+    assert recovered.device == angles.device
+    assert recovered.dtype == angles.dtype
+    tolerance = 2e-6 if dtype == torch.float32 else 2e-7
+    torch.testing.assert_close(
+        Rotation.from_euler(seq, recovered).as_matrix(), rotation.as_matrix(), atol=tolerance, rtol=0
+    )
+
+
+@pytest.mark.parametrize(('seq', 'angles'), [('zyx', [0.3, 0.0, 0.5]), ('xyz', [0.0, 0.0, 0.9])])
+def test_as_euler_zero_middle_angle(seq: str, angles: list[float]) -> None:
+    """A zero middle angle is not a Tait-Bryan singularity."""
+    expected = torch.tensor(angles, dtype=torch.float64)
+    rotation = Rotation.from_euler(seq, expected)
+    torch.testing.assert_close(rotation.as_euler(seq), expected)
+
+
 def test_inv() -> None:
     rnd = RandomGenerator(0)
     n = 10

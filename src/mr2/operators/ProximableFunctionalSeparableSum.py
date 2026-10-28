@@ -22,9 +22,13 @@ class ProximableFunctionalSeparableSum(Operator[Unpack[T], tuple[torch.Tensor]])
     This is a separable sum of the functionals. The forward method returns the sum of the functionals
     evaluated at the inputs, :math:`\sum_i f_i(x_i)`.
     Use ``f | g`` to build a separable sum from two proximable functionals.
-    """
 
-    functionals: tuple[ProximableFunctional, ...]
+    .. note::
+        Member parameters and buffers are stored under ``_functionals.*`` in the state dict.
+        Older checkpoints lack these entries, so strict loading reports missing keys.
+        This also affects parent modules containing a sum. Loading with ``strict=False``
+        leaves missing member values unchanged.
+    """
 
     @overload
     def __init__(self: ProximableFunctionalSeparableSum[torch.Tensor], f1: ProximableFunctional, /) -> None: ...
@@ -91,6 +95,15 @@ class ProximableFunctionalSeparableSum(Operator[Unpack[T], tuple[torch.Tensor]])
         """
         super().__init__()
         self.functionals = functionals
+
+    @property
+    def functionals(self) -> tuple[ProximableFunctional, ...]:
+        """The proximable functionals in the sum."""
+        return cast(tuple[ProximableFunctional, ...], tuple(self._functionals))
+
+    @functionals.setter
+    def functionals(self, functionals: tuple[ProximableFunctional, ...]) -> None:
+        self._functionals = torch.nn.ModuleList(functionals)
 
     def __call__(self, *x: Unpack[T]) -> tuple[torch.Tensor]:
         """Evaluate the sum of separable functionals.

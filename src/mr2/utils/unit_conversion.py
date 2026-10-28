@@ -118,9 +118,11 @@ def lamor_frequency_to_magnetic_field(lamor_frequency: T, gyromagnetic_ratio: fl
         Magnetic field strength [T]
     """
     if isinstance(lamor_frequency, list):
-        return [lamor_frequency_to_magnetic_field(x) for x in lamor_frequency]
+        return [lamor_frequency_to_magnetic_field(x, gyromagnetic_ratio=gyromagnetic_ratio) for x in lamor_frequency]
     if isinstance(lamor_frequency, tuple):
-        return tuple([lamor_frequency_to_magnetic_field(x) for x in lamor_frequency])
+        return tuple(
+            [lamor_frequency_to_magnetic_field(x, gyromagnetic_ratio=gyromagnetic_ratio) for x in lamor_frequency]
+        )
     return lamor_frequency / gyromagnetic_ratio
 
 
@@ -141,7 +143,14 @@ def magnetic_field_to_lamor_frequency(
         Lamor frequency [Hz]
     """
     if isinstance(magnetic_field_strength, tuple):
-        return tuple([magnetic_field_to_lamor_frequency(x) for x in magnetic_field_strength])
+        return tuple(
+            [
+                magnetic_field_to_lamor_frequency(x, gyromagnetic_ratio=gyromagnetic_ratio)
+                for x in magnetic_field_strength
+            ]
+        )
     if isinstance(magnetic_field_strength, list):
-        return [magnetic_field_to_lamor_frequency(x) for x in magnetic_field_strength]
+        return [
+            magnetic_field_to_lamor_frequency(x, gyromagnetic_ratio=gyromagnetic_ratio) for x in magnetic_field_strength
+        ]
     return magnetic_field_strength * gyromagnetic_ratio
