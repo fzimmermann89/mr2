@@ -1,6 +1,7 @@
 """Shifted Window Attention."""
 
 import warnings
+from itertools import product
 from types import EllipsisType
 
 import torch
@@ -150,11 +151,31 @@ class ShiftedWindowAttention(Module):
                 ).flatten(-self.n_dim)
                 for mask in (region_mask, valid_mask)
             )
-            allowed = (windowed_region[..., :, None] == windowed_region[..., None, :]) & windowed_valid[..., None, :]
-            # Padded queries are cropped; leave their rows unmasked to keep backward finite.
-            allowed = allowed | ~windowed_valid[..., :, None]
-            bias = torch.where(allowed[..., None, None, :, :], bias, float('-inf'))
-        attention = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=bias)
+            if apply_shift:
+                allowed = (windowed_region[..., :, None] == windowed_region[..., None, :]) & windowed_valid[
+                    ..., None, :
+                ]
+                # Padded queries are cropped; leave their rows unmasked to keep backward finite.
+                allowed = allowed | ~windowed_valid[..., :, None]
+                bias = torch.where(allowed[..., None, None, :, :], bias, float('-inf'))
+                attention = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=bias)
+            else:
+                # Interior windows and windows on the same padded edges share a validity pattern.
+                # Keep their bias broadcast across the grid instead of allocating one per window.
+                groups = [
+                    (slice(0, -1), slice(-1, None)) if n_pad and size > self.window_size else (slice(None),)
+                    for size, n_pad in zip(padded_shape, padding, strict=True)
+                ]
+                attention = torch.empty_like(q)
+                for group in product(*groups):
+                    valid = windowed_valid[tuple(part.start or 0 for part in group)]
+                    allowed = valid[None, :] | ~valid[:, None]
+                    group_bias = torch.where(allowed, bias, float('-inf'))
+                    attention[group] = torch.nn.functional.scaled_dot_product_attention(
+                        q[group], k[group], v[group], attn_mask=group_bias
+                    )
+        else:
+            attention = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=bias)
         attention = rearrange(attention, '... head sequence channels->... sequence (head channels)')
         attention = attention.unflatten(-2, windowed.shape[-self.n_dim - 1 : -1])
         # The window-grid axes precede batch; interleave only grid and within-window axes.

@@ -1,6 +1,7 @@
 """Tests for ShiftedWindowAttention module."""
 
 from collections.abc import Sequence
+from unittest.mock import patch
 
 import pytest
 import torch
@@ -184,3 +185,16 @@ def test_shifted_window_attention_large_scores(device: str) -> None:
     for parameter in swin.parameters():
         assert parameter.grad is not None
         assert torch.isfinite(parameter.grad).all()
+
+
+@torch.no_grad()
+def test_unshifted_padding_bias_memory() -> None:
+    """Padding bias stays bounded by one window per head, independent of the window grid."""
+    swin = ShiftedWindowAttention(3, 4, 4, 2, window_size=4, shifted=False)
+    x = RandomGenerator(13).float32_tensor((1, 4, 9, 10, 11))
+    sdpa = torch.nn.functional.scaled_dot_product_attention
+    with patch('torch.nn.functional.scaled_dot_product_attention', wraps=sdpa) as attention:
+        output = swin(x)
+    for call in attention.call_args_list:
+        assert call.kwargs['attn_mask'].numel() <= swin.n_heads * swin.window_size ** (2 * swin.n_dim)
+    torch.testing.assert_close(output, shifted_window_attention_reference(swin, x))
