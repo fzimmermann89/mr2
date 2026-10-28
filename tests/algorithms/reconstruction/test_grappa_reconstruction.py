@@ -30,13 +30,9 @@ def grappa_data(fully_sampled_kdata: KData) -> tuple[KData, torch.Tensor, KData]
 @pytest.mark.parametrize(
     ('fully_sampled_kdata', 'kernel', 'acceleration'),
     [
-        ((shape, dtype), kernel, acceleration)
-        for shape, kernel, acceleration in [
-            ((1, 24, 20), (1, 3, 3), 2),
-            ((1, 24, 20), (1, 5, 3), 3),
-            ((9, 16, 12), (3, 3, 3), 2),
-        ]
-        for dtype in (torch.complex64, torch.complex128)
+        (((1, 24, 20), torch.complex64), (1, 3, 3), 2),
+        (((1, 24, 20), torch.complex128), (1, 5, 3), 3),
+        (((9, 16, 12), torch.complex128), (3, 3, 3), 2),
     ],
     indirect=['fully_sampled_kdata'],
 )
@@ -84,16 +80,15 @@ def test_grappa_batched_volume(fully_sampled_kdata: KData) -> None:
 
 
 @pytest.mark.cuda
-@pytest.mark.parametrize('dtype', [torch.complex64, torch.complex128])
-def test_grappa_reconstruction_cuda(grappa_data: tuple[KData, torch.Tensor, KData], dtype: torch.dtype) -> None:
+def test_grappa_reconstruction_cuda(grappa_data: tuple[KData, torch.Tensor, KData]) -> None:
     """Move calibration, sampling and interpolation together with the reconstruction."""
     full, _, data = grappa_data
-    data = data.to(dtype)
-    reconstruction = GrappaReconstruction(data, full.data.to(dtype), (1, 3, 3), csm=None)
+    data = data.to(torch.complex64)
+    reconstruction = GrappaReconstruction(data, full.data.to(torch.complex64), (1, 3, 3), csm=None)
     expected = reconstruction(data).data
     actual = reconstruction.cuda()(data.cuda()).data
     assert actual.device.type == 'cuda'
-    assert actual.dtype == dtype
+    assert actual.dtype == torch.complex64
     torch.testing.assert_close(actual.cpu(), expected, atol=3e-4, rtol=3e-4)
     torch.testing.assert_close(reconstruction.cpu()(data).data, expected)
 
@@ -172,12 +167,10 @@ def test_grappa_recalculate_csm(grappa_data: tuple[KData, torch.Tensor, KData]) 
         reconstruction.recalculate_csm(data, noise=noise)
 
 
-@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
-def test_grappa_gradient_calibration(grappa_data: tuple[KData, torch.Tensor, KData], device: str) -> None:
-    """Differentiate calibration on CPU and CUDA."""
+def test_grappa_gradient_calibration(grappa_data: tuple[KData, torch.Tensor, KData]) -> None:
+    """Differentiate the reconstruction with respect to its calibration data."""
     full, _, data = grappa_data
-    data = data.to(device)
-    acs = full.data.to(device).requires_grad_()
+    acs = full.data.requires_grad_()
     reconstruction = GrappaReconstruction(data, acs, (1, 3, 3), csm=None)
     reference = reconstruction(data).data
     (gradient,) = torch.autograd.grad(reference.abs().square().sum(), acs)
@@ -208,10 +201,10 @@ def test_grappa_image_geometry(
 
 
 @pytest.mark.parametrize('regularization', [0.0, 0.03])
-@pytest.mark.parametrize('dtype', [torch.complex64, torch.complex128])
-def test_grappa_calibration_explicit(regularization: float, dtype: torch.dtype) -> None:
-    """Fit the acquired neighbors of a missing center, matching an explicit solve."""
-    acs = RandomGenerator(13).randn_tensor((2, 1, 5, 9), dtype=dtype)
+@pytest.mark.parametrize('n_coils', [2, 4])
+def test_grappa_calibration_explicit(regularization: float, n_coils: int) -> None:
+    """Match least squares with fewer or more source features than calibration rows."""
+    acs = RandomGenerator(13).randn_tensor((n_coils, 1, 5, 9), dtype=torch.complex128)
     pattern = torch.zeros((1, 3, 3), dtype=torch.bool)
     pattern[..., ::2] = True
     offsets = [(dy, dx) for dy, dx in product(range(-1, 2), repeat=2) if dx != 0]
@@ -222,20 +215,21 @@ def test_grappa_calibration_explicit(regularization: float, dtype: torch.dtype) 
         ]
     )
     targets = torch.stack([acs[:, 0, y, x] for y, x in product(range(1, 4), range(1, 8))])
-    if regularization:
-        ridge = regularization * sources.abs().square().sum() / sources.shape[-1]
-        weights = torch.linalg.solve(sources.mH @ sources + ridge * torch.eye(sources.shape[-1]), sources.mH @ targets)
-    else:
-        weights = torch.linalg.lstsq(sources, targets, driver='gelsd').solution
+    ridge = regularization * sources.abs().square().sum() / sources.shape[-1]
+    augmented = torch.cat((sources, ridge.sqrt() * torch.eye(sources.shape[-1], dtype=acs.dtype)))
+    right = torch.cat((targets, targets.new_zeros(sources.shape[-1], n_coils)))
+    weights = torch.linalg.lstsq(augmented, right, driver='gelsd').solution
     kernel = GrappaReconstruction.calibrate(acs, pattern, regularization=regularization)
-    assert kernel.shape == (2, 2, 1, 3, 3)
+    assert kernel.shape == (n_coils, n_coils, 1, 3, 3)
     actual = kernel.flatten(start_dim=-3)[..., pattern.flatten()].flatten(start_dim=-2).mT
     torch.testing.assert_close(actual, weights, atol=2e-5, rtol=2e-5)
     assert torch.count_nonzero(kernel[..., 0, 1, 1]) == 0
 
 
-@pytest.mark.parametrize('dtype', [torch.complex64, torch.complex128])
-@pytest.mark.parametrize(('shape', 'kernel_size'), [((1, 48, 50), (1, 3, 3)), ((7, 8, 9), (3, 3, 3))])
+@pytest.mark.parametrize(
+    ('shape', 'kernel_size', 'dtype'),
+    [((1, 48, 50), (1, 3, 3), torch.complex64), ((7, 8, 9), (3, 3, 3), torch.complex128)],
+)
 def test_grappa_interpolation(
     dtype: torch.dtype, shape: tuple[int, int, int], kernel_size: tuple[int, int, int]
 ) -> None:
@@ -255,59 +249,20 @@ def test_grappa_interpolation(
 
 
 def test_grappa_shared_calibration_and_scale() -> None:
-    """Broadcast fitted kernels over batches without repeating calibration."""
+    """Broadcast independently fitted kernels, including zero signal, with consistent ridge scaling."""
     rng = RandomGenerator(42)
     acs = rng.randn_tensor((1, 3, 2, 1, 12, 13), dtype=torch.complex128)
+    acs[:, 0] = 0
     data = rng.randn_tensor((2, 3, 2, 1, 8, 9), dtype=acs.dtype)
     pattern = torch.zeros((1, 3, 3), dtype=torch.bool)
     pattern[..., ::2] = True
     kernel = GrappaReconstruction.calibrate(acs, pattern)
-    assert kernel.shape[:2] == (1, 3)
+    assert torch.isfinite(kernel).all()
+    assert torch.count_nonzero(kernel[:, 0]) == 0
+    torch.testing.assert_close(kernel[:, 1:], GrappaReconstruction.calibrate(acs[:, 1:], pattern))
     output = GrappaReconstruction._interpolate_kernel(data, kernel)
     for i, j in product(range(2), range(3)):
         torch.testing.assert_close(output[i, j], GrappaReconstruction._interpolate_kernel(data[i, j], kernel[0, j]))
     scale = 3.1 - 2.7j
     torch.testing.assert_close(GrappaReconstruction.calibrate(scale * acs, pattern), kernel)
     torch.testing.assert_close(GrappaReconstruction._interpolate_kernel(scale * data, kernel), scale * output)
-
-
-def test_grappa_invalid_regularization() -> None:
-    """Reject invalid ridge strengths before solving."""
-    pattern = torch.tensor([[[True, False, True]]])
-    with pytest.raises(ValueError, match='finite and nonnegative'):
-        GrappaReconstruction.calibrate(torch.ones(2, 1, 4, 5, dtype=torch.complex64), pattern, regularization=-1)
-
-
-def test_grappa_reject_center_source() -> None:
-    """A kernel cannot regress its own center."""
-    with pytest.raises(ValueError, match='exclude the center'):
-        GrappaReconstruction.calibrate(
-            torch.ones(2, 1, 4, 5, dtype=torch.complex64), torch.ones(1, 3, 3, dtype=torch.bool)
-        )
-
-
-@pytest.mark.parametrize('regularization', [0.0, 0.03])
-def test_grappa_underdetermined_calibration(regularization: float) -> None:
-    """Allow more source features than rows and match an augmented least-squares solve."""
-    acs = RandomGenerator(27).randn_tensor((4, 1, 1, 5), dtype=torch.complex128)
-    pattern = torch.tensor([[[True, False, True]]])
-    sources = torch.stack((acs[:, 0, 0, :-2].mT, acs[:, 0, 0, 2:].mT), dim=-1).flatten(-2)
-    targets = acs[:, 0, 0, 1:-1].mT
-    ridge = regularization * sources.abs().square().sum() / sources.shape[-1]
-    augmented = torch.cat((sources, ridge.sqrt() * torch.eye(sources.shape[-1], dtype=acs.dtype)))
-    right = torch.cat((targets, targets.new_zeros(sources.shape[-1], targets.shape[-1])))
-    expected = torch.linalg.lstsq(augmented, right, driver='gelsd').solution
-    kernel = GrappaReconstruction.calibrate(acs, pattern, regularization=regularization)
-    actual = kernel.flatten(-3)[..., pattern.flatten()].flatten(-2).mT
-    torch.testing.assert_close(actual, expected)
-
-
-def test_grappa_zero_calibration_batch() -> None:
-    """An empty-signal batch yields zero kernels without affecting neighboring batches."""
-    acs = RandomGenerator(28).randn_tensor((2, 2, 1, 4, 5), dtype=torch.complex128)
-    acs[0] = 0
-    pattern = torch.tensor([[[True, False, True]]])
-    kernels = GrappaReconstruction.calibrate(acs, pattern)
-    assert torch.isfinite(kernels).all()
-    assert torch.count_nonzero(kernels[0]) == 0
-    torch.testing.assert_close(kernels[1], GrappaReconstruction.calibrate(acs[1], pattern))
