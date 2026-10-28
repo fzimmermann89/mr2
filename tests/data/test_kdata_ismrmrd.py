@@ -470,6 +470,7 @@ def test_iter_acquisitions(raw_data, monkeypatch) -> None:
         for index, acq in enumerate(imaging):
             result = next(readouts)
             assert_kdata_equal(result, KData.from_ismrmrd(header, [acq], KTrajectoryCartesian()))
+            assert_kdata_equal(result, result.reshape_by_idx())
             assert len(references) == index + 1
             assert all(ref() is None for ref in references)
             assert result.header.acq_info.idx.k1.item() == acq.idx.kspace_encode_step_1

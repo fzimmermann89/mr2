@@ -161,26 +161,30 @@ class KData(Dataclass):
         file_format
             Explicit input format. If None, detect path formats and assume HDF5 for file-like inputs.
         """
-        if file_format == 'mr2':
-            return super().from_file(filename)
-        is_hdf5 = file_format == 'ismrmrd-hdf5' or (
-            file_format is None and (not isinstance(filename, (str, PathLike)) or h5py.is_hdf5(filename))
-        )
-        if file_format is None and is_hdf5 and cls._is_mr2_file(filename):
-            return super().from_file(filename)
-        if trajectory is None:
-            raise ValueError('A trajectory source is required for ISMRMRD input.')
-        if is_hdf5:
-            return cls._from_ismrmrd_hdf5(
-                filename, trajectory, header_overwrites, dataset_idx, acquisition_filter_criterion
-            )
-        return cls._from_ismrmrd_stream(
-            cast(str | PathLike | BinaryIO, filename),
-            trajectory,
-            header_overwrites,
-            dataset_idx,
-            acquisition_filter_criterion,
-        )
+        if file_format is None:
+            if isinstance(filename, (str, PathLike)) and not h5py.is_hdf5(filename):
+                file_format = 'ismrmrd-stream'
+            else:
+                file_format = 'mr2' if cls._is_mr2_file(filename) else 'ismrmrd-hdf5'
+        match file_format:
+            case 'mr2':
+                return super().from_file(filename)
+            case 'ismrmrd-hdf5' | 'ismrmrd-stream':
+                if trajectory is None:
+                    raise ValueError('A trajectory source is required for ISMRMRD input.')
+                if file_format == 'ismrmrd-hdf5':
+                    return cls._from_ismrmrd_hdf5(
+                        filename, trajectory, header_overwrites, dataset_idx, acquisition_filter_criterion
+                    )
+                return cls._from_ismrmrd_stream(
+                    cast(str | PathLike | BinaryIO, filename),
+                    trajectory,
+                    header_overwrites,
+                    dataset_idx,
+                    acquisition_filter_criterion,
+                )
+            case _:
+                raise ValueError(f'Unknown file_format {file_format!r}')
 
     @classmethod
     def _from_ismrmrd_hdf5(
@@ -228,30 +232,14 @@ class KData(Dataclass):
     ) -> Self:
         """Read a complete measurement from a serialized ISMRMRD stream.
 
-        A measurement ends at the next header or CLOSE. Nonnegative selection stops at that boundary; negative
-        selection reads to CLOSE, retaining at most ``abs(dataset_idx)`` measurements.
-        Missing CLOSE and corrupt messages raise the deserializer's errors in the consumed input.
-        Images, waveforms and other non-acquisition objects are ignored.
-        Selection consumes the next header. Use `iter_ismrmrd` to process acquisitions as they arrive.
-
-        Parameters
-        ----------
-        filename
-            Path or binary stream, including nonseekable streams. Caller streams remain
-            open on success and failure. Blocking inputs may return short reads.
-        trajectory
-            Trajectory calculator, stored ISMRMRD trajectory reader, or a trajectory matching
-            the selected acquisitions, as in `from_ismrmrd`.
-        header_overwrites
-            Header fields to overwrite, including an explicit datetime if desired.
-        dataset_idx
-            Measurement index, defaulting to the last measurement.
-        acquisition_filter_criterion
-            Acquisition predicate, or None to disable filtering.
+        A measurement ends at the next header or CLOSE. Nonnegative selection consumes that next header;
+        negative selection reads to CLOSE, retaining at most ``abs(dataset_idx)`` measurements.
+        Caller streams remain open. Missing CLOSE and corrupt messages raise deserializer errors.
+        Images, waveforms and other non-acquisition messages are ignored.
         """
-        modification_time = None
+        header_defaults: dict[str, object] = {}
         if isinstance(filename, (str, PathLike)):
-            modification_time = datetime.datetime.fromtimestamp(Path(filename).stat().st_mtime)
+            header_defaults['datetime'] = datetime.datetime.fromtimestamp(Path(filename).stat().st_mtime)
         trailing: deque[tuple[ismrmrd.xsd.ismrmrdHeader, list[ismrmrd.Acquisition]]] = deque(
             maxlen=-dataset_idx if dataset_idx < 0 else 1
         )
@@ -285,7 +273,7 @@ class KData(Dataclass):
             trajectory,
             header_overwrites,
             acquisition_filter_criterion,
-            header_defaults={'datetime': modification_time},
+            header_defaults=header_defaults,
         )
 
     @classmethod
@@ -541,8 +529,7 @@ class KData(Dataclass):
                 )
 
         kdata = cls(header, data, trajectory_)
-        kdata = kdata.reshape_by_idx()
-        return kdata
+        return kdata.reshape_by_idx() if data.shape[0] > 1 else kdata
 
     def reshape_by_idx(self) -> Self:
         """Sort and reshape according to the acquisition indices.
