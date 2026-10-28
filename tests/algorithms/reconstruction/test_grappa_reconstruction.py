@@ -1,52 +1,14 @@
 """Tests for trajectory-driven Cartesian GRAPPA reconstruction."""
 
+from collections.abc import Callable
 from itertools import product
 
 import pytest
 import torch
 from mr2.algorithms.reconstruction import GrappaReconstruction
-from mr2.data import AcqInfo, CsmData, IData, KData, KHeader, KNoise, KTrajectory, SpatialDimension
+from mr2.data import CsmData, IData, KData, KNoise, KTrajectory, SpatialDimension
 from mr2.operators import FastFourierOp, FourierOp
-from mr2.phantoms.coils import birdcage_2d
-from tests.phantoms import EllipsePhantomTestData
 from torch.nn.functional import conv3d
-
-
-def _phantom_kspace(
-    ellipse_phantom: EllipsePhantomTestData, shape: tuple[int, int, int], dtype: torch.dtype
-) -> torch.Tensor:
-    """Sample the shared ellipse phantom with simulated birdcage coil sensitivities."""
-    dimensions = SpatialDimension(*shape)
-    image = ellipse_phantom.phantom.image_space(dimensions).to(dtype)
-    image = image * torch.linspace(0.5, 1.0, shape[0]).reshape(1, 1, -1, 1, 1)
-    coils = birdcage_2d(8, dimensions).to(dtype)
-    (kspace,) = FastFourierOp()(image * coils)
-    return kspace[0]
-
-
-def _kdata(full: torch.Tensor, acquired: torch.Tensor) -> KData:
-    """Store samples compactly with an explicit Cartesian acquisition trajectory."""
-    shape = full.shape[-3:]
-    coordinates = torch.meshgrid(*(torch.arange(n, device=full.device) - n // 2 for n in shape), indexing='ij')
-    kz, ky, kx = (coordinate[acquired].reshape(1, 1, 1, 1, -1) for coordinate in coordinates)
-    trajectory = KTrajectory(kz, ky, kx)
-    header = KHeader(
-        recon_matrix=SpatialDimension(*shape),
-        encoding_matrix=SpatialDimension(*shape),
-        recon_fov=SpatialDimension(1.0, 1.0, 1.0),
-        encoding_fov=SpatialDimension(1.0, 1.0, 1.0),
-        acq_info=AcqInfo(),
-    )
-    return KData(data=full[..., acquired].unsqueeze(-2).unsqueeze(-2), header=header, traj=trajectory)
-
-
-@pytest.fixture
-def grappa_data(ellipse_phantom: EllipsePhantomTestData) -> tuple[torch.Tensor, torch.Tensor, KData]:
-    """Shared ellipse acquisition with alternate phase-encoding lines missing."""
-    full = _phantom_kspace(ellipse_phantom, (1, 16, 18), torch.complex128)[None]
-    acquired = torch.ones(full.shape[-3:], dtype=torch.bool)
-    acquired[..., 1::2, :] = False
-    return full, acquired, _kdata(full, acquired)
 
 
 @pytest.mark.parametrize(
@@ -55,18 +17,19 @@ def grappa_data(ellipse_phantom: EllipsePhantomTestData) -> tuple[torch.Tensor, 
 )
 @pytest.mark.parametrize('dtype', [torch.complex64, torch.complex128])
 def test_grappa_reconstruction(
-    ellipse_phantom: EllipsePhantomTestData,
     shape: tuple[int, int, int],
     kernel: tuple[int, int, int],
     acceleration: int,
     dtype: torch.dtype,
+    grappa_kspace: Callable,
+    grappa_kdata: Callable,
 ) -> None:
     """Reconstruct the ellipse phantom using cropped ACS and trajectory-derived sampling."""
-    full = _phantom_kspace(ellipse_phantom, shape, dtype)[None]
+    full = grappa_kspace(shape, dtype)[None]
     acquired = torch.zeros(shape, dtype=torch.bool)
     acquired[..., ::acceleration, :] = True
     acquired[..., 6:10, :] = True
-    data = _kdata(full, acquired)
+    data = grappa_kdata(full, acquired)
     acs = full[..., 2:-2, 2:-2]
     reconstruction = GrappaReconstruction(data, acs, kernel, regularization=0, csm=None)
     completed = reconstruction.interpolate(data)
@@ -76,11 +39,13 @@ def test_grappa_reconstruction(
     torch.testing.assert_close(reconstruction(data).data, expected, atol=2e-5, rtol=2e-5)
 
 
-def test_grappa_reconstruction_zero_and_coil_combination(grappa_data: tuple[torch.Tensor, torch.Tensor, KData]) -> None:
+def test_grappa_reconstruction_zero_and_coil_combination(
+    grappa_data: tuple[torch.Tensor, torch.Tensor, KData], grappa_kdata: Callable
+) -> None:
     """Preserve acquired zeros and use the normal IData coil combination interface."""
     full, acquired, _ = grappa_data
     full[..., 0, 0, 0] = 0
-    data = _kdata(full, acquired)
+    data = grappa_kdata(full, acquired)
     reconstruction = GrappaReconstruction(data, full, (1, 3, 3))
     completed = reconstruction.interpolate(data)
     assert torch.equal(completed[..., acquired], full[..., acquired])
@@ -90,14 +55,14 @@ def test_grappa_reconstruction_zero_and_coil_combination(grappa_data: tuple[torc
     torch.testing.assert_close(explicit(data).data, reconstruction(data).data)
 
 
-def test_grappa_batched_volume(ellipse_phantom: EllipsePhantomTestData) -> None:
+def test_grappa_batched_volume(grappa_kspace: Callable, grappa_kdata: Callable) -> None:
     """Use noncontiguous shared cropped ACS for separate 3D data batches."""
-    full = _phantom_kspace(ellipse_phantom, (9, 16, 12), torch.complex128)
+    full = grappa_kspace((9, 16, 12), torch.complex128)
     full = torch.stack((full, (2 - 1j) * full)).transpose(-1, -2)
     acs = full[:1, :, 1:-1, 2:-2, 2:-2]
     acquired = torch.ones(full.shape[-3:], dtype=torch.bool)
     acquired[..., 1::2] = False
-    data = _kdata(full, acquired)
+    data = grappa_kdata(full, acquired)
     reconstruction = GrappaReconstruction(data, acs, (3, 3, 3), regularization=0, csm=None)
     assert (reconstruction.interpolate(data) - full).norm() < 0.03 * full.norm()
 
@@ -118,17 +83,17 @@ def test_grappa_reconstruction_cuda(grappa_data: tuple[torch.Tensor, torch.Tenso
     torch.testing.assert_close(reconstruction.cpu()(data).data, expected)
 
 
-def test_grappa_full_sampling_and_recalibration(ellipse_phantom: EllipsePhantomTestData) -> None:
+def test_grappa_full_sampling_and_recalibration(grappa_kspace: Callable, grappa_kdata: Callable) -> None:
     """A full grid is unchanged, and updating a trajectory recalibrates its kernels."""
-    full = _phantom_kspace(ellipse_phantom, (1, 24, 20), torch.complex128)[None]
+    full = grappa_kspace((1, 24, 20), torch.complex128)[None]
     mask = torch.ones(full.shape[-3:], dtype=torch.bool)
-    data = _kdata(full, mask)
+    data = grappa_kdata(full, mask)
     reconstruction = GrappaReconstruction(data, full, (1, 5, 3), regularization=0, csm=None)
     assert torch.equal(reconstruction.interpolate(data), full)
     for acceleration in (2, 3):
         mask[:] = False
         mask[..., ::acceleration, :] = True
-        data = _kdata(full, mask)
+        data = grappa_kdata(full, mask)
         reconstruction.recalculate_fourierop(data)
         assert (reconstruction.interpolate(data) - full).norm() < 0.03 * full.norm()
 
@@ -141,10 +106,12 @@ def test_grappa_reject_noncartesian(grappa_data: tuple[torch.Tensor, torch.Tenso
         GrappaReconstruction(data, full, (1, 3, 3), csm=None)
 
 
-def test_grappa_reject_varying_batch_masks(grappa_data: tuple[torch.Tensor, torch.Tensor, KData]) -> None:
+def test_grappa_reject_varying_batch_masks(
+    grappa_data: tuple[torch.Tensor, torch.Tensor, KData], grappa_kdata: Callable
+) -> None:
     """Reject different sampling supports across batches explicitly."""
     full, acquired, first = grappa_data
-    second = _kdata(full, ~acquired)
+    second = grappa_kdata(full, ~acquired)
     first.data = torch.cat((first.data, second.data), dim=0)
     first.traj = KTrajectory.from_tensor(torch.cat((first.traj.as_tensor(), second.traj.as_tensor()), dim=1))
     with pytest.raises(ValueError, match='shared sampling pattern'):
@@ -152,7 +119,9 @@ def test_grappa_reject_varying_batch_masks(grappa_data: tuple[torch.Tensor, torc
 
 
 @pytest.mark.parametrize('failure', ['repeated_samples', 'no_sources'])
-def test_grappa_failed_recalibration(grappa_data: tuple[torch.Tensor, torch.Tensor, KData], failure: str) -> None:
+def test_grappa_failed_recalibration(
+    grappa_data: tuple[torch.Tensor, torch.Tensor, KData], failure: str, grappa_kdata: Callable
+) -> None:
     """A failed sampling update or kernel fit leaves the original reconstruction usable."""
     full, mask, original = grappa_data
     acs = full[..., 3:9, 3:10]
@@ -168,7 +137,7 @@ def test_grappa_failed_recalibration(grappa_data: tuple[torch.Tensor, torch.Tens
     else:
         mask[:] = True
         mask[..., 6:11, 6:11] = False
-        invalid = _kdata(full, mask)
+        invalid = grappa_kdata(full, mask)
         message = 'No acquired neighbor within kernel_size'
     with pytest.raises(ValueError, match=message):
         reconstruction.recalculate_fourierop(invalid)
@@ -210,7 +179,10 @@ def test_grappa_gradient_calibration(grappa_data: tuple[torch.Tensor, torch.Tens
 
 @pytest.mark.parametrize(('depth', 'recon_y', 'recon_x'), [(1, 12, 14), (4, 16, 18)])
 def test_grappa_image_geometry(
-    grappa_data: tuple[torch.Tensor, torch.Tensor, KData], depth: int, recon_y: int, recon_x: int
+    grappa_data: tuple[torch.Tensor, torch.Tensor, KData],
+    depth: int,
+    recon_y: int,
+    recon_x: int,
 ) -> None:
     """Match FourierOp for image cropping and a constant trajectory axis."""
     full, _, data = grappa_data
