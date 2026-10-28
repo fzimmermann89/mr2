@@ -46,16 +46,15 @@ def test_homodyne_smooth_phase(size: int, axis: int, side: str) -> None:
     assert restored.dtype == image.dtype
 
 
-@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
-def test_homodyne_full_and_batched(device: str) -> None:
+def test_homodyne_full_and_batched() -> None:
     """Full sampling has unit scale, while partial sampling preserves batch/device conventions."""
-    kspace = torch.ones(2, 3, 16, dtype=torch.complex64, device=device)
+    kspace = torch.ones(2, 3, 16, dtype=torch.complex64)
     fft = FastFourierOp((-1,))
     (image,) = fft.H(kspace)
-    full = torch.tensor(True, device=device)
+    full = torch.tensor(True)
     torch.testing.assert_close(homodyne_partial_fourier(kspace, full, (-1,), -1), image.abs())
     torch.testing.assert_close(homodyne_partial_fourier(kspace, full, (-1,), -1, restore_phase=True), image)
-    mask = torch.arange(16, device=device) >= 4
+    mask = torch.arange(16) >= 4
     batched = homodyne_partial_fourier(kspace, mask, (-1,), -1)
     single = homodyne_partial_fourier(kspace[0, 0], mask, (0,), 0)
     torch.testing.assert_close(batched, single.expand_as(batched))
@@ -75,3 +74,18 @@ def test_homodyne_linear_transition() -> None:
     (weighted,) = fft.H(kspace * weight)
     expected = (phase.conj() * weighted).real
     torch.testing.assert_close(homodyne_partial_fourier(kspace, mask, (0,), 0), expected)
+
+
+@pytest.mark.cuda
+def test_homodyne_cuda() -> None:
+    """CUDA phase correction matches CPU for signed real and phase-restored complex output."""
+    kspace = torch.tensor([0, 0, 2j, 1, 5, 1j, 2, -1j], dtype=torch.complex64)
+    mask = torch.arange(8) >= 2
+    data = kspace.cuda()
+    acquired = mask.cuda()
+    for restore_phase in (False, True):
+        expected = homodyne_partial_fourier(kspace, mask, (0,), 0, restore_phase=restore_phase)
+        actual = homodyne_partial_fourier(data, acquired, (0,), 0, restore_phase=restore_phase)
+        torch.testing.assert_close(actual.cpu(), expected)
+        assert actual.device == data.device
+        assert actual.dtype == expected.dtype

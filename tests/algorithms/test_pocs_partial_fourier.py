@@ -3,7 +3,7 @@
 import pytest
 import torch
 from mr2.algorithms import pocs_partial_fourier
-from mr2.algorithms.partial_fourier import _partial_fourier_center, _partial_fourier_phase
+from mr2.algorithms.partial_fourier._shared import _partial_fourier_center, _partial_fourier_phase
 from mr2.operators import FastFourierOp
 
 
@@ -31,14 +31,13 @@ def test_pocs_recovery(size: int, side: str, axis: int) -> None:
     assert completed.device == kspace.device
 
 
-@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
-def test_pocs_preserves_measurements(device: str) -> None:
+def test_pocs_preserves_measurements() -> None:
     """Acquired outer samples and zeros survive every iteration; missing values are ignored."""
-    kspace = torch.ones(2, 3, 16, 12, dtype=torch.complex64, device=device)
+    kspace = torch.ones(2, 3, 16, 12, dtype=torch.complex64)
     kspace[..., 4, :] = 0
-    mask = (torch.arange(16, device=device) >= 4)[:, None].expand(16, 12)
+    mask = (torch.arange(16) >= 4)[:, None].expand(16, 12)
     original = kspace.clone()
-    kspace[..., :4, :] = torch.tensor(complex(float('nan'), 0), device=device)
+    kspace[..., :4, :] = torch.tensor(complex(float('nan'), 0))
     for iterations in (0, 1, 4):
         completed = pocs_partial_fourier(kspace, mask, (-2, -1), -2, iterations)
         assert torch.equal(completed[..., mask], original[..., mask])
@@ -116,3 +115,18 @@ def test_pocs_unsupported_inputs(
     kspace = torch.ones(acquired.shape, dtype=torch.complex64)
     with pytest.raises(error):
         pocs_partial_fourier(kspace, acquired, dim, axis)
+
+
+@pytest.mark.cuda
+def test_pocs_cuda() -> None:
+    """CUDA completion matches CPU and preserves acquired zeros and outer samples exactly."""
+    kspace = torch.tensor([0, 0, 1 + 4j, 0, 2 - 1j, -4j, 2, -3j], dtype=torch.complex64)
+    mask = torch.arange(8) >= 2
+    expected = pocs_partial_fourier(kspace, mask, (0,), 0)
+    data = kspace.cuda()
+    acquired = mask.cuda()
+    actual = pocs_partial_fourier(data, acquired, (0,), 0)
+    torch.testing.assert_close(actual.cpu(), expected)
+    assert torch.equal(actual[acquired], data[acquired])
+    assert actual.device == data.device
+    assert actual.dtype == data.dtype
