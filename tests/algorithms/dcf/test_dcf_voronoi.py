@@ -10,7 +10,7 @@ from einops import repeat
 from mr2.algorithms.dcf import dcf_1d, dcf_2d3d_voronoi
 from mr2.algorithms.dcf.dcf_voronoi import _cell_volumes_3d
 from mr2.data import KTrajectory
-from scipy.spatial import ConvexHull, HalfspaceIntersection, Voronoi
+from scipy.spatial import ConvexHull, Delaunay, HalfspaceIntersection, Voronoi
 
 
 def example_traj_rad_2d(n_kr, n_ka, phi0=0.0, broadcast=True):
@@ -203,7 +203,7 @@ def test_dcf_voronoi_float64(device: str, ndim: int) -> None:
 def test_dcf_3d_voronoi_near_duplicate(offset: float) -> None:
     """A second point very close to a grid point shares the cell of that grid point.
 
-    At 1e-12 Qhull no longer separates the two points.
+    The public function merges both pairs before passing the points to Qhull.
     """
     grid = torch.stack(torch.meshgrid(*[torch.arange(6.0, dtype=torch.float64)] * 3, indexing='ij')).reshape(3, -1)
     index = 3 * 36 + 3 * 6 + 2
@@ -275,6 +275,20 @@ def test_dcf_3d_cell_volumes(block_size: int) -> None:
         [ConvexHull(voronoi.vertices[voronoi.regions[region]]).volume for region in voronoi.point_region[:-8]]
     )
     np.testing.assert_allclose(_cell_volumes_3d(points, block_size)[:-8], expected, rtol=1e-10)
+
+
+def test_dcf_3d_cell_volumes_qhull_coincident() -> None:
+    """Points omitted by Qhull share their owner's cell volume."""
+    grid = np.stack(np.meshgrid(*[np.arange(6.0)] * 3, indexing='ij')).reshape(3, -1).T
+    index = 3 * 36 + 3 * 6 + 2
+    corners = np.array(list(product([-100.0, 100.0], repeat=3)))
+    points = np.concatenate((grid, grid[index : index + 1] + np.array([1e-14, 0, 0]), corners))
+    coplanar = Delaunay(points).coplanar
+    # Qhull may keep either point, but must identify this specific pair as coincident.
+    pair = np.sort(coplanar[:, [0, 2]], axis=1)
+    assert np.any(np.all(pair == [index, len(grid)], axis=1))
+    volumes = _cell_volumes_3d(points)
+    np.testing.assert_allclose(volumes[[index, len(grid)]], 0.5, rtol=0, atol=1e-5)
 
 
 @pytest.mark.parametrize('seed', [0, 1, 2])

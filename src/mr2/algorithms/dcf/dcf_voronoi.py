@@ -145,12 +145,9 @@ def dcf_1d(traj: torch.Tensor) -> torch.Tensor:
 def dcf_2d3d_voronoi(traj: torch.Tensor) -> torch.Tensor:
     """Calculate sample density compensation function using Voronoi method.
 
-    This function computes the DCF by determining the area around each point in k-space using the Voronoi tessellation.
-    Points at the edge of k-space are detected as outliers and are assigned the area of the 1% largest DCF values.
+    Each sample's weight is the area of its Voronoi cell in 2D or its volume in 3D.
+    Large boundary cells are detected as outliers and assigned the mean of the largest 1% of non-outlier weights.
     Nearly coincident 3D points are treated as repeated samples and share their cell weight.
-
-    The Voronoi tessellation assigns each point in k-space a region based on the proximity to its nearest neighbors. The
-    DCF is then computed based on the inverse of the area of these regions.
 
     This function operates on a single `other` sample.
     See also `~mr2.data.DcfData` and `~mr2.utils.smap`.
