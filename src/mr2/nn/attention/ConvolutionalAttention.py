@@ -81,17 +81,15 @@ class ConvolutionalAttention(Module):
     def _pack(self, x: torch.Tensor) -> torch.Tensor:
         if self.mode == 'temporal':
             return rearrange(x, 'b (heads c) t h w -> b heads t (c h w)', heads=self.n_heads)
-        if self.mode == 'local':
-            x = rearrange(
-                x,
-                'b c t (gh nh ph) (gw nw pw) -> b t (gh gw) (nh nw) (ph pw c)',
-                nh=2,
-                nw=2,
-                ph=4,
-                pw=4,
-            )
-        else:
-            x = rearrange(x, 'b c t (gh ph) (gw pw) -> b t 1 (gh gw) (ph pw c)', ph=4, pw=4)
+        patches_per_window = 2 if self.mode == 'local' else self.image_size // 4
+        x = rearrange(
+            x,
+            'b c t (gh nh ph) (gw nw pw) -> b t (gh gw) (nh nw) (ph pw c)',
+            nh=patches_per_window,
+            nw=patches_per_window,
+            ph=4,
+            pw=4,
+        )
         return rearrange(x, 'b t g s (heads d) -> b t g heads s d', heads=self.n_heads)
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
