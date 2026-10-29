@@ -8,8 +8,11 @@ import torch
 from typing_extensions import Self
 
 from mr2.data.IData import IData
+from mr2.data.IHeader import IHeader
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.utils.interpolate import apply_lowres
+from mr2.utils.pad_or_crop import pad_or_crop
+from mr2.utils.smap import smap
 
 if TYPE_CHECKING:
     from mr2.data.KData import KData
@@ -48,6 +51,78 @@ def get_downsampled_size(
 
 class CsmData(IData, init=False):
     """Coil sensitivity map class."""
+
+    @classmethod
+    def from_kdata_espirit(
+        cls,
+        acs: KData,
+        singular_value_threshold: float = 0.02,
+        kernel_width: int = 6,
+        crop_threshold: float = 0.8,
+        n_iterations: int = 10,
+        calibration_size: int | SpatialDimension[int] | None = None,
+    ) -> Self:
+        """ESPIRiT sensitivity estimation.
+
+        Prepare calibration data with `~mr2.data.KData.acs`, then estimate maps
+        on the encoded image grid and crop to the reconstruction grid.
+
+        Parameters
+        ----------
+        acs
+            Acquisition or separate calibration data. Cartesian data may be
+            undersampled outside its central calibration region. Non-Cartesian
+            calibration is approximately gridded using density compensation.
+        singular_value_threshold
+            Relative singular-value cutoff, matching SigPy. To reproduce BART
+            ``ecalib -t t``, use ``sqrt(t)``. See `~mr2.algorithms.csm.espirit`.
+        kernel_width
+            width of the kernel for the espirit algorithm
+        crop_threshold
+            Eigenvalue cutoff for map support. Defaults to 0.8, as in the
+            tensor-level `~mr2.algorithms.csm.espirit`.
+        n_iterations
+            Number of power iterations.
+        calibration_size
+            Requested ACS width or per-axis widths. If omitted, infer a common
+            centered square or cube using `~mr2.data.KData.acs`.
+
+        Raises
+        ------
+        ValueError
+            If the requested calibration region has insufficient coverage or is
+            smaller than the kernel on an active axis, or the reconstruction
+            geometry is not a crop of the encoded image grid.
+        """
+        from mr2.algorithms.csm.espirit import espirit
+
+        # FourierOp uses encoding-grid voxel spacing and centered image cropping.
+        expected_fov = acs.header.encoding_fov * (acs.header.recon_matrix / acs.header.encoding_matrix)
+        if any(
+            abs(actual - expected) > 1e-6 * max(abs(actual), abs(expected), 1e-12)
+            for actual, expected in zip(acs.header.recon_fov.zyx, expected_fov.zyx, strict=True)
+        ) or any(r > e for r, e in zip(acs.header.recon_matrix.zyx, acs.header.encoding_matrix.zyx, strict=True)):
+            raise ValueError('ESPIRiT requires reconstruction geometry matching a crop of the encoded image grid.')
+        kspace_data = acs.acs(calibration_size)
+        if any(
+            n < kernel_width and encoded > 1
+            for n, encoded in zip(kspace_data.shape[-3:], acs.header.encoding_matrix.zyx, strict=True)
+        ):
+            raise ValueError('The ACS region must be at least kernel_width along each active encoding axis.')
+        csm_data = smap(
+            lambda c: espirit(
+                c,
+                img_shape=acs.header.encoding_matrix,
+                singular_value_threshold=singular_value_threshold,
+                kernel_width=kernel_width,
+                crop_threshold=crop_threshold,
+                n_iterations=n_iterations,
+            ),
+            kspace_data,
+            passed_dimensions=(-4, -3, -2, -1),  # coils, z, y, x
+        )
+        csm_data = pad_or_crop(csm_data, acs.header.recon_matrix.zyx)
+        return cls(header=IHeader.from_kheader(acs.header), data=csm_data)
 
     @classmethod
     def from_kdata_walsh(
