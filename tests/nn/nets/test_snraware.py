@@ -6,25 +6,39 @@ import pytest
 import torch
 from mr2.nn.nets import SNRAware
 from mr2.utils import RandomGenerator
+from packaging.version import parse as parse_version
 
 
-@pytest.mark.parametrize('torch_compile', [True, False], ids=['compiled', 'uncompiled'])
+@torch.no_grad()
+@pytest.mark.parametrize(
+    'torch_compile',
+    [
+        pytest.param(
+            True,
+            id='compiled',
+            marks=pytest.mark.skipif(
+                parse_version(torch.__version__) < parse_version('2.6'),
+                reason='SNRAware compilation requires PyTorch >= 2.6 to avoid shared shape-specialization bugs.',
+            ),
+        ),
+        pytest.param(False, id='uncompiled'),
+    ],
+)
 @pytest.mark.parametrize(
     'device',
     [pytest.param('cpu', id='cpu'), pytest.param('cuda', marks=pytest.mark.cuda, id='cuda')],
 )
 def test_snraware_forward(torch_compile: bool, device: str) -> None:
-    """Test compiled and uncompiled forward passes on CPU and CUDA."""
+    """Check CPU graph capture and CUDA kernel compilation against eager inference."""
     model = SNRAware(n_features=4, n_heads=2, image_size=16, p_dropout=0).to(device).eval()
     x = RandomGenerator(seed=4).float32_tensor((1, 3, 2, 16, 16), device=device)
+    expected = model(x)
+    assert expected.shape == (1, 2, 2, 16, 16)
     if torch_compile:
-        # Avoid automatic dynamic-shape recompilation in older PyTorch versions.
-        model = cast(SNRAware, torch.compile(model, dynamic=False))
-    y = model(x)
-    assert y.shape == (1, 2, 2, 16, 16)
-    if torch_compile:
-        # Older PyTorch shares shape-specialization state with later network tests.
-        torch.compiler.reset()
+        # CPU graph capture avoids costly kernel generation; CUDA checks Inductor.
+        backend = 'inductor' if device == 'cuda' else 'eager'
+        model = cast(SNRAware, torch.compile(model, backend=backend, dynamic=False))
+        torch.testing.assert_close(model(x), expected, atol=1e-4, rtol=1e-4)
 
 
 @pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
