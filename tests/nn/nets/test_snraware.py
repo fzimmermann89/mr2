@@ -16,11 +16,15 @@ from mr2.utils import RandomGenerator
 def test_snraware_forward(torch_compile: bool, device: str) -> None:
     """Test compiled and uncompiled forward passes on CPU and CUDA."""
     model = SNRAware(n_features=4, n_heads=2, image_size=16, p_dropout=0).to(device).eval()
-    x = RandomGenerator(seed=4).float32_tensor((2, 3, 3, 16, 16), device=device)
+    x = RandomGenerator(seed=4).float32_tensor((1, 3, 2, 16, 16), device=device)
     if torch_compile:
-        model = cast(SNRAware, torch.compile(model))
+        # Avoid automatic dynamic-shape recompilation in older PyTorch versions.
+        model = cast(SNRAware, torch.compile(model, dynamic=False))
     y = model(x)
-    assert y.shape == (2, 2, 3, 16, 16)
+    assert y.shape == (1, 2, 2, 16, 16)
+    if torch_compile:
+        # Older PyTorch shares shape-specialization state with later network tests.
+        torch.compiler.reset()
 
 
 @pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
