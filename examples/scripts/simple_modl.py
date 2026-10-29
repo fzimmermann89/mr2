@@ -1,17 +1,10 @@
 # %% [markdown]
 # # MoDL-style reconstruction with a small CNN
 #
-# Here we train an unrolled reconstruction network using a convolutional neural
-# network (CNN) and conjugate-gradient data consistency. We use simulated
-# brain images from BrainWeb and run the reconstruction on CPU.
-#
-# The default run downloads one BrainWeb volume (about 4 MB) and uses eight 96 x 96 slices
-# for training and two held-out slices for evaluation, with 40 training updates.
-# Training takes a few seconds on the development CPU; download time depends on
-# the connection. Install ``mrtwo[notebooks]`` to run the notebook.
-#
-# This toy example demonstrates the reconstruction and training steps. It does
-# not reproduce the full MoDL paper or evaluate reconstruction of real MRI data.
+# We train a small unrolled network with a convolutional neural network (CNN)
+# and conjugate-gradient data consistency on simulated BrainWeb images.
+# Training runs for 60 seconds on CPU and requires a 4 MB download.
+# Install ``mrtwo[notebooks]`` to run the notebook.
 
 # %%
 import gzip
@@ -32,23 +25,16 @@ device = torch.device('cpu')
 # %% [markdown]
 # ## Create images and simulate undersampled k-space data
 #
-# We use the T1-weighted, 1 mm normal-brain simulation with zero noise and
-# zero intensity non-uniformity from [BrainWeb](https://brainweb.bic.mni.mcgill.ca/brainweb/selection_normal.html).
-# The volume contains magnitude images, so we add a smooth phase ourselves
-# before simulating complex k-space data. These are simulated data, not acquired
-# multi-coil measurements.
+# We use the T1-weighted, 1 mm [BrainWeb](https://brainweb.bic.mni.mcgill.ca/brainweb/selection_normal.html)
+# volume with zero noise and intensity non-uniformity. We pad and resize the
+# slices to 96 x 96 pixels, normalize their magnitudes and add a smooth phase.
+# Eight axial slices are used for training and two higher slices for evaluation.
+# Both sets come from the same simulated brain.
 #
-# We take eight axial slices for training and two higher slices for evaluation.
-# Both sets come from one anatomical model: the held-out loss does not measure
-# generalization to another subject. We pad each slice to a square before
-# resizing to 96 x 96 pixels, preserving its aspect ratio, and normalize each
-# slice by its maximum magnitude.
-#
-# The image tensors have shape ``(batch, coils, z, y, x)``. We use one slice and
-# one coil with sensitivity one. The forward model $A = MF$ combines a centered,
-# orthonormal Fourier transform $F$ with a Cartesian sampling mask $M$.
-# We keep every fourth phase-encoding line and four central lines, storing
-# unsampled entries as zeros. We use the same mask for all images.
+# For this toy single-coil acquisition, the tensors have shape
+# ``(batch, coils=1, z=1, y, x)``. The forward model $A=MF$ combines a centered,
+# orthonormal Fourier transform with a mask that keeps every fourth
+# phase-encoding line and four central lines. Unsampled entries remain zero.
 
 # %% tags=["hide-input"] mystnb={"code_prompt_show": "Show BrainWeb download and preparation"}
 # BrainWeb raw-byte volumes have axes (z, y, x) and shape (181, 217, 181).
@@ -94,39 +80,26 @@ print(f'Sampled phase-encoding lines: {int(mask.sum())}/{size}')
 # %% [markdown]
 # ## Denoising followed by data consistency
 #
-# We initialize the reconstruction with the adjoint image $x_0=A^H b$, where
-# $b$ denotes the undersampled k-space data. At each of three iterations we
-# denoise the current image and solve a regularized least-squares problem:
+# Starting from the adjoint image $x_0=A^H b$, we alternate denoising and
+# data consistency for three iterations:
 #
-# $$z_k = D_\theta(x_k), \qquad
-# x_{k+1} = \operatorname*{arg\,min}_x
-# \left(\|Ax-b\|_2^2 + \lambda\|x-z_k\|_2^2\right).$$
-#
-# The corresponding normal equation is
+# $$z_k = D_\theta(x_k),$$
 #
 # $$(A^H A + \lambda I)x_{k+1} = A^H b + \lambda z_k.$$
 #
-# We use `~mr2.nn.data_consistency.ConjugateGradientDC` to solve this system.
-# It computes gradients by implicit differentiation. The trainable parameter
-# ``log_weight`` defines $\lambda=\exp(\mathrm{log\_weight})>0$, keeping the
-# system positive definite. Increasing $\lambda$ gives the denoised image more
-# weight relative to the measured data. The solution can therefore differ from
-# the measurements even at sampled positions.
+# `~mr2.nn.data_consistency.ConjugateGradientDC` solves the second equation
+# and computes gradients by implicit differentiation. Its trainable parameter
+# ``log_weight`` gives $\lambda=\exp(\mathrm{log\_weight})>0$.
+# Larger weights pull the reconstruction toward the denoised image.
 #
-# Our denoiser is $D_\theta(x)=x+N_\theta(x)$, where $N_\theta$ is a
-# `~mr2.nn.nets.BasicCNN`. Before applying the 2D CNN, we remove the singleton
-# z axis to obtain shape ``(batch, 1, y, x)``.
-# `~mr2.nn.ComplexAsChannel` splits the complex channel into real and imaginary
-# channels and converts the CNN output back to a complex tensor. We restore
-# the z axis before the data-consistency step.
+# We use a residual denoiser $D_\theta(x)=x+N_\theta(x)$ with a
+# `~mr2.nn.nets.BasicCNN`. Removing the singleton z axis gives the CNN input
+# shape ``(batch, 1, y, x)``. `~mr2.nn.ComplexAsChannel` splits the complex
+# channel into real and imaginary channels and converts the output back to
+# complex values. We restore z before data consistency.
 #
-# For independent slices, we could combine the slice and batch axes before
-# applying the CNN. For multiple coils, we would also need coil sensitivity
-# maps and a forward model that maps a coil-combined image to coil data.
-#
-# We share the CNN and regularization weight across all three iterations.
-# To use different parameters at each iteration, we would create a separate
-# CNN and data-consistency module for each step, stored in a ``ModuleList``.
+# The CNN and regularization weight are shared across iterations. Unshared
+# iterations would each have their own CNN and data-consistency module.
 
 
 # %%
@@ -157,20 +130,17 @@ model = TinyMoDL().to(device)
 # %% [markdown]
 # ## Train the reconstruction network
 #
-# The supervised loss is mean squared complex error,
-# $\operatorname{mean}|x-x_{\mathrm{true}}|^2$, which includes both real and
-# imaginary errors. We apply ``torch.nn.functional.mse_loss`` to the real and
-# imaginary components using ``torch.view_as_real``. Multiplying by two gives
-# the mean squared complex error, since MSE averages over both components.
-# We update the CNN and the positive regularization weight
-# together. We monitor the held-out loss without using it to update the parameters.
-# This short run uses one fixed mask, noiseless data and no augmentation.
+# We minimize the complex MSE, $\operatorname{mean}|x-x_{\mathrm{true}}|^2$.
+# ``mse_loss`` averages over real and imaginary components, so we multiply
+# by two. Adam updates the CNN and regularization weight together; we compute
+# the held-out loss without gradients.
 
 # %%
-start = time.perf_counter()
 optimizer = torch.optim.Adam(model.parameters(), lr=3e-3)
 train_losses, test_losses = [], []
-for _ in range(40):
+training_seconds = 60
+start = time.perf_counter()
+while time.perf_counter() - start < training_seconds:
     model.train()
     optimizer.zero_grad()
     prediction = model(train_data)
@@ -194,14 +164,8 @@ print(f'Held-out complex MSE: adjoint={adjoint_loss.item():.5f}, unrolled={test_
 # %% [markdown]
 # ## Compare with the adjoint reconstruction
 #
-# We display the first held-out image, its adjoint reconstruction and the
-# trained network output. The magnitude images share an intensity scale;
-# the absolute complex errors share a separate scale. The loss curves show
-# the mean squared complex error over all training and held-out images.
-#
-# We train and evaluate on slices of the same simulated brain with one fixed
-# mask and no added noise. These results do not measure performance on other
-# subjects, sampling masks or acquired multi-coil data.
+# We compare the first held-out slice with the adjoint reconstruction.
+# Magnitudes and absolute complex errors each use a shared color scale.
 
 # %% tags=["hide-input"] mystnb={"code_prompt_show": "Show plotting code"}
 fig, axes = plt.subplots(2, 3, figsize=(9, 6), constrained_layout=True)
@@ -222,8 +186,8 @@ for axis, image, title in zip(
     axis.set_title(title)
     axis.axis('off')
 fig.colorbar(plot, ax=list(axes[1, :2]), shrink=0.7)
-axes[1, 2].plot(range(1, 41), train_losses, label='Training (before update)')
-axes[1, 2].plot(range(1, 41), test_losses, label='Held out (after update)')
+axes[1, 2].plot(range(1, len(train_losses) + 1), train_losses, label='Training (before update)')
+axes[1, 2].plot(range(1, len(train_losses) + 1), test_losses, label='Held out (after update)')
 axes[1, 2].set(xlabel='Update', ylabel='Complex MSE', yscale='log')
 axes[1, 2].legend(fontsize='small')
 plt.show()
