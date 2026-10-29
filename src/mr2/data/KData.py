@@ -34,10 +34,17 @@ from mr2.data.AcqInfo import (
     convert_time_stamp_to_siemens,
     write_acqinfo_to_ismrmrd_acquisition_,
 )
-from mr2.data.bart import BART_IMAGE_DIMS, BART_NONCARTESIAN_DIMS, BART_TRAJECTORY_DIMS, to_bart_layout, write_bart
+from mr2.data.bart import (
+    BART_IMAGE_DIMS,
+    BART_NONCARTESIAN_DIMS,
+    BART_TRAJECTORY_DIMS,
+    check_distinct_outputs,
+    to_bart_layout,
+    write_bart,
+)
 from mr2.data.Dataclass import Dataclass
 from mr2.data.EncodingLimits import EncodingLimits
-from mr2.data.enums import AcqFlags, BartDimension, TrajType
+from mr2.data.enums import AcqFlags, BartDimension
 from mr2.data.KHeader import KHeader
 from mr2.data.KNoise import KNoise
 from mr2.data.KTrajectory import KTrajectory
@@ -696,7 +703,8 @@ class KData(Dataclass):
     ) -> None:
         """Save k-space data as BART array.
 
-        Cartesian data is sorted into the encoding matrix with zeros at non-acquired positions.
+        Data with integer trajectory coordinates (within `KTrajectory.grid_detection_tolerance`) is Cartesian.
+        It is sorted into the encoding matrix with zeros at non-acquired positions.
         The k-space center is at index `n // 2`, matching BART's centered FFT.
         `(coils, k2, k1, k0)` are stored in the BART dimensions `COIL`, `PHS2`, `PHS1` and `READ`.
 
@@ -717,29 +725,29 @@ class KData(Dataclass):
             ``(BartDimension.TE, BartDimension.SLICE)``. `None` flattens all `other` dimensions
             into `BartDimension.BATCH`.
         """
-        from mr2.operators.CartesianSamplingOp import CartesianSamplingOp
-
-        if all(traj_type & TrajType.ONGRID for traj_type in self.traj.type_along_kzyx):
+        ks = (self.traj.kz, self.traj.ky, self.traj.kx)
+        if all(((k - k.round()).abs() <= self.traj.grid_detection_tolerance).all() for k in ks):
             if trajectory_filename is not None:
                 raise ValueError('Cartesian data is saved on the encoding matrix without a trajectory.')
-            # Sorting into the matrix drops points outside of it and keeps only one of repeated points.
-            # Detect both by sorting unique sample ids into the matrix and selecting them again.
-            sample_ids = torch.arange(1, self.traj.shape.numel() + 1, dtype=torch.float64, device=self.data.device)
-            sample_ids = sample_ids.reshape(self.traj.shape)
-            with warnings.catch_warnings():
-                warnings.simplefilter('ignore')  # points outside of the encoding matrix are checked below
-                sampling_op = CartesianSamplingOp(self.header.encoding_matrix, self.traj)
-                (selected_ids,) = sampling_op(*sampling_op.adjoint(sample_ids))
-            if not selected_ids.all():
-                raise ValueError('K-space points lie outside of the encoding matrix.')
-            if not torch.equal(selected_ids, sample_ids):
+            matrix = self.header.encoding_matrix.zyx
+            index = torch.zeros(self.traj.shape, dtype=torch.int64, device=self.data.device)
+            for k, n in zip(ks, matrix, strict=True):
+                position = k.round().to(torch.int64) + n // 2
+                if ((position < 0) | (position >= n)).any():
+                    raise ValueError('K-space points lie outside of the encoding matrix.')
+                index = index * n + position
+            index = index.flatten(start_dim=-3)
+            counts = torch.zeros(*index.shape[:-1], prod(matrix), dtype=torch.int32, device=index.device)
+            if counts.scatter_add_(-1, index, torch.ones_like(index, dtype=torch.int32)).amax() > 1:
                 raise ValueError('Repeated k-space points cannot be saved on the encoding matrix. Average them first.')
-            (data,) = sampling_op.adjoint(self.data)
-            write_bart(filename, to_bart_layout(data, BART_IMAGE_DIMS, other_dims))
+            data, index = torch.broadcast_tensors(self.data.flatten(start_dim=-3), index)
+            grid = data.new_zeros(*data.shape[:-1], prod(matrix)).scatter_(-1, index, data)
+            write_bart(filename, to_bart_layout(grid.unflatten(-1, matrix), BART_IMAGE_DIMS, other_dims))
             return
 
         if trajectory_filename is None:
             raise ValueError('A trajectory_filename is required for non-Cartesian data.')
+        check_distinct_outputs(filename, trajectory_filename)
         data = rearrange(self.data, '... coils k2 k1 k0 -> ... coils (k2 k1) k0')
         write_bart(filename, to_bart_layout(data, BART_NONCARTESIAN_DIMS, other_dims))
         traj_shape = (*self.data.shape[:-4], 1, *self.data.shape[-3:])

@@ -63,6 +63,21 @@ def _cfl_paths(filename: Path) -> tuple[Path, Path]:
     return filename.with_suffix('.hdr'), filename.with_suffix('.cfl')
 
 
+def check_distinct_outputs(*filenames: str | PathLike) -> None:
+    """Raise an error if BART files with these names would overwrite each other.
+
+    ``name.cfl`` and ``name.hdr`` both refer to the same ``.hdr``/``.cfl`` pair.
+    """
+    paths = [
+        {path.resolve() for path in (_cfl_paths(name) if name.suffix.lower() != '.ra' else (name,))}
+        for name in map(Path, filenames)
+    ]
+    for i, first in enumerate(paths):
+        for second in paths[i + 1 :]:
+            if first & second:
+                raise ValueError(f'The output files {[str(name) for name in filenames]} overlap.')
+
+
 def _check_suffix(filename: Path) -> None:
     if filename.suffix.lower() not in BART_SUFFIXES:
         raise ValueError(f'BART files must end in one of {BART_SUFFIXES}, got {filename.name}.')
@@ -117,7 +132,7 @@ def read_bart(filename: str | PathLike) -> torch.Tensor:
             )
     # column-major storage: the first dimension varies fastest
     tensor = torch.from_numpy(data.astype(np.complex64, copy=False)).reshape(dims[::-1])
-    return tensor.permute(*range(tensor.ndim - 1, -1, -1))
+    return tensor.permute(tuple(range(tensor.ndim - 1, -1, -1)))
 
 
 def write_bart(filename: str | PathLike, data: torch.Tensor) -> None:
@@ -135,7 +150,7 @@ def write_bart(filename: str | PathLike, data: torch.Tensor) -> None:
     dims = tuple(data.shape)
     # column-major storage: the first dimension varies fastest
     values = data.detach().to(device='cpu', dtype=torch.complex64).resolve_conj().resolve_neg()
-    values_np = values.permute(*range(values.ndim - 1, -1, -1)).contiguous().numpy()
+    values_np = values.permute(tuple(range(values.ndim - 1, -1, -1))).reshape(-1).numpy()
     if filename.suffix.lower() == '.ra':
         header = np.array(
             [_RA_MAGIC, 0, _RA_TYPE_COMPLEX, _ELEMENT_DTYPE.itemsize, values_np.nbytes, len(dims), *dims],

@@ -244,3 +244,56 @@ def test_kdata_to_bart_cartesian_outside_encoding_matrix(tmp_path: Path) -> None
     """All k-space points have to lie inside the encoding matrix."""
     with pytest.raises(ValueError, match='outside'):
         cartesian_kdata(k1_lines=(0, 1, 4)).to_bart(tmp_path / 'kspace.cfl')
+
+
+def test_kdata_to_bart_cartesian_single_line(tmp_path: Path) -> None:
+    """A single acquired line is placed at its position in the encoding matrix."""
+    kdata = cartesian_kdata(k1_lines=(2,))
+    kdata.to_bart(tmp_path / 'kspace.cfl', other_dims=(BartDimension.SLICE, BartDimension.TE))
+    kspace = from_bart_layout(read_bart(tmp_path / 'kspace.cfl'), IMAGE_DIMS, (BartDimension.SLICE, BartDimension.TE))
+    assert kspace.shape == (2, 3, 4, 1, 8, 6)
+    torch.testing.assert_close(kspace[..., 0, 6, :], kdata.data[..., 0, 0, :])
+    assert not kspace[..., 0, [0, 1, 2, 3, 4, 5, 7], :].abs().any()
+
+
+def test_kdata_to_bart_cartesian_single_line_outside(tmp_path: Path) -> None:
+    """A single line outside of the encoding matrix is rejected."""
+    with pytest.raises(ValueError, match='outside'):
+        cartesian_kdata(k1_lines=(99,)).to_bart(tmp_path / 'kspace.cfl')
+
+
+def test_kdata_to_bart_fractional_coordinates_are_noncartesian(tmp_path: Path) -> None:
+    """Constant non-integer coordinates are not on the Cartesian grid."""
+    kdata = cartesian_kdata()
+    kdata = KData(
+        header=kdata.header,
+        data=kdata.data,
+        traj=KTrajectory(kz=kdata.traj.kz + 0.5, ky=kdata.traj.ky, kx=kdata.traj.kx),
+    )
+    with pytest.raises(ValueError, match='trajectory_filename'):
+        kdata.to_bart(tmp_path / 'kspace.cfl')
+
+
+def test_kdata_to_bart_overlapping_filenames(tmp_path: Path) -> None:
+    """K-space and trajectory files must not overwrite each other."""
+    with pytest.raises(ValueError, match='overlap'):
+        radial_kdata().to_bart(tmp_path / 'same.cfl', trajectory_filename=tmp_path / 'same.hdr')
+    assert not list(tmp_path.iterdir())
+
+
+def test_dcfdata_to_bart_expands_to_kspace_shape(tmp_path: Path) -> None:
+    """A DCF shared over partitions and other dimensions is expanded to the k-space layout."""
+    kdata = radial_kdata()
+    data = RandomGenerator(0).float32_tensor((1, 1, 1, 3, 5), low=0.1)
+    DcfData(data=data).to_bart(tmp_path / 'dcf.cfl', shape=kdata.shape)
+    dcf = read_bart(tmp_path / 'dcf.cfl')
+    assert list(dcf.shape) == bart_shape(phs1=5, phs2=6, batch=2)
+    torch.testing.assert_close(dcf[0, :, 3, ..., 1].real.reshape(5), data[0, 0, 0, 0])
+
+
+@pytest.mark.parametrize('suffix', ['.cfl', '.ra'])
+def test_bart_scalar_roundtrip(tmp_path: Path, suffix: str) -> None:
+    """Zero-dimensional arrays can be written and read."""
+    data = torch.tensor(1 + 2j, dtype=torch.complex64)
+    write_bart(tmp_path / f'scalar{suffix}', data)
+    torch.testing.assert_close(read_bart(tmp_path / f'scalar{suffix}'), data)

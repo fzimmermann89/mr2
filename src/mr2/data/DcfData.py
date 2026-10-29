@@ -137,7 +137,13 @@ class DcfData(Dataclass):
             raise ValueError('other_dims is only supported for BART files.')
         return super().from_file(filename)
 
-    def to_bart(self, filename: str | Path, other_dims: Sequence[BartDimension] | None = None) -> None:
+    def to_bart(
+        self,
+        filename: str | Path,
+        other_dims: Sequence[BartDimension] | None = None,
+        *,
+        shape: Sequence[int] | None = None,
+    ) -> None:
         """Save density compensation data as BART array.
 
         Uses the BART layout of non-Cartesian k-space samples, as written by `KData.to_bart`:
@@ -154,8 +160,15 @@ class DcfData(Dataclass):
         other_dims
             BART dimensions of the `other` dimensions, in tensor order. Should match the k-space data.
             `None` flattens all `other` dimensions into `BartDimension.BATCH`.
+        shape
+            Shape of the k-space data, e.g. ``kdata.shape``. If given, broadcast dimensions except coils
+            are expanded to it, so readouts and `other` dimensions are flattened in the same way as the k-space data.
+            Required if the DCF is broadcast along only some of the dimensions that are flattened together.
         """
-        data = rearrange(self.data, '... coils k2 k1 k0 -> ... coils (k2 k1) k0')
+        data = self.data
+        if shape is not None:
+            data = data.broadcast_to((*shape[:-4], data.shape[-4], *shape[-3:]))
+        data = rearrange(data, '... coils k2 k1 k0 -> ... coils (k2 k1) k0')
         write_bart(filename, to_bart_layout(data, BART_NONCARTESIAN_DIMS, other_dims))
 
     def as_operator(self) -> 'DensityCompensationOp':
