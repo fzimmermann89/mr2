@@ -198,11 +198,12 @@ class UNet(UNetBase):
     """UNet.
 
     U-shaped convolutional network with optional patch attention.
-    Inspired by [NOSENSE_] and the OpenAi DDPM UNet/Latent Diffusion UNet [LDM]_.
-    significant differences to the vanilla UNet [UNET]_ include:
-       - Spatial transformer blocks
-       - Convolutional downsampling, nearest neighbor upsampling
-       - Residual convolution blocks with pre-act group normalization and SiLU activation
+    Inspired by [NOSENSE]_ and the OpenAi DDPM UNet/Latent Diffusion UNet [LDM]_.
+    Significant differences to the vanilla UNet [UNET]_ include:
+
+    - Spatial transformer blocks
+    - Convolutional downsampling, nearest neighbor upsampling
+    - Residual convolution blocks with pre-act group normalization and SiLU activation
 
 
     References

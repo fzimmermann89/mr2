@@ -149,8 +149,11 @@ a non-linear optimizer: :doc:`_notebooks/qmri_sg_challenge_2024_t1`,
 
 Citation
 ========
-We are currently preparing a manuscript for MRtwo. In the meantime, please cite:
+MRtwo is a continuation of MRpro. If you use MRtwo, please cite the MRpro framework paper:
 
-Zimmermann, F. F., Schuenke, P., Brahma, S., Guastini, M., Hammacher, J., Kofler, A., Redshaw Kranich, C., Lunin, L., Martin, S., Schote, D., & Kolbitsch, C. (2024).
-MRtwo - PyTorch-based MR image reconstruction and processing package
-`10.5281/zenodo.14509598 <https://doi.org/10.5281/zenodo.14509598>`_
+F. F. Zimmermann, P. Schuenke, C. S. Aigner, B. A. Bernhardt, M. Guastini, J. Hammacher,
+H. Herthum, N. Jaitner, A. Kofler, L. Lunin, S. Martin, C. Redshaw Kranich, J. Schattenfroh,
+D. Schote, Y. Wu, and C. Kolbitsch (2026).
+MRpro: Open Framework for Model-Based, Learned, and Quantitative MR Imaging—Application to Low-Field MRI.
+*NMR in Biomedicine*, 39(11), e70405. Zimmermann and Schuenke contributed equally.
+`doi:10.1002/nbm.70405 <https://doi.org/10.1002/nbm.70405>`_

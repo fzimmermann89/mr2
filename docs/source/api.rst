@@ -16,6 +16,7 @@ Navigate through the sections below for more information about each module and i
 
    mr2.algorithms
    mr2.data
+   mr2.nn
    mr2.operators
    mr2.phantoms
    mr2.utils
