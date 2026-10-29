@@ -30,17 +30,21 @@ def test_noise_covariance() -> None:
         torch.testing.assert_close(observed, expected[lag], atol=0.02, rtol=0)
 
 
-def test_noise_pair() -> None:
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+def test_noise_pair(device: str) -> None:
     """Scale the target and noise once, retaining a spatially varying g-map."""
     rng = RandomGenerator(7)
-    image = rng.randn_tensor((2, 8, 8), dtype=torch.complex128)
+    image = rng.randn_tensor((2, 8, 8), dtype=torch.complex128, device=device)
     noise = 2**0.5 * rng.randn_like(image)
     sigma = torch.tensor([0.5, 2.0], dtype=torch.float64).reshape(2, 1, 1)
     gmap = torch.linspace(1, 3, 64, dtype=torch.float64).reshape(8, 8)
     noisy, target = noise_pair(image, noise, sigma, gmap)
-    scale = (1 + sigma.square()).sqrt()
+    for output in (noisy, target):
+        assert output.device == image.device
+        assert output.dtype == image.dtype
+    scale = (1 + sigma.square()).sqrt().to(device)
     torch.testing.assert_close(target * scale, image)
-    torch.testing.assert_close((noisy - target) * scale, sigma * gmap * noise)
+    torch.testing.assert_close((noisy - target) * scale, sigma.to(device) * gmap.to(device) * noise)
 
 
 @pytest.mark.parametrize('amplitude', [1e-30, 1e30])
@@ -68,3 +72,14 @@ def test_noise_windows() -> None:
     )
     with pytest.raises(ValueError, match='overlapping'):
         tapered_kspace_window(8, 2, 6, 3)
+
+
+@pytest.mark.cuda
+def test_filter_noise_cuda_with_cpu_window() -> None:
+    """Windows supplied on CPU produce the same filtered noise on CUDA."""
+    noise = RandomGenerator(11).randn_tensor((4, 32), dtype=torch.complex64)
+    window = gaussian_kspace_window(32, 2)
+    filtered = filter_noise(noise.cuda(), (window,), (-1,))
+    assert filtered.device.type == 'cuda'
+    assert filtered.dtype == noise.dtype
+    torch.testing.assert_close(filtered.cpu(), filter_noise(noise, (window,), (-1,)))

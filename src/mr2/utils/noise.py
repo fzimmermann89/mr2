@@ -39,8 +39,8 @@ def gaussian_kspace_window(
         One-dimensional, unnormalized Fourier window. Unlike the upstream
         SNRAware even-length convention, the first element is not forced to zero.
     """
-    if size < 1 or sigma < 0:
-        raise ValueError('size must be positive and sigma must be nonnegative.')
+    if size < 1 or not math.isfinite(sigma) or sigma < 0:
+        raise ValueError('size must be positive and sigma must be finite and nonnegative.')
     coordinate = (torch.arange(size, device=device, dtype=dtype) - size // 2) / max(size // 2, 1)
     return gaussian_window(sigma * coordinate, width=math.sqrt(8 * math.log(2)))
 
@@ -195,4 +195,5 @@ def noise_pair(
         if not torch.isfinite(value).all() or (value < 0).any():
             raise ValueError('sigma and gmap must be finite and nonnegative.')
     scale = torch.hypot(sigma, torch.ones_like(sigma))
-    return (image + sigma * gmap * unit_noise) / scale, image / scale
+    target = image / scale
+    return target + (sigma / scale) * gmap * unit_noise, target
