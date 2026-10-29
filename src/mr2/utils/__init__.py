@@ -1,6 +1,7 @@
 """Functions for tensor shaping, unit conversion, typing, etc."""
 
 from mr2.utils import filters
+from mr2.utils import noise
 from mr2.utils import slice_profiles
 from mr2.utils import typing
 from mr2.utils import unit_conversion
@@ -51,6 +52,7 @@ __all__ = [
     'filters',
     'interp',
     'interpolate',
+    'noise',
     'normalize_index',
     'normalize_indices',
     'pad_or_crop',

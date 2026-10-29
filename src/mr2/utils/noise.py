@@ -10,7 +10,6 @@ from collections.abc import Sequence
 
 import torch
 
-from mr2.operators.FastFourierOp import FastFourierOp
 from mr2.utils.filters import gaussian_window
 from mr2.utils.reshape import normalize_indices
 
@@ -131,6 +130,9 @@ def filter_noise(noise: torch.Tensor, windows: Sequence[torch.Tensor], dim: Sequ
         variance. Nonzero-lag real/imaginary covariance can arise from asymmetric
         windows, although same-pixel covariance stays zero for circular noise.
     """
+    # Operators depend on utils during package initialization.
+    from mr2.operators.FastFourierOp import FastFourierOp
+
     if not noise.is_complex():
         raise ValueError('noise must be complex.')
     if len(windows) != len(dim):
