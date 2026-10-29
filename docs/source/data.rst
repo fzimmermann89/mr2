@@ -1,86 +1,169 @@
-Data Structures, Dimensions, and Indexing
-=================================================
+Data containers, dimensions and indexing
+========================================
 
-In MRtwo, we use `torch.Tensors` and "Dataclasses" to store and manage data. Dataclasses serve as containers for different tensors, metadata, and other dataclasses, ensuring a consistent and structured approach to data handling.
+`mr2.data.KData` stores raw data with its header and trajectory;
+`mr2.data.IData` stores an image tensor and image header. Both inherit from
+`~mr2.data.Dataclass`. Inspect their fields with ``print(obj)`` or
+``obj.items()``. Container methods apply the same selection or transformation
+to nested tensor fields.
 
-For example `mr2.data.KData` contains complex raw data, trajectory information, and headers.
+Axes, broadcasting and units
+----------------------------
+K-space tensors use ``(*other, coils, k2, k1, k0)``; image tensors use
+``(*other, coils, z, y, x)``. Keep singleton axes, including at least one
+``other`` axis. Additional batch axes go in front. For a 2D acquisition,
+``k2`` is commonly singleton; ``k0`` is the readout axis.
 
-Dimensions and Broadcasting Rules
----------------------------------
-MRtwo follows a consistent convention of using at least 5-dimensional tensors for data representation:
+``obj.shape`` is the joint broadcast shape of its fields, which can have
+different singleton axes. For a Cartesian trajectory, ``kx`` can vary along
+``k0`` while ``ky`` varies along ``k1``. Dataclasses can reduce repeated values
+to singleton axes to save storage.
 
-- K-space data: `(*other, coils, k2, k1, k0)`
-- Real space (image) data: `(*other, coils, z, y, x)`
+Physical quantities use SI units: meters, seconds and radians. Matrix sizes
+and acquisition indices are counts. Trajectory coordinates use encoding-grid
+units: a full Cartesian axis of length 128 normally spans -64 through 63.
+`mr2.data.SpatialDimension` is a dataclass with ``z``, ``y`` and ``x`` fields.
+Use `mr2.data.Rotation` for orientations; it supports rotation matrices,
+quaternions and Euler angles.
 
-Here, `*other` represents additional dimensions, such slice positions, repetitions or cardiac phases. Singleton dimensions are enforced for quantities that do not vary along a specific axis, ensuring they are broadcastable.
-
-For example, a 2D Cartesian trajectory might have:
-- kx field: `(other, coils=1, k2=1, k1=1, k0)`
-- ky field: `(other, coils=1, k2=1, k1, k0=1)`
-
-Calling `.shape` on the KTrajectory dataclass returns `(other, 1, 1, k1, k0)`.
-Neither kx nor ky have this shape, but both can be broadcasted to this shape.
-
-Indexing Conventions
---------------------
-Dataclasses support advanced indexing. It follows numpy-like rules with two key exceptions:
-1. Indexing never removes dimensions.
-2. New dimensions are added at the beginning.
-
-The index can contain slices, integers, boolean masks, sequences of integers, None, and Ellipsis:
-
-- **Slices**: Behave like in numpy, always return a view. Negative step sizes are not supported.
-- **Integers**: Behave like slicing with `index:index+1`, always return a view.
-- **Boolean masks**: Singleton dimensions in the mask are interpreted as full slices. If the mask has more than one non-singleton dimension, a new dimension is added at the beginning.
-- **Sequences of integers**: Result in concatenation along the indexed dimension. If more than one sequence is used, a new dimension is added at the beginning.
-- **Integer tensors**: If a single indexing tensor is used, the indexed dimension will be replaced by the last dimension of the indexing tensor. Other dimensions of the indexing tensor are added at the beginning of the result. If multiple indexing tensors are used, the indexed dimension will be replaced by a singleton dimension and all new dimensions are added at the beginning of the result.
-- **None**: Can only be used to add new axes at the beginning.
-- **Ellipsis**: Expanded to `slice(None)` for all axes not indexed.
-
-The indexing is applied recursively to all tensors in the dataclass, ensuring that the dimensions are consistent across all tensors.
-Indexing is applied as if all tensors where broadcasted to the `.shape` of the dataclass the indexing is applied to.
-So, for example, indexing a `KData` object in the `coils` dimension results in the same trajecktory as before, as
-trajectories always have coils=1. The behavior is as if the trajectory is broadcasted along the coil dimensions, then indexing is applied, then the boadcasted dimensions is reduced back to singleton.
-
-
-SpatialDimension
-----------------
-The `mr2.data.SpatialDimension` class represents spatial positions as a named tuple of z, y, and x values. It supports basic math operations and indexing when the values are tensors. This class is used, for example, to store position information in headers.
-
-Rotation
---------
-The `mr2.data.Rotation` class handles orientations and rotations. It supports conversion between different representations (e.g., Euler angles, quaternions, rotation matrices) and can be applied to tensors and `SpatialDimension` objects.
-
-Units
------
-All values in MRtwo are in SI units. For example, spatial dimensions are in meters, time is in seconds, and angles are in radians.
-This ensures consistency but might require conversion when interfacing with other software or hardware that uses different units,
-such as milliseconds for echo times or degrees for flip angles.
-
-Operators
----------
-The operators in `mr2.operators` can be applied to one or multiple `torch.Tensor` and return tuples of `torch.Tensor` (even if only a single tensor is returned).
-The convention regarding dimensions is the same as for dataclasses: if a new dimension is added, it is added in front (example: time points in signal models) and the dimensions are
-in the order `(*other, coils, k2, k1, k0)` for k-space data and `(*other, coil, z, y, x)` for real space data. The operators are always batched, so they can be applied to multiple data points at once.
-
-Examples
---------
-Below are practical examples demonstrating the use of dataclasses, indexing, and rotations in MRtwo:
+A small, self-contained acquisition
+-----------------------------------
+Create a small container with random k-space values to try the operations
+below without downloading data. These values don't simulate an MR signal.
 
 .. code-block:: python
 
+    import torch
     import mr2
 
-    # Example: Indexing a broadcasted tensor
-    kdata = mr2.data.KData.from_file('example.mrd')
-    print(kdata.shape)  # Example shape: (4, 8, 64, 64, 128)
-    print(kdata.header.acq_info.idx.k1.shape)  # Example shape: (4, 1, 64, 64, 1)
+    matrix = mr2.data.SpatialDimension(z=1, y=8, x=16)
+    fov = mr2.data.SpatialDimension(z=0.005, y=0.2, x=0.2)
+    header = mr2.data.KHeader(
+        recon_matrix=matrix, encoding_matrix=matrix,
+        recon_fov=fov, encoding_fov=fov,
+    )
+    header.acq_info.idx.k1 = torch.arange(8).reshape(1, 1, 1, 8, 1)
+    traj = mr2.data.KTrajectory(
+        kz=torch.zeros(1, 1, 1, 1, 1),
+        ky=torch.arange(-4, 4).reshape(1, 1, 1, 8, 1),
+        kx=torch.arange(-8, 8).reshape(1, 1, 1, 1, 16),
+    )
+    kdata = mr2.data.KData(
+        header=header, traj=traj,
+        data=torch.randn(2, 4, 1, 8, 16, dtype=torch.complex64),
+    )
+    print(kdata.shape)                         # torch.Size([2, 4, 1, 8, 16])
+    print(kdata.traj.shape)                    # torch.Size([1, 1, 1, 8, 16])
+    print(kdata.header.acq_info.idx.k1.shape)   # torch.Size([1, 1, 1, 8, 1])
 
-    kdata_center = kdata[... 16:-16, 16:-16,16:-16]
-    print(kdata_center.shape)  # Example shape: (4, 8, 32, 32, 96)
-    print(kdata.header.acq_info.idx.k1.shape)  # Example shape: (4, 1, 32, 32, 1)
+Indexing the whole object
+-------------------------
+Indexing selects nested tensor fields in the header and trajectory as if
+each field had the parent's broadcast shape. Shared axes can remain singleton,
+so selecting a coil doesn't duplicate the trajectory. The result retains
+non-tensor scalar metadata. Check the geometry after selection: indexing
+neither recalculates the field of view nor checks whether the samples still
+form a suitable acquisition.
 
-    # Example: Creating and using SpatialDimension and Rotation
-    position = mr2.data.SpatialDimension(z=3, y=2, x=1)
-    rotation = mr2.data.Rotation.from_euler("xyz", (0,0,torch.pi))
-    rotated = rotation(position)
+.. code-block:: python
+
+    first = kdata[0]                 # (1, 4, 1, 8, 16): integer keeps its axis
+    cropped = kdata[..., 2:6, 4:12]   # (2, 4, 1, 4, 8)
+    print(cropped.header.acq_info.idx.k1)  # selected lines 2, 3, 4, 5
+    selected = kdata[..., [1, 3], :]  # (2, 4, 1, 2, 16)
+    mask = torch.tensor([True, False, True, False, False, False, False, False])
+    masked = kdata[..., mask, :]     # (2, 4, 1, 2, 16)
+    indexed = kdata[..., torch.tensor([[1, 3], [2, 4]]), :]
+    # indexed.shape is (2, 2, 4, 1, 2, 16)
+    paired = kdata[..., [1, 3], [2, 4]]  # (2, 2, 4, 1, 1, 1)
+    points = kdata[..., torch.eye(8, 16, dtype=torch.bool)]
+    # points.shape is (8, 2, 4, 1, 1, 1): selected y/x pairs move to the front
+    leading = kdata[None]            # (1, 2, 4, 1, 8, 16)
+
+Integers and positive-step slices return tensor views. Negative slice steps
+are unsupported. Advanced indexing can allocate new tensors. Multiple integer
+sequences must have the same shape and select paired positions, rather than
+an outer product. The selection axis goes at the front; indexed axes become
+singleton. For a single integer tensor, its last axis replaces the indexed
+axis and its other axes move to the front.
+
+Only one boolean mask is allowed. Singleton mask axes mean full slices.
+A mask spanning multiple non-singleton axes creates a leading selection axis
+and leaves singleton axes at the indexed positions. ``None`` is allowed only
+at the beginning of an index; one ellipsis fills omitted axes.
+
+Sharing, rearranging and joining
+--------------------------------
+A slice can share tensor storage with the original container. Call ``clone``
+before editing it in place if you need to keep the original values. Avoid
+writes through broadcast views, whose elements can share storage.
+
+.. code-block:: python
+
+    independent = cropped.clone()
+    independent.data.zero_()
+    phases = kdata.rearrange(
+        'batch coils k2 (phase k1) k0 -> batch phase coils k2 k1 k0', phase=2
+    )
+    windows = kdata.split(dim=-2, size=4, overlap=2)
+    halves = kdata.split(dim=-2, size=4)
+    joined = halves[0].concatenate(halves[1], dim=-2)
+    other = kdata.clone()
+    other.data = other.data + 1
+    stacked = kdata.stack(other)  # new first axis of length 2
+
+``rearrange`` uses einops patterns and transforms nested tensor fields too;
+it may return views or allocate. ``split`` returns full windows only, dropping
+an incomplete trailing window. With dilation, the span is
+``(size - 1) * dilation + 1`` and stride is ``span - overlap``.
+``stack`` adds a first axis; identical repeated fields can reduce back to
+singleton, as elsewhere in dataclasses.
+``concatenate`` joins an existing axis, broadcasts tensor fields on other axes,
+joins lists, and concatenates fields that support it, such as
+`mr2.data.Rotation`. It keeps remaining fields from the first object.
+Check geometry, timing and other metadata yourself before joining acquisitions.
+
+Device, precision and gradients
+-------------------------------
+
+.. code-block:: python
+
+    double = kdata.to(device='cpu', dtype=torch.float64)
+    assert double.data.dtype == torch.complex128
+    assert double.traj.kx.dtype == torch.float64
+    assert double.header.acq_info.idx.k1.dtype == torch.int64
+    detached = kdata.detach()
+    copied = kdata.clone()
+    contiguous = kdata.apply(
+        lambda value: value.contiguous() if isinstance(value, torch.Tensor) else value
+    )
+
+``to`` moves nested tensors and changes floating-point precision while
+preserving real, complex and integer kinds. A real dtype argument sets the
+precision of complex fields too, preserving their imaginary parts. ``to`` may share unchanged
+tensors; ``clone`` copies tensor storage and preserves autograd connections.
+``detach`` removes gradient tracking but can share storage. ``apply`` clones
+and transforms fields recursively; ``apply_`` changes the object in place.
+The callback receives every nested field, including trajectory and header
+tensors. Return non-tensor fields unchanged when appropriate.
+
+Storage and interchange
+-----------------------
+
+.. code-block:: python
+
+    kdata.save_as_mr2('acquisition.mr2')
+    restored = mr2.data.KData.from_file('acquisition.mr2')
+
+MR2 stores dataclass fields in HDF5, including the trajectory and nested
+headers. Reload the file with the matching class's ``from_file`` method.
+The file contains tensor values without their computation graph.
+
+For scanner raw data, use ``KData.from_file(path, trajectory_calculator)`` for
+ISMRMRD HDF5, or ``KData.from_ismrmrd`` for an XML header and acquisitions.
+``KData.to_file`` writes ISMRMRD. ``IData.from_file`` reads MR2, DICOM files or
+folders, and BART arrays; BART image imports require a reference header.
+``IData.to_dicom_folder`` and ``IData.to_nifti`` export images. NIfTI import is
+not provided by ``IData.from_file``. K-space, images, sensitivity maps and density
+weights also support BART export through ``to_bart``. Consult each method for
+format-specific shape and metadata requirements.
