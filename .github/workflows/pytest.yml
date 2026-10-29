@@ -22,7 +22,7 @@ jobs:
             requirements: ci/requirements/minimum.txt
             coverage: false
           - environment: recommended
-            python-version: "3.12"
+            python-version: "3.13"
             requirements: ci/requirements/recommended.txt
             coverage: true
           - environment: latest
