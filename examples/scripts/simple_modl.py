@@ -26,7 +26,7 @@ device = torch.device('cpu')
 # ## Create images and simulate undersampled k-space data
 #
 # We use the T1-weighted, 1 mm [BrainWeb](https://brainweb.bic.mni.mcgill.ca/brainweb/selection_normal.html)
-# volume with zero noise and intensity non-uniformity. We pad and resize the
+# volume without noise or intensity non-uniformity. We pad and resize the
 # slices to 96 x 96 pixels, normalize their magnitudes and add a smooth phase.
 # Eight axial slices are used for training and two higher slices for evaluation.
 # Both sets come from the same simulated brain.
@@ -114,7 +114,7 @@ class TinyMoDL(nn.Module):
         )
         self.dc = mr2.nn.data_consistency.ConjugateGradientDC(0.1)
 
-    def forward(self, data: torch.Tensor) -> torch.Tensor:
+    def forward(self, data: torch.Tensor, acquisition: mr2.operators.LinearOperator) -> torch.Tensor:
         """Reconstruct masked k-space tensors."""
         (image,) = acquisition.H(data)
         for _ in range(3):
@@ -143,19 +143,19 @@ start = time.perf_counter()
 while time.perf_counter() - start < training_seconds:
     model.train()
     optimizer.zero_grad()
-    prediction = model(train_data)
+    prediction = model(train_data, acquisition)
     loss = 2 * functional.mse_loss(torch.view_as_real(prediction), torch.view_as_real(train_truth))
     loss.backward()
     optimizer.step()
     model.eval()
     with torch.no_grad():
         train_losses.append(loss.item())
-        test_prediction = model(test_data)
+        test_prediction = model(test_data, acquisition)
         test_loss = 2 * functional.mse_loss(torch.view_as_real(test_prediction), torch.view_as_real(test_truth))
         test_losses.append(test_loss.item())
 
 with torch.no_grad():
-    reconstruction = model(test_data)
+    reconstruction = model(test_data, acquisition)
     adjoint_loss = 2 * functional.mse_loss(torch.view_as_real(adjoint), torch.view_as_real(test_truth))
 print(f'Training and evaluation time: {time.perf_counter() - start:.1f} s')
 print(f'Learned regularization weight: {model.dc.log_weight.exp().item():.3f}')
@@ -185,7 +185,7 @@ for axis, image, title in zip(
     plot = axis.imshow((image - test_truth)[0, 0, 0].abs().numpy(), cmap='magma', vmin=0, vmax=error_max)
     axis.set_title(title)
     axis.axis('off')
-fig.colorbar(plot, ax=list(axes[1, :2]), shrink=0.7)
+fig.colorbar(plot, ax=axes[1, 1], shrink=0.7, label='Absolute error')
 axes[1, 2].plot(range(1, len(train_losses) + 1), train_losses, label='Training (before update)')
 axes[1, 2].plot(range(1, len(train_losses) + 1), test_losses, label='Held out (after update)')
 axes[1, 2].set(xlabel='Update', ylabel='Complex MSE', yscale='log')
