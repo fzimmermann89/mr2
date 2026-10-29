@@ -10,15 +10,23 @@ UNIQUE_ROUNDING_DECIMALS = 15
 
 
 def _cell_volumes_3d(points: np.ndarray, block_size: int = 2**18) -> np.ndarray:
-    """Calculate the volume of each 3D Voronoi cell from the Delaunay tessellation.
+    """Calculate 3D Voronoi cell volumes from one Delaunay mesh.
 
-    Within a Delaunay tetrahedron `(a, b, c, d)`, the part of the Voronoi cell of `a` is the sum of the signed
-    tetrahedra spanned by `a`, the midpoint of an edge `(a, b)`, a point on the Voronoi edge dual to a face `(a, b, c)`
-    and the circumcenter of the tetrahedron. This is correct for any point on the line through the circumcenters of
-    the two tetrahedra sharing the face, if both use the same point. The point is moved towards the circumcenter of
-    the flatter tetrahedron, such that (nearly) flat tetrahedra, which Qhull creates for cospherical points and whose
-    orientation is not defined, do not contribute. Cells touching exactly flat tetrahedra are rebuilt from
-    the convex hull of their incident circumcenters. Volumes of points on the convex hull are not meaningful.
+    A sample's cell is the space closer to it than to any other sample. Its corners are the centers of spheres
+    through the four vertices of nearby tetrahedra [1]_. We split each cell into small tetrahedra and add their
+    volumes with plus or minus signs, so that pieces outside the cell cancel [2]_.
+
+    Neighboring tetrahedra use the same point between their sphere centers. We place it closer to the flatter
+    tetrahedron to reduce numerical errors. This weighting is specific to this implementation. Cells
+    next to exactly flat tetrahedra are computed as the convex hull of their corners instead. Points on the outer
+    boundary have unbounded cells; their volumes are not used.
+
+    References
+    ----------
+    .. [1] H. Si, "TetGen User's Manual", Section 1.1.1, Delaunay Triangulations, Voronoi Diagrams.
+       https://www.wias-berlin.de/software/tetgen/1.5/doc/manual/manual002.html
+    .. [2] A. N. Hirani, K. Kalyanaraman, E. B. VanderZee, "Delaunay Hodge Star", Section 2 (corrected preprint).
+       https://arxiv.org/abs/1204.0747
     """
     delaunay = Delaunay(points)
     all_points = torch.from_numpy(delaunay.points)
@@ -27,54 +35,61 @@ def _cell_volumes_3d(points: np.ndarray, block_size: int = 2**18) -> np.ndarray:
         for start in range(0, len(delaunay.simplices), block_size)
     ]
 
-    def tetrahedra(block: np.ndarray) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Get the vertex indices, the vertices and the signed volumes times 6 of tetrahedra."""
+    def tetrahedra(block: np.ndarray) -> tuple[torch.Tensor, torch.Tensor]:
+        """Get the vertex indices and vertex positions of tetrahedra."""
         simplices = torch.from_numpy(delaunay.simplices[block].astype(np.int64))
-        vertices = all_points[simplices]
-        return simplices, vertices, torch.linalg.det(vertices[:, 1:] - vertices[:, :1])
+        return simplices, all_points[simplices]
 
-    def circumcenter(block: np.ndarray) -> torch.Tensor:
-        """Get the circumcenters from the hyperplanes of the lifted points on the paraboloid."""
-        equations = torch.from_numpy(delaunay.equations[block])
+    def circumcenters(block: np.ndarray) -> np.ndarray:
+        """Get the circumcenters of tetrahedra."""
+        # Qhull lifts the points onto a paraboloid. The plane of each facet of the lifted hull gives the circumcenter.
+        equations = delaunay.equations[block]
         return -equations[..., :3] / (2 * delaunay.paraboloid_scale * equations[..., 3:4])
 
-    flatness = torch.cat([tetrahedra(block)[2].abs() for block in blocks])
-    rebuild = np.zeros(len(points), dtype=bool)
-    rebuild[np.unique(delaunay.simplices[flatness.numpy() == 0])] = True
-    # All orders (a, b, c, d) of the vertices of a tetrahedron, with c < d, and their parity
-    order = np.array([(a, b, *sorted({0, 1, 2, 3} - {a, b})) for a, b in permutations(range(4), 2)])
-    parity = torch.from_numpy(np.linalg.det(np.eye(4)[order]))
-    a, b, c, d = torch.from_numpy(order.T)
+    # Six times the signed volume. Its magnitude is used as the flatness of a tetrahedron.
+    signed_volume = torch.cat([torch.linalg.det(v[:, 1:] - v[:, :1]) for _, v in map(tetrahedra, blocks)])
+    flatness = signed_volume.abs()
+    # All orders (a, b, c, d) of the vertices of a tetrahedron with c < d, and the sign of each permutation
+    orders = np.array([(a, b, *sorted({0, 1, 2, 3} - {a, b})) for a, b in permutations(range(4), 2)])
+    parity = torch.from_numpy(np.linalg.det(np.eye(4)[orders]))
+    a, b, c, d = torch.from_numpy(orders.T)
     volume = torch.zeros(len(points), dtype=torch.float64)
     for block in blocks:
-        simplices, vertices, signed_volume = tetrahedra(block)
-        # Neighbors opposite to each vertex. Faces on the convex hull have no neighbor.
+        simplices, vertices = tetrahedra(block)
+        # Neighbor opposite to each vertex. Faces on the convex hull have no neighbor and use the tetrahedron itself.
         neighbors = np.where(delaunay.neighbors[block] >= 0, delaunay.neighbors[block], block[:, None])
-        center, neighbor_center = circumcenter(block)[:, None], circumcenter(neighbors)
+        center = torch.from_numpy(circumcenters(block))[:, None]
+        neighbor_center = torch.from_numpy(circumcenters(neighbors))
         weight, neighbor_weight = flatness[block][:, None, None], flatness[neighbors][..., None]
-        face_point = (neighbor_weight * center + weight * neighbor_center) / (weight + neighbor_weight)
-        face_point = torch.where(weight + neighbor_weight > 0, face_point, (center + neighbor_center) / 2)
-        edge = (vertices[:, b] - vertices[:, a]) / 2
-        spoke = center - vertices[:, a]
-        piece = torch.linalg.vecdot(edge, torch.linalg.cross(face_point[:, d] - face_point[:, c], spoke))
-        volume.index_add_(0, simplices[:, a].ravel(), (parity * signed_volume.sign()[:, None] * piece).ravel() / 6)
-    # Qhull's triangulation of cospherical facets can overlap or contain flat tetrahedra. Rebuild only the
-    # affected cells from their circumcenters, without relying on tetrahedron orientation or face connectivity.
+        # Point between the circumcenters, shared with the neighbor across the face opposite each vertex. It lies
+        # close to the center of the flatter tetrahedron, as (nearly) flat tetrahedra have no reliable orientation.
+        shared_point = (neighbor_weight * center + weight * neighbor_center) / (weight + neighbor_weight)
+        shared_point = torch.where(weight + neighbor_weight > 0, shared_point, (center + neighbor_center) / 2)
+        to_midpoint = (vertices[:, b] - vertices[:, a]) / 2
+        to_center = center - vertices[:, a]
+        # Six times the signed volume of (a, midpoint of (a, b), shared point across face (a, b, c), center) minus
+        # the same with face (a, b, d). The shared point across face (a, b, c) is the one opposite to d.
+        piece = torch.linalg.vecdot(to_midpoint, torch.linalg.cross(shared_point[:, d] - shared_point[:, c], to_center))
+        piece = parity * signed_volume[block].sign()[:, None] * piece
+        volume.index_add_(0, simplices[:, a].ravel(), piece.ravel() / 6)
     result = volume.numpy()
-    rebuild |= (result <= 0) | ~np.isfinite(result)
-    rebuild[np.unique(delaunay.convex_hull)] = False
+
+    # Flat tetrahedra have no defined orientation and can make the sum wrong. Recompute the volume of these cells, and
+    # of cells with a nonpositive or invalid sum, as the convex hull of their corners.
+    rebuild = (result <= 0) | ~np.isfinite(result)
+    rebuild[delaunay.simplices[flatness.numpy() == 0]] = True
+    rebuild[delaunay.convex_hull] = False
     rebuild[delaunay.coplanar[:, 0]] = False
-    rows, cols = np.nonzero(rebuild[delaunay.simplices])
-    cell = delaunay.simplices[rows, cols]
-    order = np.argsort(cell)
-    cell, indices = cell[order], rows[order]
+    simplex, corner = np.nonzero(rebuild[delaunay.simplices])
+    vertex = delaunay.simplices[simplex, corner]
+    by_vertex = np.argsort(vertex)
+    vertex, simplex = vertex[by_vertex], simplex[by_vertex]
     for index in np.flatnonzero(rebuild):
-        start, end = np.searchsorted(cell, [index, index + 1])
-        equations = delaunay.equations[indices[start:end]]
-        cell_vertices = -equations[:, :3] / (2 * delaunay.paraboloid_scale * equations[:, 3:4])
-        result[index] = ConvexHull(cell_vertices - points[index]).volume
-    # Qhull drops points that coincide with another point within its precision. The volume is shared equally, as for
-    # exact repeats.
+        start, end = np.searchsorted(vertex, [index, index + 1])
+        result[index] = ConvexHull(circumcenters(simplex[start:end]) - points[index]).volume
+
+    # Qhull drops points that coincide with another point within its precision. They share the volume of that point,
+    # as exact repeats do.
     owner = np.arange(len(points))
     owner[delaunay.coplanar[:, 0]] = delaunay.coplanar[:, 2]
     return np.bincount(owner, result)[owner] / np.bincount(owner)[owner]
@@ -194,6 +209,7 @@ def dcf_2d3d_voronoi(traj: torch.Tensor) -> torch.Tensor:
         regions = [vdiagram.regions[r] for r in vdiagram.point_region[: -len(corner_points)]]
         vertices = [vdiagram.vertices[region] for region in regions]
 
+        # Shoelace equation for 2D
         def cross2d(x: np.ndarray, y: np.ndarray) -> np.ndarray:
             return x[..., 0] * y[..., 1] - x[..., 1] * y[..., 0]
 
