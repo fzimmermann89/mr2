@@ -1,10 +1,12 @@
 """Fourier noise correlation and noise-scaled image pairs."""
 
+import math
 from collections.abc import Sequence
 
 import torch
 
 from mr2.operators.FastFourierOp import FastFourierOp
+from mr2.utils.filters import gaussian_window
 from mr2.utils.reshape import normalize_indices
 
 
@@ -41,7 +43,7 @@ def gaussian_kspace_window(
     coordinate = torch.linspace(-1, 1, size, device=device, dtype=dtype)
     if size == 1:
         coordinate = torch.zeros_like(coordinate)
-    return torch.exp(-0.5 * (sigma * coordinate).square())
+    return gaussian_window(sigma * coordinate, width=math.sqrt(8 * math.log(2)))
 
 
 def tapered_kspace_window(
