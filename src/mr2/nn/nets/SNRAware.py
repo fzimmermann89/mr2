@@ -16,14 +16,14 @@ from mr2.nn.Sequential import Sequential
 from mr2.nn.Upsample import Upsample
 
 
-def _conv(n_channels_in: int, n_channels_out: int, kernel_size: int = 3, bias: bool = True) -> Module:
+def _conv(n_channels_in: int, n_channels_out: int, bias: bool = True) -> Module:
     return PermutedBlock(
         (-2, -1),
         convND(2)(
             n_channels_in,
             n_channels_out,
-            kernel_size,
-            padding=kernel_size // 2,
+            3,
+            padding=1,
             padding_mode='reflect',
             bias=bias,
         ),
@@ -219,6 +219,8 @@ class SNRAware(Module):
                 names[f'{source}.n2.ln'] = f'{target}.1.module.0.module'
                 for old, new in [('query', 'to_q'), ('key', 'to_k'), ('value', 'to_v'), ('output_proj', 'to_out')]:
                     names[f'{source}.attn.{old}.conv'] = f'{target}.0.module.1.{new}.module'
+                if index % 3:
+                    names[f'{source}.attn'] = f'{target}.0.module.1'
                 names[f'{source}.mlp.0.conv'] = f'{target}.1.module.1.module'
                 names[f'{source}.mlp.1'] = f'{target}.1.module.2'
                 names[f'{source}.mlp.2.conv'] = f'{target}.1.module.3.module'
@@ -232,9 +234,6 @@ class SNRAware(Module):
             prefix, _, parameter = key.rpartition('.')
             if prefix in names:
                 target = f'{names[prefix]}.{parameter}'
-            elif parameter == 'relative_position_bias_table' and prefix.endswith('.attn'):
-                stage, _, cell = prefix.removeprefix('bk.').removesuffix('.attn').partition('.block.cell_')
-                target = f'{stages.get(stage)}.{cell}.0.module.1.relative_position_bias_table'
             else:
                 raise ValueError(f'Unrecognized official key: {key}')
             if target not in expected or tensor.shape != expected[target].shape:
