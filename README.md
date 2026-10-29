@@ -11,7 +11,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)](https://pypi.org/project/mrtwo/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Coverage Bagde](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/fzimmermann89/f688ae5c6e8daec44ac7f8fc4067e93f/raw/coverage.json)](https://github.com/fzimmermann89/mr2/actions?query=workflow%3A%22%22Report+PyTest%22%22)
-[![arXiv](https://img.shields.io/badge/arXiv-2507.23129-b31b1b.svg)](https://arxiv.org/abs/2507.23129)
+[![DOI](https://img.shields.io/badge/DOI-10.1002%2Fnbm.70405-blue)](https://doi.org/10.1002/nbm.70405)
 [![FAIR checklist badge](https://fairsoftwarechecklist.net/badge.svg)](https://fairsoftwarechecklist.net/v0.2?f=31&a=32113&i=21322&r=133)
 
 MR data processing and image reconstruction.
@@ -98,3 +98,14 @@ A notebook-capable image for the recommended environment (Python 3.12 and PyTorc
 ```bash
 docker pull ghcr.io/fzimmermann89/mr2_py312:latest
 ```
+
+## Citation
+
+MRtwo is a continuation of MRpro. If you use MRtwo, please cite the MRpro framework paper:
+
+F. F. Zimmermann, P. Schuenke, C. S. Aigner, B. A. Bernhardt, M. Guastini, J. Hammacher,
+H. Herthum, N. Jaitner, A. Kofler, L. Lunin, S. Martin, C. Redshaw Kranich, J. Schattenfroh,
+D. Schote, Y. Wu, and C. Kolbitsch (2026).
+**MRpro: Open Framework for Model-Based, Learned, and Quantitative MR Imaging—Application to Low-Field MRI.**
+*NMR in Biomedicine*, 39(11), e70405. Zimmermann and Schuenke contributed equally.
+[doi:10.1002/nbm.70405](https://doi.org/10.1002/nbm.70405)
