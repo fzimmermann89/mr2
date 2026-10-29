@@ -13,6 +13,7 @@ from typing_extensions import Any, Unpack, overload
 
 import mr2.operators
 from mr2.operators.Operator import Operator, OperatorComposition, OperatorSum, Tin2
+from mr2.utils.vector_norm import vector_norm
 
 
 class _AutogradWrapper(torch.autograd.Function):
@@ -138,10 +139,10 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
         initial_value
             initial value to start the iteration; must be element of the domain.
             if the initial value contains a zero-vector for one of the considered problems,
-            the function throws an `ValueError`.
+            the function raises a `ValueError`.
         dim
             The dimensions of the tensors on which the operator operates. The choice of `dim` determines how
-            the operator norm is inperpreted. For example, for a matrix-vector multiplication with a batched matrix
+            the operator norm is interpreted. For example, for a matrix-vector multiplication with a batched matrix
             tensor of shape `(batch1, batch2, row, column)` and a batched input tensor of shape `(batch1, batch2, row)`:
 
             * If `dim=None`, the operator is considered as a block diagonal matrix with batch1*batch2 blocks
@@ -152,7 +153,7 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
             * If `dim=(-2,-1)`, `batch1` matrices with `batch2` blocks are considered, and for each matrix a
               separate operator norm is computed.
 
-            Thus, the choice of `dim` determines implicitly determines the domain of the operator.
+            Thus, `dim` determines the domain of the operator.
         max_iterations
             maximum number of iterations
         relative_tolerance
@@ -168,7 +169,7 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
 
         Returns
         -------
-            An estimaton of the operator norm. Shape corresponds to the shape of the input tensor `initial_value`
+            An estimate of the operator norm. Shape corresponds to the shape of the input tensor `initial_value`
             with the dimensions specified in `dim` reduced to a single value.
             The pointwise multiplication of `initial_value` with the result of the operator norm will always
             be well-defined.
@@ -178,7 +179,7 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
 
         dim = tuple(dim) if dim is not None else dim  # must be tuple or None for torch.sum
 
-        norm_initial_value = torch.linalg.vector_norm(initial_value, dim=dim, keepdim=True)
+        norm_initial_value = vector_norm(initial_value, dim=dim, keepdim=True)
         if not (norm_initial_value > 0).all():
             if dim is None:
                 raise ValueError('The initial value for the iteration should be different from the zero-vector.')
@@ -189,10 +190,7 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
                     should be different from the zero-vector.'
                 )
 
-        # creaty dummy operator norm value that cannot be correct because by definition, the
-        # operator norm is a strictly positive number. This ensures that the first time the
-        # change between the old and the new estimate of the operator norm is non-zero and
-        # thus prevents the loop from exiting despite a non-correct estimate.
+        # Start at zero so a positive estimate differs on the first iteration.
         op_norm_old = torch.zeros_like(norm_initial_value)
 
         gram = self.gram  # self.H@self
@@ -208,14 +206,14 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
                 product = product + vector.imag * vector_new.imag
             op_norm = product.sum(dim, keepdim=True).sqrt()
 
-            # check if stopping criterion is fulfillfed; if not continue the iteration
+            # Stop when the estimate has converged.
             if (absolute_tolerance > 0 or relative_tolerance > 0) and torch.isclose(
                 op_norm, op_norm_old, atol=absolute_tolerance, rtol=relative_tolerance
             ).all():
                 break
 
             # normalize vector
-            vector = vector_new / torch.linalg.vector_norm(vector_new, dim=dim, keepdim=True)
+            vector = vector_new / vector_norm(vector_new, dim=dim, keepdim=True)
             op_norm_old = op_norm
 
             if callback is not None:

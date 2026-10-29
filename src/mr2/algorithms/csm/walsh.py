@@ -7,6 +7,7 @@ from mr2.algorithms.csm.extrapolate import extrapolate_csm
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.utils.filters import uniform_filter
 from mr2.utils.reshape import normalize_index
+from mr2.utils.vector_norm import vector_norm
 
 
 def walsh(
@@ -103,15 +104,15 @@ def walsh(
     # Power iterations for dominant eigenvector
     v = coil_covariance.sum(dim=-4)
     for _ in range(n_power_iterations):
-        v = v / (v.norm(dim=-4, keepdim=True) + eps)
+        v = v / (vector_norm(v, dim=-4, keepdim=True) + eps)
         v = einsum(coil_covariance, v, '... coil_out coil_in z y x, ... coil_in z y x -> ... coil_out z y x')
 
-    csm = v / (v.norm(dim=-4, keepdim=True) + eps)
+    csm = v / (vector_norm(v, dim=-4, keepdim=True) + eps)
 
     if align_phase:
         phase_reference = images[..., 0]
         d_sum = reduce(phase_reference, '... coils z y x -> ... coils', 'sum')
-        d_sum = d_sum / (d_sum.norm(dim=-1, keepdim=True) + eps)
+        d_sum = d_sum / (vector_norm(d_sum, dim=-1, keepdim=True) + eps)
         phase_map = einsum(d_sum.conj(), csm, '... coils, ... coils z y x -> ... z y x').angle()
         csm = csm * torch.exp(-1j * phase_map).unsqueeze(-4)
 
@@ -119,7 +120,7 @@ def walsh(
         energy = reduce(images.abs().square(), '... coils z y x pool -> ... z y x', 'sum')
         csm = extrapolate_csm(csm, energy.sqrt(), smoothing_width)
 
-    norm = csm.norm(dim=-4, keepdim=True)
+    norm = vector_norm(csm, dim=-4, keepdim=True)
     fallback = torch.zeros_like(csm)
     fallback[..., 0, :, :, :] = 1
     valid = torch.isfinite(norm) & (norm > eps)

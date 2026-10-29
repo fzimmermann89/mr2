@@ -8,6 +8,7 @@ from typing import Literal
 from xml.etree import ElementTree as ET
 
 import h5py
+import ismrmrd
 import pytest
 import torch
 from einops import repeat
@@ -15,7 +16,7 @@ from mr2.data import KData, KHeader, KNoise, KTrajectory, Rotation, SpatialDimen
 from mr2.data.acq_filters import has_n_coils, is_coil_calibration_acquisition, is_image_acquisition
 from mr2.data.Dataclass import InconsistentDeviceError
 from mr2.data.enums import TrajectoryType
-from mr2.data.traj_calculators import KTrajectoryIsmrmrd
+from mr2.data.traj_calculators import KTrajectoryCartesian, KTrajectoryIsmrmrd
 from mr2.data.traj_calculators.KTrajectoryCalculator import DummyTrajectory
 from mr2.operators import FastFourierOp, LinearOperator
 from mr2.utils import RandomGenerator
@@ -85,6 +86,63 @@ def test_KData_from_file(ismrmrd_cart) -> None:
     """Read in data from file."""
     kdata = KData.from_file(ismrmrd_cart.filename, DummyTrajectory())
     assert kdata is not None
+
+
+def test_KData_from_file_discards(ismrmrd_cart, ismrmrd_cart_single_rep) -> None:
+    """Discarding padding preserves the data and aligns stored and calculated trajectories."""
+    calculated = KData.from_file(ismrmrd_cart.filename, KTrajectoryCartesian())
+    stored = KData.from_file(ismrmrd_cart.filename, KTrajectoryIsmrmrd())
+    reference = KData.from_file(ismrmrd_cart_single_rep.filename, KTrajectoryCartesian())
+    n_k0 = ismrmrd_cart.matrix_size * ismrmrd_cart.oversampling
+
+    expected_data = reference.data.expand_as(calculated.data[:1])
+    torch.testing.assert_close(calculated.data[:1], expected_data, atol=10 * ismrmrd_cart.noise_level, rtol=0)
+    torch.testing.assert_close(calculated.traj.kx.squeeze(), torch.arange(n_k0, dtype=torch.float32) - n_k0 // 2)
+    torch.testing.assert_close(stored.traj.as_tensor(), calculated.traj.as_tensor())
+
+
+@pytest.mark.parametrize('trajectory_type', [KTrajectoryCartesian, KTrajectoryIsmrmrd, KTrajectory])
+@pytest.mark.parametrize('shorten_by_discard', [False, True])
+def test_KData_from_file_drops_short_readouts(
+    ismrmrd_cart_single_rep, tmp_path, trajectory_type, shorten_by_discard: bool
+) -> None:
+    """Dropping a short readout also drops its metadata and trajectory."""
+    reference_file = ismrmrd_cart_single_rep.filename
+    mixed_file = tmp_path / 'mixed.h5'
+    with ismrmrd.File(reference_file, 'r') as file:
+        header = file['dataset'].header
+        acquisitions = [acq for acq in file['dataset'].acquisitions[:] if is_image_acquisition(acq)]
+    reference = KData.from_file(reference_file, KTrajectoryCartesian())
+    trajectory = (
+        KTrajectoryIsmrmrd()(acquisitions, reference.header.encoding_matrix)
+        if trajectory_type is KTrajectory
+        else trajectory_type()
+    )
+    n_k0 = reference.data.shape[-1]
+    short = acquisitions[2]
+    if shorten_by_discard:
+        short.discard_pre += 2
+    else:
+        short.resize(short.number_of_samples - 2, short.active_channels, short.trajectory_dimensions)
+    with ismrmrd.File(mixed_file, 'w') as file:
+        file['dataset'].header = header
+        file['dataset'].acquisitions = acquisitions
+
+    with pytest.warns(UserWarning, match=f'Keeping only acquisitions with {n_k0} data samples'):
+        actual = KData.from_file(mixed_file, trajectory)
+
+    keep = [i for i in range(ismrmrd_cart_single_rep.matrix_size) if i != 2]
+    torch.testing.assert_close(actual.data, reference.data[..., keep, :])
+    torch.testing.assert_close(actual.traj.as_tensor(), reference.traj.as_tensor()[..., keep, :])
+    torch.testing.assert_close(actual.header.acq_info.idx.k1.flatten(), torch.tensor(keep, dtype=torch.int32))
+
+    if trajectory_type is KTrajectory:
+        with pytest.warns(UserWarning, match=f'Keeping only acquisitions with {n_k0} data samples'):
+            standalone = KTrajectory.from_file(mixed_file, acquisition_filter_criterion=is_image_acquisition)
+        with pytest.warns(UserWarning, match=f'Keeping only acquisitions with {n_k0} data samples'):
+            reloaded = KData.from_file(mixed_file, standalone)
+        torch.testing.assert_close(reloaded.data, actual.data)
+        torch.testing.assert_close(reloaded.traj.as_tensor(), actual.traj.as_tensor())
 
 
 def test_KData_from_file_repairs_missing_required_xml_fields(ismrmrd_cart, tmp_path) -> None:

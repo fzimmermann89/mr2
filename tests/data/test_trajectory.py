@@ -3,9 +3,11 @@
 import pytest
 import torch
 from einops import rearrange
-from mr2.data import KTrajectory
+from mr2.data import KData, KTrajectory
+from mr2.data.acq_filters import is_image_acquisition
 from mr2.data.enums import TrajType
 from mr2.data.KData import has_n_coils
+from mr2.data.traj_calculators import KTrajectoryCartesian
 
 from tests.conftest import COMMON_MR_TRAJECTORIES, create_traj
 
@@ -226,6 +228,15 @@ def test_traj_from_ismrmrd(ismrmrd_cart_random_us) -> None:
     assert traj.kx.shape == (n_other, 1, 1, 1, n_k0)
     assert traj.ky.shape == (n_other, 1, 1, 1, 1)
     assert traj.kz.shape == (1, 1, 1, 1, 1)
+
+
+def test_traj_from_ismrmrd_discards(ismrmrd_cart) -> None:
+    """A standalone trajectory excludes discarded samples and can be supplied to KData."""
+    reference = KData.from_file(ismrmrd_cart.filename, KTrajectoryCartesian())
+    traj = KTrajectory.from_file(ismrmrd_cart.filename, acquisition_filter_criterion=is_image_acquisition)
+    actual = KData.from_file(ismrmrd_cart.filename, traj)
+
+    torch.testing.assert_close(actual.traj.as_tensor(), reference.traj.as_tensor())
 
 
 def test_traj_from_ismrmrd_normalize(ismrmrd_rad) -> None:

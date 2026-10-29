@@ -1,6 +1,55 @@
-"""All acquisition enums."""
+"""Acquisition and data layout enums."""
 
-from enum import Enum, Flag, IntFlag, auto
+from enum import Enum, Flag, IntEnum, IntFlag, auto
+
+
+class BartDimension(IntEnum):
+    """BART array axis indices, matching ``src/misc/mri.h``.
+
+    Values are zero-based axis indices, not bitmasks. For example,
+    ``other_dims=(BartDimension.TE, BartDimension.SLICE)`` maps two MR2
+    leading axes to BART's echo and slice axes. Support for processing
+    each axis depends on the BART command.
+
+    References
+    ----------
+    .. [BARTdims] https://codeberg.org/mrirecon/bart/src/branch/master/src/misc/mri.h
+    """
+
+    READ = 0
+    """Readout / first spatial axis; coordinate components for non-Cartesian trajectories."""
+    PHS1 = 1
+    """First phase encoding axis; samples per readout for non-Cartesian data."""
+    PHS2 = 2
+    """Second phase encoding axis; readouts for non-Cartesian data."""
+    COIL = 3
+    """Receive coils."""
+    MAPS = 4
+    """ESPIRiT maps."""
+    TE = 5
+    """Echo dimension."""
+    COEFF = 6
+    """First coefficient dimension."""
+    COEFF2 = 7
+    """Second coefficient dimension."""
+    ITER = 8
+    """Iteration dimension, also used for motion."""
+    CSHIFT = 9
+    """Chemical shift dimension."""
+    TIME = 10
+    """First time dimension."""
+    TIME2 = 11
+    """Second time dimension."""
+    LEVEL = 12
+    """Level dimension."""
+    SLICE = 13
+    """Slices."""
+    AVG = 14
+    """Averages."""
+    BATCH = 15
+    """Batches. Not supported by ``bart pics``, use BART's loop option ``bart -l 32768``."""
+    MOTION = ITER
+    """Alias for the iteration dimension, matching BART's ``MOTION_DIM``."""
 
 
 class AcqFlags(Flag):

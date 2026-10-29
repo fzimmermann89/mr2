@@ -33,6 +33,23 @@ def test_walsh_extrapolates_to_low_signal_regions() -> None:
     assert torch.isfinite(csm).all()
 
 
+@pytest.mark.parametrize('dtype', [torch.complex64, torch.complex128])
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+def test_walsh_normalization_gradient(dtype: torch.dtype, device: str) -> None:
+    """Constant coil maps have the gradient of an analytically normalized vector."""
+    weights = torch.tensor([1 + 2j, 2 - 1j, -1 + 1j], dtype=dtype, device=device, requires_grad=True)
+    images = weights[:, None, None, None].expand(3, 1, 4, 4)
+    actual = walsh(images, smoothing_width=1)[:, 0, 0, 0]
+    expected = weights / weights.norm()
+    probe = weights.new_tensor([2 - 1j, 1 + 3j, -2 + 1j])
+
+    actual_gradient = torch.autograd.grad((actual * probe).real.sum(), weights)[0]
+    expected_gradient = torch.autograd.grad((expected * probe).real.sum(), weights)[0]
+
+    torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(actual_gradient, expected_gradient)
+
+
 def test_walsh_pools_echoes_without_phase_cancellation() -> None:
     """Opposite echo phases preserve shared maps and independent slice batches."""
     rng = RandomGenerator(0)

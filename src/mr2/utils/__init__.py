@@ -35,6 +35,7 @@ from mr2.utils.interpolate import interp, interpolate, apply_lowres
 from mr2.utils.RandomGenerator import RandomGenerator
 from mr2.utils.to_tuple import to_tuple
 from mr2.utils.ema import EMADict
+from mr2.utils.vector_norm import vector_norm
 
 __all__ = [
     'EMADict',
@@ -73,4 +74,5 @@ __all__ = [
     'unsqueeze_tensors_at',
     'unsqueeze_tensors_left',
     'unsqueeze_tensors_right',
+    'vector_norm',
 ]

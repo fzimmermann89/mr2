@@ -99,6 +99,10 @@ or a new optimizer using pytorch functions can be created.
 
 See for examples  :doc:`_notebooks/cartesian_reconstruction`, :doc:`_notebooks/direct_reconstruction`, and :doc:`_notebooks/iterative_sense_reconstruction_radial2D`
 
+For reconstruction with BART, use ``to_bart`` to export k-space, images, coil sensitivity maps or density compensation
+weights as ``.hdr``/``.cfl`` pairs or ``.ra`` files, and ``from_file`` to import images, maps or weights without installing BART
+(image and map imports require a reference ``header``).
+
 Low-field raw datasets
 ----------------------
 ``mr2.phantoms.IsmrmrdDataset`` loads local HDF5 ISMRMRD collections using

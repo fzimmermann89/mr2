@@ -3,7 +3,7 @@
 import datetime
 import re
 import warnings
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from os import PathLike
 from pathlib import Path
 from typing import cast
@@ -19,7 +19,9 @@ from pydicom.dataset import Dataset
 from pydicom.pixels import set_pixel_data
 from typing_extensions import Self
 
+from mr2.data.bart import BART_IMAGE_DIMS, from_bart_layout, is_bart_file, read_bart, to_bart_layout, write_bart
 from mr2.data.Dataclass import Dataclass
+from mr2.data.enums import BartDimension
 from mr2.data.IHeader import IHeader, get_items
 from mr2.data.KHeader import KHeader
 from mr2.data.SpatialDimension import SpatialDimension
@@ -107,17 +109,40 @@ class IData(Dataclass):
         return cls(header=iheader, data=data)
 
     @classmethod
-    def from_file(cls, filename: FileOrPath | Iterable[str | Path], *, suffix: str | None = 'dcm') -> Self:
-        """Load image data from MR2 storage, DICOM files or a DICOM folder.
+    def from_file(
+        cls,
+        filename: FileOrPath | Iterable[str | Path],
+        *,
+        suffix: str | None = 'dcm',
+        header: IHeader | KHeader | None = None,
+        other_dims: Sequence[BartDimension] | None = None,
+    ) -> Self:
+        """Load image data from MR2 storage, DICOM files, a DICOM folder or BART files.
 
         Parameters
         ----------
         filename
-            Path to an MR2 or DICOM file, a DICOM folder, or an iterable of DICOM paths.
-            Seekable binary inputs must contain MR2 data.
+            Path to an MR2 or DICOM file, a DICOM folder, a BART file (``.cfl``, ``.hdr`` or ``.ra``),
+            or an iterable of DICOM paths. Seekable binary inputs must contain MR2 data.
         suffix
             File extension to select in DICOM folders. None includes all files.
+        header
+            Header for BART files, which contain no meta data. Required for BART files.
+            The header has to describe the image grid stored in the file.
+        other_dims
+            BART dimensions that become the `other` dimensions, in this order. Only used for BART files.
+            `None` uses the BART batch dimension. All further BART dimensions,
+            except for coils and the spatial dimensions, have to be singleton.
         """
+        if isinstance(filename, (str, PathLike)) and is_bart_file(filename):
+            if header is None:
+                raise ValueError('BART files contain no meta data. Provide the image header via `header`.')
+            if isinstance(header, KHeader):
+                header = IHeader.from_kheader(header)
+            data = from_bart_layout(read_bart(filename), BART_IMAGE_DIMS, other_dims)
+            return cls(header=header, data=data)
+        if header is not None or other_dims is not None:
+            raise ValueError('header and other_dims are only supported for BART files.')
         if isinstance(filename, (str, PathLike)):
             filename = Path(filename)
             if filename.is_dir():
@@ -246,6 +271,23 @@ class IData(Dataclass):
         )
         nifti.header['descrip'] = description.encode('utf-8')
         nifti.to_filename(filename)
+
+    def to_bart(self, filename: str | Path, *, other_dims: Sequence[BartDimension] | None = None) -> None:
+        """Save image data as BART array.
+
+        The coil and spatial dimensions `(coils, z, y, x)` are stored in the BART dimensions
+        `COIL`, `PHS2`, `PHS1` and `READ`. No meta data is saved.
+
+        Parameters
+        ----------
+        filename
+            A ``.cfl`` or ``.hdr`` suffix writes a ``.hdr``/``.cfl`` pair, a ``.ra`` suffix writes a single file.
+        other_dims
+            BART dimensions of the `other` dimensions, in tensor order, e.g.
+            ``(BartDimension.TE, BartDimension.SLICE)``. `None` flattens all `other` dimensions
+            into `BartDimension.BATCH`.
+        """
+        write_bart(filename, to_bart_layout(self.data, BART_IMAGE_DIMS, other_dims))
 
     def __repr__(self):
         """Representation method for IData class."""
