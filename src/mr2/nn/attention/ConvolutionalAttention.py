@@ -83,11 +83,11 @@ class ConvolutionalAttention(Module):
             case 'temporal':
                 return rearrange(x, 'b (heads c) t h w -> b heads t (c h w)', heads=self.n_heads)
             case 'local':
-                n = 2
+                x = rearrange(x, 'b c t (gh nh ph) (gw nw pw) -> b t (gh gw) (nh nw) (ph pw c)', nh=2, nw=2, ph=4, pw=4)
+                return rearrange(x, 'b t g s (heads d) -> b t g heads s d', heads=self.n_heads)
             case 'global':
-                n = self.image_size // 4
-        x = rearrange(x, 'b c t (gh nh ph) (gw nw pw) -> b t (gh gw) (nh nw) (ph pw c)', nh=n, nw=n, ph=4, pw=4)
-        return rearrange(x, 'b t g s (heads d) -> b t g heads s d', heads=self.n_heads)
+                x = rearrange(x, 'b c t (gh ph) (gw pw) -> b t 1 (gh gw) (ph pw c)', ph=4, pw=4)
+                return rearrange(x, 'b t g s (heads d) -> b t g heads s d', heads=self.n_heads)
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         """Apply convolutional attention.
