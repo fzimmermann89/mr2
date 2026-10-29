@@ -1,16 +1,14 @@
 """Tests for algorithms to calculate the DCF with voronoi."""
 
 import math
-from itertools import product
 
 import numpy as np
 import pytest
 import torch
 from einops import repeat
 from mr2.algorithms.dcf import dcf_1d, dcf_2d3d_voronoi
-from mr2.algorithms.dcf.dcf_voronoi import _cell_volumes_3d
 from mr2.data import KTrajectory
-from scipy.spatial import ConvexHull, Voronoi
+from scipy.spatial import ConvexHull, HalfspaceIntersection
 
 
 def example_traj_rad_2d(n_kr, n_ka, phi0=0.0, broadcast=True):
@@ -213,20 +211,49 @@ def test_dcf_3d_voronoi_near_duplicate(offset: float) -> None:
     torch.testing.assert_close(dcf[index - 1], torch.tensor(1.0, dtype=torch.float64), rtol=0, atol=1e-5)
 
 
-def test_dcf_3d_voronoi_convex_hull() -> None:
-    """3D cell volumes match the convex hull of the vertices of each Voronoi region."""
-    points = np.random.default_rng(0).random((3, 500))
-    dcf = dcf_2d3d_voronoi(torch.from_numpy(points)[:, None, None, :]).ravel().numpy()
-    corners = np.array(list(product([-1, 1], repeat=3))) * 10
-    vdiagram = Voronoi(np.concatenate((points.T, corners)))
-    volume = np.array([ConvexHull(vdiagram.vertices[vdiagram.regions[r]]).volume for r in vdiagram.point_region[:500]])
-    inner = (np.abs(points - 0.5) < 0.3).all(0)  # cells away from the boundary are not replaced as outliers
-    np.testing.assert_allclose(dcf[inner], volume[inner], rtol=1e-10)
+@pytest.mark.parametrize('ndim', [2, 3])
+def test_dcf_voronoi_repeated_points(ndim: int) -> None:
+    """Repeated and nearly coincident samples preserve the total weight of their cell."""
+    grid = torch.stack(torch.meshgrid(*[torch.arange(6.0, dtype=torch.float64)] * ndim, indexing='ij')).reshape(
+        ndim, -1
+    )
+    index = int((grid == 3).all(dim=0).nonzero().item())
+    extra = grid[:, index : index + 1].repeat(1, 3)
+    if ndim == 3:
+        extra[0, -1] += 1e-12
+    reference = dcf_2d3d_voronoi(grid)
+    dcf = dcf_2d3d_voronoi(torch.cat((grid, extra), dim=1)[:, None, None, :]).ravel()
+    repeated = torch.tensor([index, grid.shape[1], grid.shape[1] + 1, grid.shape[1] + 2])
+    torch.testing.assert_close(dcf[repeated], reference[index].expand(4) / 4)
+    keep = torch.arange(grid.shape[1]) != index
+    torch.testing.assert_close(dcf[: grid.shape[1]][keep], reference[keep])
 
 
-def test_cell_volumes_3d_dropped_point() -> None:
-    """A point dropped by Qhull as coincident with another point shares the volume of that cell."""
-    grid = np.array(list(product(range(6), repeat=3)), dtype=np.float64)
+def test_dcf_3d_voronoi_stack_of_stars() -> None:
+    """Cospherical stack-of-stars cells agree with their defining bisector halfspaces."""
+    angle = np.pi * np.arange(32) / 32
+    radius = np.arange(-8, 8) + 0.5
+    xy = (np.stack((np.cos(angle), np.sin(angle)), axis=1)[:, None] * radius[:, None]).reshape(-1, 2)
+    points = np.concatenate([np.column_stack((xy, np.full(len(xy), z))) for z in range(-3, 3)])
+    points = np.round(points, 9)
+    points = points[np.random.default_rng(0).permutation(len(points))]
+    dcf = dcf_2d3d_voronoi(torch.from_numpy(points.T)).numpy()
+    inner = np.flatnonzero((np.linalg.norm(points[:, :2], axis=1) < 0.6) & (points[:, 2] == 1))
+    for index in inner:
+        offset = np.delete(points - points[index], index, axis=0)
+        distance = np.linalg.norm(offset, axis=1)
+        # Relative to the sample, a Voronoi cell is the intersection of the neighbor bisector halfspaces.
+        halfspaces = np.column_stack((offset / distance[:, None], -distance / 2))
+        vertices = HalfspaceIntersection(halfspaces, np.zeros(3)).intersections
+        np.testing.assert_allclose(dcf[index], ConvexHull(vertices).volume, rtol=1e-6)
+
+
+def test_dcf_3d_voronoi_near_point_chain() -> None:
+    """A chain of close points preserves the total volume, including cells shared by Qhull."""
+    grid = torch.stack(torch.meshgrid(*[torch.arange(6.0, dtype=torch.float64)] * 3, indexing='ij')).reshape(3, -1)
     index = 3 * 36 + 3 * 6 + 2
-    volume = _cell_volumes_3d(np.concatenate((grid, grid[index : index + 1] + np.array([1e-14, 0, 0]))))
-    np.testing.assert_allclose(volume[[index, -1, index - 1]], [0.5, 0.5, 1.0])
+    extra = grid[:, index : index + 1].repeat(1, 20)
+    extra[0] += torch.arange(1, 21, dtype=torch.float64) * 3e-7
+    dcf = dcf_2d3d_voronoi(torch.cat((grid, extra), dim=1))
+    total = dcf[index] + dcf[-20:].sum()
+    torch.testing.assert_close(total, torch.tensor(1.0, dtype=total.dtype), rtol=1e-4, atol=0)

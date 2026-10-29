@@ -1,67 +1,18 @@
 """1D, 2D and 3D density compensation function calculation with voronoi method."""
 
-from itertools import permutations, product
+from concurrent.futures import ProcessPoolExecutor
+from itertools import product
 
 import numpy as np
 import torch
-from scipy.sparse import coo_array
-from scipy.sparse.csgraph import connected_components
-from scipy.spatial import Delaunay, Voronoi, cKDTree
+from numpy.typing import ArrayLike
+from scipy.spatial import ConvexHull, Voronoi, cKDTree
 
 UNIQUE_ROUNDING_DECIMALS = 15
 
 
-def _cell_volumes_3d(points: np.ndarray, block_size: int = 2**18) -> np.ndarray:
-    """Calculate the volume of each 3D Voronoi cell from the Delaunay tessellation.
-
-    Within a Delaunay tetrahedron `(a, b, c, d)`, the part of the Voronoi cell of `a` is the sum of the signed
-    tetrahedra spanned by `a`, the midpoint of an edge `(a, b)`, a point on the Voronoi edge dual to a face `(a, b, c)`
-    and the circumcenter of the tetrahedron. This is correct for any point on the line through the circumcenters of
-    the two tetrahedra sharing the face, if both use the same point. The point is moved towards the circumcenter of
-    the flatter tetrahedron, such that (nearly) flat tetrahedra, which Qhull creates for cospherical points and whose
-    orientation is not defined, do not contribute. Volumes of points on the convex hull are not meaningful.
-    """
-    delaunay = Delaunay(points)
-    all_points = torch.from_numpy(delaunay.points)
-    blocks = [
-        np.arange(start, min(start + block_size, len(delaunay.simplices)))
-        for start in range(0, len(delaunay.simplices), block_size)
-    ]
-
-    def tetrahedra(block: np.ndarray) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Get the vertex indices, the vertices and the signed volumes times 6 of tetrahedra."""
-        simplices = torch.from_numpy(delaunay.simplices[block].astype(np.int64))
-        vertices = all_points[simplices]
-        return simplices, vertices, torch.linalg.det(vertices[:, 1:] - vertices[:, :1])
-
-    def circumcenter(block: np.ndarray) -> torch.Tensor:
-        """Get the circumcenters from the hyperplanes of the lifted points on the paraboloid."""
-        equations = torch.from_numpy(delaunay.equations[block])
-        return -equations[..., :3] / (2 * delaunay.paraboloid_scale * equations[..., 3:4])
-
-    flatness = torch.cat([tetrahedra(block)[2].abs() for block in blocks])
-    # All orders (a, b, c, d) of the vertices of a tetrahedron, with c < d, and their parity
-    order = np.array([(a, b, *sorted({0, 1, 2, 3} - {a, b})) for a, b in permutations(range(4), 2)])
-    parity = torch.from_numpy(np.linalg.det(np.eye(4)[order]))
-    a, b, c, d = torch.from_numpy(order.T)
-    volume = torch.zeros(len(points), dtype=torch.float64)
-    for block in blocks:
-        simplices, vertices, signed_volume = tetrahedra(block)
-        # Neighbors opposite to each vertex. Faces on the convex hull have no neighbor.
-        neighbors = np.where(delaunay.neighbors[block] >= 0, delaunay.neighbors[block], block[:, None])
-        center, neighbor_center = circumcenter(block)[:, None], circumcenter(neighbors)
-        weight, neighbor_weight = flatness[block][:, None, None], flatness[neighbors][..., None]
-        face_point = (neighbor_weight * center + weight * neighbor_center) / (weight + neighbor_weight)
-        face_point = torch.where(weight + neighbor_weight > 0, face_point, (center + neighbor_center) / 2)
-        edge = (vertices[:, b] - vertices[:, a]) / 2
-        spoke = center - vertices[:, a]
-        piece = torch.linalg.vecdot(edge, torch.linalg.cross(face_point[:, d] - face_point[:, c], spoke))
-        volume.index_add_(0, simplices[:, a].ravel(), (parity * signed_volume.sign()[:, None] * piece).ravel() / 6)
-    # Qhull drops points that coincide with another point within its precision. The volume is shared equally, as for
-    # exact repeats.
-    owner = np.arange(len(points))
-    owner[delaunay.coplanar[:, 0]] = delaunay.coplanar[:, 2]
-    return np.bincount(owner, volume.numpy())[owner] / np.bincount(owner)[owner]
+def _volume(v: ArrayLike):
+    return ConvexHull(v).volume
 
 
 def dcf_1d(traj: torch.Tensor) -> torch.Tensor:
@@ -116,6 +67,7 @@ def dcf_2d3d_voronoi(traj: torch.Tensor) -> torch.Tensor:
 
     This function computes the DCF by determining the area around each point in k-space using the Voronoi tessellation.
     Points at the edge of k-space are detected as outliers and are assigned the area of the 1% largest DCF values.
+    Nearly coincident 3D points are treated as repeated samples and share their cell weight.
 
     The Voronoi tessellation assigns each point in k-space a region based on the proximity to its nearest neighbors. The
     DCF is then computed based on the inverse of the area of these regions.
@@ -144,20 +96,26 @@ def dcf_2d3d_voronoi(traj: torch.Tensor) -> torch.Tensor:
     traj_unique, inverse, counts = np.unique(traj_numpy, return_inverse=True, return_counts=True, axis=1)
     inverse = inverse.reshape(-1)
 
-    # Qhull cannot reliably separate points closer than about sqrt(eps) times the extent of the input, including the
-    # corner points added below, and can fail with topology errors. Such points are merged like exact repeats.
-    # Points in the same or in neighboring cells of a grid with spacing `tolerance` are merged. This includes all
-    # points closer than `tolerance` and avoids a quadratic number of pairs in dense clusters.
+    # Nearly coincident 3D points can cause Qhull topology errors. Merge small groups as repeated samples.
+    # The tolerance is relative to the bounding corners used below. Keeping every member within half the
+    # tolerance of its representative bounds the group diameter and prevents merging long chains of points.
     furthest_corner = np.max(np.abs(traj_unique))
-    tolerance = np.sqrt(np.finfo(np.float64).eps) * furthest_corner * 10
-    grid_cells, grid_index = np.unique(np.floor(traj_unique.T / tolerance), return_inverse=True, axis=0)
-    pairs = cKDTree(grid_cells).query_pairs(1, p=np.inf, output_type='ndarray')
-    if len(pairs) or len(grid_cells) < traj_unique.shape[1]:
-        adjacency = coo_array((np.ones(len(pairs)), pairs.T), shape=(len(grid_cells), len(grid_cells)))
-        _, cluster = connected_components(adjacency, directed=False)
-        cluster = cluster[grid_index.reshape(-1)]
-        _, first = np.unique(cluster, return_index=True)
-        traj_unique, inverse = traj_unique[:, first], cluster[inverse]
+    if dim == 3:
+        tolerance = np.sqrt(np.finfo(np.float64).eps) * furthest_corner * 10
+        tree = cKDTree(traj_unique.T)
+        nearest = tree.query(traj_unique.T, k=2, distance_upper_bound=tolerance / 2)[0][:, 1]
+        owner = np.arange(traj_unique.shape[1])
+        assigned = np.zeros(len(owner), dtype=bool)
+        for point in np.flatnonzero(np.isfinite(nearest)):
+            if assigned[point]:
+                continue
+            neighbors = np.array(tree.query_ball_point(traj_unique[:, point], tolerance / 2))
+            neighbors = neighbors[~assigned[neighbors]]
+            owner[neighbors] = point
+            assigned[neighbors] = True
+        representatives, cluster = np.unique(owner, return_inverse=True)
+        traj_unique = traj_unique[:, representatives]
+        inverse = cluster.reshape(-1)[inverse]
         counts = np.bincount(inverse)
 
     # Especially in 3D, errors in the calculation of the convex hull can occur for edge points. To avoid this,
@@ -166,18 +124,31 @@ def dcf_2d3d_voronoi(traj: torch.Tensor) -> torch.Tensor:
     corner_points = np.array(list(product([-1, 1], repeat=dim))) * furthest_corner * 10
     traj_extendend = np.concatenate((traj_unique, corner_points.transpose()), axis=1)
 
+    # Carry out voronoi tessellation
+    vdiagram = Voronoi(traj_extendend.transpose())
+    point_region = vdiagram.point_region[: -len(corner_points)]  # Ignore corner points
+    if dim == 3:
+        # Qhull can still assign the same cell to several points within its numerical precision.
+        # Calculate that cell once and share its volume across all original samples assigned to it.
+        point_region, region_inverse = np.unique(point_region, return_inverse=True)
+        counts = np.bincount(region_inverse, weights=counts).astype(counts.dtype)
+        inverse = region_inverse[inverse]
+    regions = [vdiagram.regions[r] for r in point_region]
+    vertices = [vdiagram.vertices[region] for region in regions]
+
     if dim == 2:
         # Shoelace equation for 2d
-        vdiagram = Voronoi(traj_extendend.transpose())
-        regions = [vdiagram.regions[r] for r in vdiagram.point_region[: -len(corner_points)]]  # Ignore corner points
-        vertices = [vdiagram.vertices[region] for region in regions]
-
         def cross2d(x: np.ndarray, y: np.ndarray) -> np.ndarray:
             return x[..., 0] * y[..., 1] - x[..., 1] * y[..., 0]
 
         dcf = np.array([np.abs(cross2d(v[:-1], v[1:]).sum(0) + cross2d(v[-1], v[0])) / 2 for v in vertices])
+
     else:
-        dcf = _cell_volumes_3d(traj_extendend.transpose())[: -len(corner_points)]  # Ignore corner points
+        # Calculate volume/area of voronoi cells using processes, as this is a very time-consuming operation
+        # and ConvexHull is singlethreaded and does not seem to drop the GIL
+        # TODO: this could maybe be made faster as the polyhedrons are known to be convex
+        future = ProcessPoolExecutor(max_workers=torch.get_num_threads()).map(_volume, vertices, chunksize=100)
+        dcf = np.array(list(future))
 
     # Get outliers (i.e. voronoi cell which are unbound) and set them to a reasonable value
     # Outliers are defined as values larger than 1.5 * inter quartile range of the values
