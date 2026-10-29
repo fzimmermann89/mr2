@@ -730,7 +730,8 @@ class KData(Dataclass):
             if trajectory_filename is not None:
                 raise ValueError('Cartesian data is saved on the encoding matrix without a trajectory.')
             matrix = self.header.encoding_matrix.zyx
-            index = torch.zeros(self.traj.shape, dtype=torch.int64, device=self.data.device)
+            k_shape = torch.broadcast_shapes(self.traj.shape, (*self.data.shape[:-4], 1, *self.data.shape[-3:]))
+            index = torch.zeros(k_shape, dtype=torch.int64, device=self.data.device)
             for k, n in zip(ks, matrix, strict=True):
                 position = k.round().to(torch.int64) + n // 2
                 if ((position < 0) | (position >= n)).any():

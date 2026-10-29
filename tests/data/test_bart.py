@@ -163,10 +163,12 @@ def test_kdata_to_bart_cartesian(tmp_path: Path) -> None:
     assert not kspace[..., 0, [1, 2, 5, 7], :].abs().any()
 
 
-def test_kdata_to_bart_cartesian_repeated_points(tmp_path: Path) -> None:
+@pytest.mark.parametrize('k1_lines', [(0, 1, 0), (0, 0), (0, 0, 0)])
+@pytest.mark.parametrize('n_k0', [1, 6])
+def test_kdata_to_bart_cartesian_repeated_points(tmp_path: Path, k1_lines: tuple[int, ...], n_k0: int) -> None:
     """Repeated k-space points cannot be stored on the grid."""
     with pytest.raises(ValueError, match='Repeated'):
-        cartesian_kdata(k1_lines=(0, 1, 0)).to_bart(tmp_path / 'kspace.cfl')
+        cartesian_kdata(n_k0=n_k0, k1_lines=k1_lines).to_bart(tmp_path / 'kspace.cfl')
 
 
 def test_kdata_to_bart_cartesian_trajectory_filename(tmp_path: Path) -> None:
