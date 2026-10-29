@@ -1,74 +1,63 @@
-"""Numerical checks for convolutional attention packing."""
+"""Tests for ConvolutionalAttention."""
 
 from typing import Literal
 
 import pytest
 import torch
+from einops import rearrange
 from mr2.nn.attention import ConvolutionalAttention
+from mr2.utils import RandomGenerator
 from torch.nn.functional import normalize
 
 
-@pytest.mark.parametrize('mode', ['temporal', 'local', 'global'])
-def test_attention_reference(mode: Literal['temporal', 'local', 'global']) -> None:
-    """Match explicit token gathering, head splitting and post-softmax position bias."""
-    torch.manual_seed(4)
-    layer = ConvolutionalAttention(4, 2, 16, mode).double()
-    x = torch.randn(1, 4, 2, 16, 16, dtype=torch.float64)
-    q, k, v = [projection(x) for projection in (layer.to_q, layer.to_k, layer.to_v)]
-    result = torch.zeros_like(x)
-    if mode == 'temporal':
-        for head in range(2):
-            indices = slice(head * 2, (head + 1) * 2)
-            tokens = [z[0, indices].transpose(0, 1).reshape(2, -1) for z in (q, k, v)]
-            query, key, value = tokens
-            weights = (normalize(query, dim=-1) @ normalize(key, dim=-1).T).softmax(-1)
-            result[0, indices] = (weights @ value).reshape(2, 2, 16, 16).transpose(0, 1)
-    else:
-        assert layer.relative_position_bias_table is not None
-        # Make the bias nonzero and structured so before/after-softmax placement matters.
-        with torch.no_grad():
-            layer.relative_position_bias_table.copy_(
-                torch.linspace(-0.2, 0.3, layer.relative_position_bias_table.numel()).reshape_as(
-                    layer.relative_position_bias_table
-                )
-            )
-        groups = [(h, w) for h in (0, 8) for w in (0, 8)] if mode == 'local' else [(0, 0)]
-        offsets = [
-            (h, w) for h in range(0, 8 if mode == 'local' else 16, 4) for w in range(0, 8 if mode == 'local' else 16, 4)
-        ]
-        grid = 2 if mode == 'local' else 4
-        for frame in range(2):
-            for top, left in groups:
-                tokens = [
-                    torch.stack(
-                        [
-                            z[0, :, frame, top + h : top + h + 4, left + w : left + w + 4].permute(1, 2, 0).flatten()
-                            for h, w in offsets
-                        ]
-                    )
-                    .reshape(len(offsets), 2, 32)
-                    .transpose(0, 1)
-                    for z in (q, k, v)
-                ]
-                query, key, value = tokens
-                weights = (normalize(query, dim=-1) @ normalize(key, dim=-1).transpose(-1, -2)).softmax(-1)
-                bias = torch.stack(
-                    [
-                        torch.stack(
-                            [
-                                layer.relative_position_bias_table[
-                                    (h1 // 4 - h2 // 4 + grid - 1) * (2 * grid - 1) + w1 // 4 - w2 // 4 + grid - 1
-                                ]
-                                for h2, w2 in offsets
-                            ]
-                        )
-                        for h1, w1 in offsets
-                    ]
-                ).permute(2, 0, 1)
-                patches = ((weights + bias) @ value).transpose(0, 1).reshape(len(offsets), 4, 4, 4)
-                for patch, (h, w) in zip(patches, offsets, strict=True):
-                    result[0, :, frame, top + h : top + h + 4, left + w : left + w + 4] = patch.permute(2, 0, 1)
-    torch.testing.assert_close(layer(x), layer.to_out(result))
+@torch.no_grad()
+@pytest.mark.parametrize('mode', ['local', 'global'])
+def test_convolutional_attention_spatial_reference(mode: Literal['local', 'global']) -> None:
+    """Compare window attention with dense attention masked by patch coordinates.
 
+    Heads split flattened (patch row, patch column, channel) features. Relative
+    position bias is added after softmax.
+    """
+    size = 16
+    x = RandomGenerator(seed=4).float64_tensor((2, 4, 3, size, size))
+    layer = ConvolutionalAttention(n_channels=4, n_heads=2, image_size=size, mode=mode).double()
+    assert layer.relative_position_bias_table is not None
+    torch.nn.init.normal_(layer.relative_position_bias_table)
+    q, k, v = (
+        rearrange(projection(x), 'b c t (gy py) (gx px) -> b t (gy gx) (py px c)', py=4, px=4)
+        .unflatten(-1, (layer.n_heads, -1))
+        .transpose(-3, -2)
+        for projection in (layer.to_q, layer.to_k, layer.to_v)
+    )
+    patch = torch.cartesian_prod(torch.arange(size // 4), torch.arange(size // 4))
+    patches_per_window = 2 if mode == 'local' else size // 4
+    window, position = patch // patches_per_window, patch % patches_per_window
+    same_window = (window[:, None] == window[None]).all(-1)
+    relative = position[:, None] - position[None] + patches_per_window - 1
+    index = relative[..., 0] * (2 * patches_per_window - 1) + relative[..., 1]
+    bias = layer.relative_position_bias_table[index].permute(2, 0, 1)
+    logits = (normalize(q, dim=-1) @ normalize(k, dim=-1).mT).masked_fill(~same_window, -torch.inf)
+    weights = logits.softmax(-1) + bias * same_window
+    expected = rearrange(weights @ v, 'b t heads s d -> b t s (heads d)')
+    expected = rearrange(expected, 'b t (gy gx) (py px c) -> b c t (gy py) (gx px)', gy=size // 4, py=4, px=4)
+    torch.testing.assert_close(layer(x), layer.to_out(expected))
+
+
+@torch.no_grad()
+def test_convolutional_attention_temporal_reference() -> None:
+    """Each head attends across frames using its channel group and all pixels as features."""
+    x = RandomGenerator(seed=4).float64_tensor((2, 4, 3, 16, 16))
+    layer = ConvolutionalAttention(n_channels=4, n_heads=2, image_size=16, mode='temporal').double()
+    # Keep channel and pixel axes explicit instead of packing them into token features.
+    q, k, v = (projection(x).unflatten(1, (layer.n_heads, -1)) for projection in (layer.to_q, layer.to_k, layer.to_v))
+    q, k = normalize(q.flatten(-2), dim=(2, 4)), normalize(k.flatten(-2), dim=(2, 4))
+    weights = torch.einsum('bncti,bncsi->bnts', q, k).softmax(-1)
+    expected = torch.einsum('bnts,bncsyx->bnctyx', weights, v).flatten(1, 2)
+    torch.testing.assert_close(layer(x), layer.to_out(expected))
+
+
+def test_convolutional_attention_wrong_shape() -> None:
+    """Inputs not matching image_size are rejected."""
+    layer = ConvolutionalAttention(n_channels=4, n_heads=2, image_size=16, mode='local')
     with pytest.raises(ValueError, match='Expected'):
-        layer(torch.zeros(1, 4, 2, 16, 24, dtype=torch.float64))
+        layer(torch.zeros(1, 4, 2, 16, 24))
