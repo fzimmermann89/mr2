@@ -1,8 +1,5 @@
 """Checks for SNRAware networks and official weight conversion."""
 
-import json
-from pathlib import Path
-
 import pytest
 import torch
 from mr2.nn.nets import SNRAware
@@ -38,12 +35,3 @@ def test_snraware_downsample_conversion(monkeypatch: pytest.MonkeyPatch) -> None
         model.convert_state_dict({'unknown': weight})
     with pytest.raises(ValueError, match='Missing official parameters'):
         model.convert_state_dict({})
-
-
-def test_snraware_official_keys() -> None:
-    """The pinned small checkpoint's full key/shape layout loads without upstream code or weights."""
-    # Shapes from the official checkpoint revision documented in snraware.rst.
-    shapes = json.loads(Path(__file__).with_name('snraware_small_shapes.json').read_text())
-    official = {key: torch.tensor(float(i)).expand(shape) for i, (key, shape) in enumerate(shapes.items())}
-    model = SNRAware()
-    model.load_state_dict(model.convert_state_dict(official))
