@@ -1,12 +1,16 @@
 # %% [markdown]
-# # A tiny MoDL-style reconstruction
+# # MoDL-style reconstruction with a small CNN
 #
-# This toy demonstration trains a small unrolled network on synthetic complex
-# images. It needs no downloads or GPU: the default uses CPU, eight 32 x 32
-# training images, two held-out images and 40 full-batch updates (typically under
-# a minute on a laptop). Install ``mrtwo[notebooks]`` to run it.
-# This is a teaching example, not a full paper reproduction or evidence of
-# reconstruction performance on real MRI data.
+# Here we train an unrolled reconstruction network using a convolutional neural
+# network (CNN) and conjugate-gradient data consistency. We use synthetic complex
+# images so that the example runs on CPU without downloading data.
+#
+# The default run uses eight 32 x 32 training images, two held-out images and
+# 40 training updates. It took about two seconds on the development machine;
+# runtime depends on the CPU. Install ``mrtwo[notebooks]`` to run the notebook.
+#
+# This toy example demonstrates the reconstruction and training steps. It does
+# not reproduce the full MoDL paper or evaluate reconstruction of real MRI data.
 
 # %%
 import time
@@ -22,18 +26,18 @@ device = torch.device('cpu')
 start = time.perf_counter()
 
 # %% [markdown]
-# ## Synthetic images and a known acquisition model
+# ## Create images and simulate undersampled k-space data
 #
-# We sum smooth ellipses with random positions, widths and amplitudes, then add
-# a smooth phase. This deliberately narrow image distribution makes a small
-# supervised exercise possible. The last two images are held out from training;
-# they are still from the same toy distribution.
+# We form each magnitude image by summing five elliptical Gaussian functions
+# with random positions, widths and amplitudes, then add a linear phase.
+# We reserve the last two images for evaluation and train on the first eight.
+# All ten images follow the same distribution.
 #
-# MR images have axes ``(batch, coils, z, y, x)`` here. We use one coil with
-# sensitivity one and one slice. No metadata objects are needed for this
-# synthetic tensor example. The forward model $A = MF$ combines a centered,
-# orthonormal Fourier transform with a Cartesian sampling mask. Unsampled
-# entries are stored as zeros; the same mask is used for all images.
+# The image tensors have shape ``(batch, coils, z, y, x)``. We use one slice and
+# one coil with sensitivity one. The forward model $A = MF$ combines a centered,
+# orthonormal Fourier transform $F$ with a Cartesian sampling mask $M$.
+# We keep every fourth phase-encoding line and four central lines, storing
+# unsampled entries as zeros. We use the same mask for all images.
 
 # %%
 size = 32
@@ -65,28 +69,39 @@ print(f'Sampled phase-encoding lines: {int(mask.sum())}/{size}')
 # %% [markdown]
 # ## Denoising followed by data consistency
 #
-# Starting at $x_0=A^H b$, each of three iterations computes
+# We initialize the reconstruction with the adjoint image $x_0=A^H b$, where
+# $b$ denotes the undersampled k-space data. At each of three iterations we
+# denoise the current image and solve a regularized least-squares problem:
 #
 # $$z_k = D_\theta(x_k), \qquad
-# (A^H A + \lambda I)x_{k+1} = A^H b + \lambda z_k.$$
+# x_{k+1} = \operatorname*{arg\,min}_x
+# \left(\|Ax-b\|_2^2 + \lambda\|x-z_k\|_2^2\right).$$
 #
-# `~mr2.nn.data_consistency.ConjugateGradientDC` solves this positive-definite
-# system and differentiates through the solve implicitly. Its trainable
-# ``log_weight`` gives $\lambda=\exp(\mathrm{log\_weight})>0$. Larger weights
-# pull the solution toward the denoiser. This is a soft consistency penalty,
-# so measured samples need not be reproduced exactly.
+# The corresponding normal equation is
 #
-# The residual denoiser is $D_\theta(x)=x+N_\theta(x)$. To use a 2D CNN we
-# remove only the singleton z axis: ``(B, 1, 1, H, W) -> (B, 1, H, W)``.
-# `~mr2.nn.ComplexAsChannel` maps that complex channel to two real channels,
-# real then imaginary, and converts the CNN output back to complex values.
-# We restore z before applying the MR operator. For multiple slices one could
-# fold slices into the batch; multiple coils require a suitable sensitivity
-# model and coil combination rather than silently treating coils as slices.
+# $$(A^H A + \lambda I)x_{k+1} = A^H b + \lambda z_k.$$
 #
-# The same CNN and regularization weight are shared across all iterations.
-# Unshared iterations would use a separate CNN and DC module per step (for
-# example in a ``ModuleList``), increasing the number of learned parameters.
+# We use `~mr2.nn.data_consistency.ConjugateGradientDC` to solve this system.
+# It computes gradients by implicit differentiation. The trainable parameter
+# ``log_weight`` defines $\lambda=\exp(\mathrm{log\_weight})>0$, keeping the
+# system positive definite. Increasing $\lambda$ gives the denoised image more
+# weight relative to the measured data. The solution can therefore differ from
+# the measurements even at sampled positions.
+#
+# Our denoiser is $D_\theta(x)=x+N_\theta(x)$, where $N_\theta$ is a
+# `~mr2.nn.nets.BasicCNN`. Before applying the 2D CNN, we remove the singleton
+# z axis to obtain shape ``(batch, 1, y, x)``.
+# `~mr2.nn.ComplexAsChannel` splits the complex channel into real and imaginary
+# channels and converts the CNN output back to a complex tensor. We restore
+# the z axis before the data-consistency step.
+#
+# For independent slices, we could combine the slice and batch axes before
+# applying the CNN. For multiple coils, we would also need coil sensitivity
+# maps and a forward model that maps a coil-combined image to coil data.
+#
+# We share the CNN and regularization weight across all three iterations.
+# To use different parameters at each iteration, we would create a separate
+# CNN and data-consistency module for each step, stored in a ``ModuleList``.
 
 
 # %%
@@ -125,12 +140,12 @@ with torch.no_grad():
     torch.testing.assert_close(consistent, expected, atol=2e-5, rtol=2e-5)
 
 # %% [markdown]
-# ## A plain PyTorch training loop
+# ## Train the reconstruction network
 #
 # The supervised loss is mean squared complex error,
 # $\operatorname{mean}|x-x_{\mathrm{true}}|^2$, which includes both real and
 # imaginary errors. We update the CNN and the positive regularization weight
-# together. The held-out loss is only monitored, never used for gradients.
+# together. We monitor the held-out loss without using it to update the parameters.
 # This short run uses one fixed mask, noiseless data and no augmentation.
 
 # %%
@@ -160,13 +175,16 @@ print(
 )
 
 # %% [markdown]
-# ## Inspect the result
+# ## Compare with the adjoint reconstruction
 #
-# Compare magnitudes on the same intensity scale and absolute complex errors
-# on a separate shared scale. Loss curves describe this tiny training exercise;
-# they do not establish generalization to other masks, anatomy, noise or coils.
-# A practical study needs representative data, independent evaluation and
-# careful choices of network size, number of iterations and acquisition model.
+# We display the first held-out image, its adjoint reconstruction and the
+# trained network output. The magnitude images share an intensity scale;
+# the absolute complex errors share a separate scale. The loss curves show
+# the mean squared complex error over all training and held-out images.
+#
+# We use noiseless data from a small set of smooth synthetic images. These
+# results do not measure performance on anatomical images, other sampling
+# masks or multi-coil acquisitions.
 
 # %% tags=["hide-cell"] mystnb={"code_prompt_show": "Show plotting code"}
 fig, axes = plt.subplots(2, 3, figsize=(9, 6), constrained_layout=True)
