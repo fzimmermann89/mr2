@@ -1,4 +1,4 @@
-"""Released SNRAware imaging transformer architectures."""
+"""Released SNRAware imaging transformers, ported from Microsoft (MIT; see LICENSE-SNRAware)."""
 
 from collections.abc import Mapping
 from typing import Literal
@@ -232,10 +232,9 @@ class SNRAware(Module):
             if key in ignored:
                 continue
             prefix, _, parameter = key.rpartition('.')
-            if prefix in names:
-                target = f'{names[prefix]}.{parameter}'
-            else:
+            if prefix not in names:
                 raise ValueError(f'Unrecognized official key: {key}')
+            target = f'{names[prefix]}.{parameter}'
             if target not in expected or tensor.shape != expected[target].shape:
                 raise ValueError(f'Incompatible official parameter: {key} -> {target}')
             if target.startswith(('down_initial.', 'down_fusion.')):
