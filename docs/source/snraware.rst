@@ -74,19 +74,6 @@ blend weights separately, reject a zero assembled weight, then divide the
 assembled predictions by the assembled weights before cropping the padding.
 This port adds no tiled inference API.
 
-Validation
-----------
-
-``ci/validate_snraware.py`` compares converted models against local official
-checkpoints at one and sixteen frames::
-
-    PYTHONPATH=src python ci/validate_snraware.py \
-        --variant small --checkpoint /path/to/snraware_small_model.pts
-
-The script prints checkpoint SHA256, parameter count and maximum/RMS output errors
-and asserts float32 agreement with absolute and relative tolerances of ``5e-5``.
-No checkpoint downloads are required by ordinary tests.
-
 The official code was inspected at commit
 ``0cd04986fb3bdeb137c2f059a1b5e1c29a35e150``. Checkpoints were retrieved from model
 repository revision ``2e42c3d3581fabb9b7472f65b04417ae9112a368``. The upstream
