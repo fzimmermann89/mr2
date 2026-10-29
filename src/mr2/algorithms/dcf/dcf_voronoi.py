@@ -17,9 +17,10 @@ def _cell_volumes_3d(points: np.ndarray, block_size: int = 2**18) -> np.ndarray:
     volumes with plus or minus signs, so that pieces outside the cell cancel [2]_.
 
     Neighboring tetrahedra use the same point between their sphere centers. We place it closer to the flatter
-    tetrahedron to reduce numerical errors. This weighting is specific to this implementation. Cells
-    next to exactly flat tetrahedra are computed as the convex hull of their corners instead. Points on the outer
-    boundary have unbounded cells; their volumes are not used.
+    tetrahedron to reduce numerical errors. This weighting is specific to this implementation. Nonpositive or
+    invalid volumes are recomputed from the cell's corners. A few positive volumes may remain approximate when
+    points nearly coincide or lie on the same sphere. Points on the outer boundary have unbounded cells;
+    their volumes are not used.
 
     References
     ----------
@@ -74,10 +75,9 @@ def _cell_volumes_3d(points: np.ndarray, block_size: int = 2**18) -> np.ndarray:
         volume.index_add_(0, simplices[:, a].ravel(), piece.ravel() / 6)
     result = volume.numpy()
 
-    # Flat tetrahedra have no defined orientation and can make the sum wrong. Recompute the volume of these cells, and
-    # of cells with a nonpositive or invalid sum, as the convex hull of their corners.
+    # Recompute nonpositive or invalid volumes from the cell corners. Rebuilding every cell touching a flat
+    # tetrahedron would repeat most of the work on Cartesian grids and stacked planes.
     rebuild = (result <= 0) | ~np.isfinite(result)
-    rebuild[delaunay.simplices[flatness.numpy() == 0]] = True
     rebuild[delaunay.convex_hull] = False
     rebuild[delaunay.coplanar[:, 0]] = False
     simplex, corner = np.nonzero(rebuild[delaunay.simplices])

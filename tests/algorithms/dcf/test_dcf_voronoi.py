@@ -2,6 +2,7 @@
 
 import math
 from itertools import product
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -240,7 +241,8 @@ def test_dcf_3d_voronoi_stack_of_stars() -> None:
     points = np.round(points, 9)
     points = points[np.random.default_rng(0).permutation(len(points))]
     dcf = dcf_2d3d_voronoi(torch.from_numpy(points.T)).numpy()
-    inner = np.flatnonzero((np.linalg.norm(points[:, :2], axis=1) < 0.6) & (points[:, 2] == 1))
+    # Sample across an interior slice so a few central cells do not dominate the aggregate error.
+    inner = np.flatnonzero((np.linalg.norm(points[:, :2], axis=1) < 6) & (points[:, 2] == 1))
     expected_volumes = []
     for index in inner:
         offset = np.delete(points - points[index], index, axis=0)
@@ -289,6 +291,17 @@ def test_dcf_3d_cell_volumes_qhull_coincident() -> None:
     assert np.any(np.all(pair == [index, len(grid)], axis=1))
     volumes = _cell_volumes_3d(points)
     np.testing.assert_allclose(volumes[[index, len(grid)]], 0.5, rtol=0, atol=1e-5)
+
+
+def test_dcf_3d_cell_volumes_cartesian() -> None:
+    """A regular grid keeps unit interior volumes without per-cell hull calculations."""
+    grid = np.stack(np.meshgrid(*[np.arange(6.0)] * 3, indexing='ij')).reshape(3, -1).T
+    corners = np.array(list(product([-100.0, 100.0], repeat=3)))
+    with patch('mr2.algorithms.dcf.dcf_voronoi.ConvexHull', wraps=ConvexHull) as hull:
+        volumes = _cell_volumes_3d(np.concatenate((grid, corners)))
+    inner = ((grid > 0) & (grid < 5)).all(axis=1)
+    np.testing.assert_allclose(volumes[:-8][inner], 1, rtol=1e-10)
+    hull.assert_not_called()
 
 
 @pytest.mark.parametrize('seed', [0, 1, 2])
