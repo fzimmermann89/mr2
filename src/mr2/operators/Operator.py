@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from functools import reduce
+from collections.abc import Callable
+from functools import cached_property, reduce
 from typing import Generic, TypeAlias, cast
 
 import torch
-from typing_extensions import TypeVar, TypeVarTuple, Unpack, overload
+from typing_extensions import Self, TypeVar, TypeVarTuple, Unpack, overload
 
 import mr2.operators
 from mr2.utils.TensorAttributeMixin import TensorAttributeMixin
@@ -25,6 +26,15 @@ class Operator(Generic[Unpack[Tin], Tout], ABC, TensorAttributeMixin, torch.nn.M
     Operators can be composed, added, multiplied, and applied to tensors.
     The forward method must be implemented by the subclasses.
     """
+
+    def _apply(self, fn: Callable[[torch.Tensor], torch.Tensor], recurse: bool = True) -> Self:
+        """Invalidate cached properties before transforming tensor state."""
+        # Cached properties bypass module registration and may hold tensors on the old device or dtype.
+        for cls in type(self).__mro__:
+            for name, attribute in vars(cls).items():
+                if isinstance(attribute, cached_property):
+                    self.__dict__.pop(name, None)
+        return super()._apply(fn, recurse=recurse)
 
     @abstractmethod
     def forward(self, *args: Unpack[Tin]) -> Tout:
@@ -95,6 +105,13 @@ class Operator(Generic[Unpack[Tin], Tout], ABC, TensorAttributeMixin, torch.nn.M
         """
         return OperatorElementwiseProductRight(self, other)
 
+    def __neg__(self) -> Operator[Unpack[Tin], Tout]:
+        """Operator negation.
+
+        Returns ``lambda x: -self(x)``
+        """
+        return (-1) * self
+
     @overload
     def __sub__(self, other: Operator[Unpack[Tin], Tout]) -> Operator[Unpack[Tin], Tout]: ...
 
@@ -113,7 +130,7 @@ class Operator(Generic[Unpack[Tin], Tout], ABC, TensorAttributeMixin, torch.nn.M
         """
         if isinstance(other, mr2.operators.ZeroOp):
             return self
-        return self + (-1.0) * other
+        return self + (-other)
 
     def __rsub__(
         self: Operator[Unpack[Tin], tuple[Unpack[Tin]]], other: torch.Tensor | complex
@@ -122,7 +139,7 @@ class Operator(Generic[Unpack[Tin], Tout], ABC, TensorAttributeMixin, torch.nn.M
 
         Returns ``lambda x: other*x - self(x)``
         """
-        return (-1.0) * self + other
+        return -self + other
 
 
 class OperatorComposition(Operator[Unpack[Tin2], Tout]):

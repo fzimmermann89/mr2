@@ -2,6 +2,7 @@
 
 import sys
 import tempfile
+import warnings
 from collections.abc import Sequence
 from typing import Any
 
@@ -28,6 +29,18 @@ maximum_python_313 = pytest.mark.skipif(
     sys.version_info >= (3, 14),
     reason='PyTorch FlexAttention is not compatible with Python >= 3.14',
 )
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Skip CUDA tests when CUDA is unavailable."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            'ignore', message="CUDA initialization:|Can't (initialize NVML|get nvml device count)", category=UserWarning
+        )
+        cuda_skip = pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA unavailable')
+    for item in items:
+        if item.get_closest_marker('cuda'):
+            item.add_marker(cuda_skip, append=False)
 
 
 def generate_random_encodingcounter_properties(rng: RandomGenerator) -> dict[str, Any]:

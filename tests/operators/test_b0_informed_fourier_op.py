@@ -127,3 +127,35 @@ def test_b0_informed_fourier_op_gradcheck_wrt_b0_map(
 
     b0_map = rng.float64_tensor(size=shape[-3:], low=-20, high=20).requires_grad_(True)
     gradcheck(forward_from_b0_map, (b0_map,), fast_mode=True, eps=1e-3, atol=5e-2, rtol=5e-2)
+
+
+@pytest.mark.cuda
+@pytest.mark.parametrize('operator_type', [MultiFrequencyFourierOp, TimeSegmentedFourierOp, ConjugatePhaseFourierOp])
+def test_b0_informed_fourier_op_cuda(
+    operator_type: type[MultiFrequencyFourierOp] | type[TimeSegmentedFourierOp] | type[ConjugatePhaseFourierOp],
+) -> None:
+    """CUDA forward results match CPU and the adjoint satisfies the dot product."""
+    shape = (1, 1, 2, 2)
+    b0_map = torch.tensor([[[-4.0, 1.0], [3.0, -2.0]]])
+    times = torch.tensor([0.0, 1e-4])
+    fourier = FastFourierOp(dim=(-2, -1), recon_matrix=shape[-2:], encoding_matrix=shape[-2:])
+    kwargs = {'n_bins': 4} if operator_type is MultiFrequencyFourierOp else {}
+    if operator_type is TimeSegmentedFourierOp:
+        kwargs = {'n_segments': 2, 'n_design_frequencies': 4}
+    cpu_op = operator_type(fourier, b0_map, times, **kwargs)
+    cuda_op = operator_type(fourier, b0_map.cuda(), times.cuda(), **kwargs)
+    x = torch.tensor([[[[1 + 2j, -1j], [2.0, 0.5 - 1j]]]], dtype=torch.complex64)
+    y = torch.tensor([[[[0.5j, 1.0], [-2j, 1 - 1j]]]], dtype=torch.complex64)
+    (cpu_forward,) = cpu_op(x)
+    (forward,) = cuda_op(x.cuda())
+    (adjoint,) = cuda_op.H(y.cuda())
+    torch.testing.assert_close(forward.cpu(), cpu_forward, rtol=2e-4, atol=2e-4)
+    torch.testing.assert_close(
+        torch.vdot(forward.flatten(), y.cuda().flatten()),
+        torch.vdot(x.cuda().flatten(), adjoint.flatten()),
+        rtol=2e-4,
+        atol=2e-4,
+    )
+    assert forward.is_cuda
+    assert adjoint.is_cuda
+    assert torch.isfinite(forward).all()

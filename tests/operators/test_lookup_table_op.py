@@ -58,9 +58,6 @@ def test_lookup_table_op_complex_interpolation() -> None:
 @pytest.mark.cuda
 def test_lookup_table_op_cuda() -> None:
     """LookupTableOp works on CUDA."""
-    if not torch.cuda.is_available():
-        pytest.skip('CUDA not available.')
-
     model = DummySignalModel()
     operator = LookupTableOp(
         model,

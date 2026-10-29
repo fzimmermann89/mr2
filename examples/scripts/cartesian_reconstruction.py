@@ -394,10 +394,10 @@ show_images(idat_us.rss().squeeze(), idat_us_csm.rss().squeeze(), titles=['Autoc
 # we try can a more sophisticated reconstruction method, such as the *iterative SENSE algorithm*.
 # As you might have guessed, these are also included in MRtwo:
 # Instead of the `~mr2.algorithms.reconstruction.DirectReconstruction`,
-# we can use `~mr2.algorithms.reconstruction.IterativeSENSEReconstruction`:
+# we can use `~mr2.algorithms.reconstruction.RegularizedIterativeSENSEReconstruction`:
 
 # %%
-sense_recon_us = mr2.algorithms.reconstruction.IterativeSENSEReconstruction(
+sense_recon_us = mr2.algorithms.reconstruction.RegularizedIterativeSENSEReconstruction(
     kdata_us,
     csm=direct_recon_calib_lines.csm_op,
     n_iterations=8,
@@ -430,7 +430,7 @@ zenodo_get.download(
     access_token=os.environ.get('ZENODO_TOKEN'),
 )
 
-idat_dcm = mr2.data.IData.from_dicom_files(data_folder / 'cart_t1_msense_integrated.dcm')
+idat_dcm = mr2.data.IData.from_file(data_folder / 'cart_t1_msense_integrated.dcm')
 show_images(idat_us_sense.rss().squeeze(), torch.fliplr(idat_dcm.rss().squeeze()), titles=['MRtwo', 'Scanner'])
 
 # %% [markdown]

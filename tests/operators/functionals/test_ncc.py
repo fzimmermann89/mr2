@@ -9,6 +9,20 @@ from mr2.operators.functionals.NCC import NCC
 from mr2.utils import RandomGenerator
 
 
+@pytest.mark.parametrize('window_size', [None, 7])
+@pytest.mark.parametrize('soft_weight', [False, True])
+def test_ncc_weight_scale(window_size: int | None, soft_weight: bool) -> None:
+    """Global and local NCC must be invariant to the scale of mask or soft weights."""
+    rng = RandomGenerator(0)
+    target = rng.float32_tensor((2, 1, 10, 10))
+    prediction = 0.8 * target + 0.2 * rng.rand_like(target)
+    weight = rng.rand_like(target, low=0.1, high=1.0) if soft_weight else torch.ones_like(target)
+    weight[..., :1, :] = 0
+    expected = NCC(target, weight, window_size=window_size)(prediction)[0]
+    result = NCC(target, 0.01 * weight, window_size=window_size)(prediction)[0]
+    torch.testing.assert_close(result, expected)
+
+
 def test_ncc() -> None:
     """Test the NCC functional."""
     rng = RandomGenerator(0)
