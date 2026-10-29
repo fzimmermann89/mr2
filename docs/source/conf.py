@@ -25,7 +25,6 @@ config = SphinxConfig('../../pyproject.toml', globalns=globals(), config_overrid
 
 
 project = name
-copyright = '2023, Physikalisch-Technische Bundesanstalt (PTB) Berlin'
 author = author
 version = version
 
@@ -126,6 +125,7 @@ html_favicon = '_static/favicon.svg'
 html_theme = 'furo'
 html_title = 'MR²'
 html_show_sphinx = False
+html_show_copyright = False
 html_show_sourcelink = False
 html_static_path = ['_static']
 html_css_files = ['custom.css']
