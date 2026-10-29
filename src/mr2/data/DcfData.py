@@ -140,8 +140,8 @@ class DcfData(Dataclass):
     def to_bart(
         self,
         filename: str | Path,
-        other_dims: Sequence[BartDimension] | None = None,
         *,
+        other_dims: Sequence[BartDimension] | None = None,
         shape: Sequence[int] | None = None,
     ) -> None:
         """Save density compensation data as BART array.

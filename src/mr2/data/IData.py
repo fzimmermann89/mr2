@@ -272,7 +272,7 @@ class IData(Dataclass):
         nifti.header['descrip'] = description.encode('utf-8')
         nifti.to_filename(filename)
 
-    def to_bart(self, filename: str | Path, other_dims: Sequence[BartDimension] | None = None) -> None:
+    def to_bart(self, filename: str | Path, *, other_dims: Sequence[BartDimension] | None = None) -> None:
         """Save image data as BART array.
 
         The coil and spatial dimensions `(coils, z, y, x)` are stored in the BART dimensions

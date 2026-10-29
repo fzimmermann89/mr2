@@ -121,6 +121,8 @@ def read_bart(filename: str | PathLike) -> torch.Tensor:
     else:
         header_path, data_path = _cfl_paths(filename)
         lines = header_path.read_text().splitlines()
+        if '# MultiDimensions' in lines:
+            raise ValueError(f'Multi-array BART files are not supported: {header_path}.')
         try:
             dims = [int(dim) for dim in lines[lines.index('# Dimensions') + 1].split()]
         except (ValueError, IndexError):
@@ -157,8 +159,8 @@ def write_bart(filename: str | PathLike, data: torch.Tensor) -> None:
             dtype=_RA_HEADER_DTYPE,
         )
         with filename.open('wb') as file:
-            file.write(header.tobytes())
-            file.write(values_np.astype(_ELEMENT_DTYPE, copy=False).tobytes())
+            header.tofile(file)
+            values_np.astype(_ELEMENT_DTYPE, copy=False).tofile(file)
     else:
         header_path, data_path = _cfl_paths(filename)
         header_path.write_text('# Dimensions\n' + ' '.join(str(dim) for dim in dims) + '\n')

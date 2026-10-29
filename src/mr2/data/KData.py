@@ -699,6 +699,7 @@ class KData(Dataclass):
         self,
         filename: str | Path,
         trajectory_filename: str | Path | None = None,
+        *,
         other_dims: Sequence[BartDimension] | None = None,
     ) -> None:
         """Save k-space data as BART array.
@@ -726,12 +727,14 @@ class KData(Dataclass):
             into `BartDimension.BATCH`.
         """
         ks = (self.traj.kz, self.traj.ky, self.traj.kx)
+        shape = torch.broadcast_shapes(self.data.shape, self.traj.shape)
+        data = self.data.broadcast_to(shape)
+        traj_shape = (*shape[:-4], 1, *shape[-3:])
         if all(((k - k.round()).abs() <= self.traj.grid_detection_tolerance).all() for k in ks):
             if trajectory_filename is not None:
                 raise ValueError('Cartesian data is saved on the encoding matrix without a trajectory.')
             matrix = self.header.encoding_matrix.zyx
-            k_shape = torch.broadcast_shapes(self.traj.shape, (*self.data.shape[:-4], 1, *self.data.shape[-3:]))
-            index = torch.zeros(k_shape, dtype=torch.int64, device=self.data.device)
+            index = torch.zeros(traj_shape, dtype=torch.int64, device=data.device)
             for k, n in zip(ks, matrix, strict=True):
                 position = k.round().to(torch.int64) + n // 2
                 if ((position < 0) | (position >= n)).any():
@@ -741,7 +744,7 @@ class KData(Dataclass):
             counts = torch.zeros(*index.shape[:-1], prod(matrix), dtype=torch.int32, device=index.device)
             if counts.scatter_add_(-1, index, torch.ones_like(index, dtype=torch.int32)).amax() > 1:
                 raise ValueError('Repeated k-space points cannot be saved on the encoding matrix. Average them first.')
-            data, index = torch.broadcast_tensors(self.data.flatten(start_dim=-3), index)
+            data, index = torch.broadcast_tensors(data.flatten(start_dim=-3), index)
             grid = data.new_zeros(*data.shape[:-1], prod(matrix)).scatter_(-1, index, data)
             write_bart(filename, to_bart_layout(grid.unflatten(-1, matrix), BART_IMAGE_DIMS, other_dims))
             return
@@ -749,12 +752,13 @@ class KData(Dataclass):
         if trajectory_filename is None:
             raise ValueError('A trajectory_filename is required for non-Cartesian data.')
         check_distinct_outputs(filename, trajectory_filename)
-        data = rearrange(self.data, '... coils k2 k1 k0 -> ... coils (k2 k1) k0')
-        write_bart(filename, to_bart_layout(data, BART_NONCARTESIAN_DIMS, other_dims))
-        traj_shape = (*self.data.shape[:-4], 1, *self.data.shape[-3:])
+        data = rearrange(data, '... coils k2 k1 k0 -> ... coils (k2 k1) k0')
         traj = torch.stack([k.broadcast_to(traj_shape) for k in (self.traj.kx, self.traj.ky, self.traj.kz)], dim=-1)
         traj = rearrange(traj, '... 1 k2 k1 k0 xyz -> ... (k2 k1) k0 xyz')
-        write_bart(trajectory_filename, to_bart_layout(traj, BART_TRAJECTORY_DIMS, other_dims))
+        data = to_bart_layout(data, BART_NONCARTESIAN_DIMS, other_dims)
+        traj = to_bart_layout(traj, BART_TRAJECTORY_DIMS, other_dims)
+        write_bart(filename, data)
+        write_bart(trajectory_filename, traj)
 
     def __repr__(self):
         """Representation method for KData class."""
