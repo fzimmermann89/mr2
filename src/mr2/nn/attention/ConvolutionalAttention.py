@@ -14,9 +14,15 @@ from mr2.nn.PermutedBlock import PermutedBlock
 class ConvolutionalAttention(Module):
     """Temporal or patch attention with spatial convolutional projections.
 
-    Implements the attention used by the released SNRAware imaging transformers.
+    Implements the attention used by the released SNRAware imaging transformers [XUE25]_.
     Spatial relative-position bias is added after softmax, following the official
-    implementation rather than the usual logit bias.
+    implementation [SNRAWARE]_ rather than the usual logit bias.
+
+    References
+    ----------
+    .. [XUE25] Xue et al. SNRAware: Improved Deep Learning MRI Denoising with SNR
+       Unit Training and G-factor Map Augmentation. https://arxiv.org/abs/2503.18162
+    .. [SNRAWARE] Microsoft SNRAware. https://github.com/microsoft/SNRAware
     """
 
     relative_position_index: torch.Tensor
