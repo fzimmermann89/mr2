@@ -325,7 +325,8 @@ def admm_l2(
     initial_values
         Initial primal variable(s). Single tensor or tuple of tensors.
     tau
-        Positive finite real inverse penalty: tau = 1/rho. Callable updates
+        Positive finite real inverse penalty: tau = 1/rho. Complex tensors with
+        zero imaginary part are accepted. Callable updates
         require a scalar tensor. Functional updates with solution stopping also
         accept broadcastable tensors.
         Residual stopping requires a single value.
@@ -378,7 +379,11 @@ def admm_l2(
 
     x_device = initial_values.device if isinstance(initial_values, torch.Tensor) else initial_values[0].device
     tau_ = torch.as_tensor(tau, device=x_device)
-    if tau_.is_complex() or not torch.isfinite(tau_).all() or not (tau_ > 0).all():
+    if tau_.is_complex():
+        if (tau_.imag != 0).any():
+            raise ValueError('tau must be positive finite and real')
+        tau_ = tau_.real
+    if not torch.isfinite(tau_).all() or not (tau_ > 0).all():
         raise ValueError('tau must be positive finite and real')
     if functional is None and tau_.ndim != 0:
         raise ValueError('tau must be a scalar for callable split updates')

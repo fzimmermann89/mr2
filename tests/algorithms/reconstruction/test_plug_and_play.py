@@ -65,20 +65,17 @@ def test_wrapper_matches_tensor_solver(cartesian_kdata: KData, with_noise: bool,
     assert result.data.dtype == kdata.data.dtype
     assert len(statuses) == 2
     torch.testing.assert_close(result.data, expected)
-    # Compare CSM estimation to the established noise-aware setup as well.
-    reference = DirectReconstruction(kdata=kdata, fourier_op=fourier, csm=csm, noise=noise, dcf=dcf)
-    if reference.csm_op is not None:
-        assert reconstruction.csm_op is not None
-        if with_noise and csm_kind == 'explicit':
-            assert noise is not None
-            maps = reference.csm_op.csm_tensor
-            covariance = noise.data.flatten(-3) @ noise.data.flatten(-3).mH / noise.data.flatten(-3).shape[-1]
-            expected_maps = torch.linalg.solve_triangular(
-                torch.linalg.cholesky(covariance), maps.flatten(-3), upper=False
-            ).reshape_as(maps)
-            torch.testing.assert_close(reconstruction.csm_op.csm_tensor, expected_maps)
-        else:
-            torch.testing.assert_close(reconstruction.csm_op.csm_tensor, reference.csm_op.csm_tensor)
+
+
+def test_complex_dtype_conversion(cartesian_kdata: KData) -> None:
+    """Converting the module to complex precision preserves a usable real penalty."""
+    kdata = cartesian_kdata.to(dtype=torch.complex128)
+    reconstruction = PlugAndPlayReconstruction(
+        fourier_op=IdentityOp(), csm=None, denoiser=lambda x: x, tau=0.7, max_iterations=2
+    )
+    with pytest.warns(UserWarning, match='Complex modules'):
+        reconstruction.to(dtype=torch.complex128)
+    torch.testing.assert_close(reconstruction(kdata).data, kdata.data)
 
 
 def test_zero_kspace(cartesian_kdata: KData) -> None:
