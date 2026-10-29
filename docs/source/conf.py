@@ -2,9 +2,11 @@
 import ast
 import dataclasses
 import inspect
+import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import get_overloads
@@ -23,7 +25,6 @@ config = SphinxConfig('../../pyproject.toml', globalns=globals(), config_overrid
 
 
 project = name
-copyright = '2023, Physikalisch-Technische Bundesanstalt (PTB) Berlin'
 author = author
 version = version
 
@@ -41,6 +42,7 @@ extensions = [
     'sphinx.ext.autosectionlabel',
     'sphinx_copybutton',
     'sphinx_last_updated_by_git',
+    'sphinx_design',
 ]
 
 
@@ -84,31 +86,116 @@ nb_output_stderr = 'remove'
 nb_output_stdout = 'remove'
 nb_execution_timeout = 120
 nb_merge_streams=True
+
+
+def get_build_info() -> dict[str, str | bool]:
+    """Describe the branch, pull request or commit the documentation is built from."""
+    repo_url = 'https://github.com/fzimmermann89/mr2'
+    if os.environ.get('GITHUB_EVENT_NAME') == 'pull_request':
+        with Path(os.environ['GITHUB_EVENT_PATH']).open() as file:
+            pull_request = json.load(file)['pull_request']
+        source, source_url = f'pull request #{pull_request["number"]}', pull_request['html_url']
+        sha = pull_request['head']['sha']
+    elif os.environ.get('GITHUB_ACTIONS'):
+        branch = os.environ.get('GITHUB_REF_NAME', '')
+        source, source_url = branch, f'{repo_url}/tree/{branch}'
+        sha = os.environ.get('GITHUB_SHA', '')
+    else:
+
+        def git(*args: str) -> str:
+            result = subprocess.run(['git', *args], capture_output=True, text=True, cwd=Path(__file__).parent)
+            return result.stdout.strip() if result.returncode == 0 else ''
+
+        source, source_url = f'local branch {git("branch", "--show-current") or "(detached HEAD)"}', ''
+        sha = git('rev-parse', 'HEAD')
+        if git('status', '--porcelain', '--untracked-files=no'):
+            source += ' with uncommitted changes'
+    return {
+        'source': source,
+        'source_url': source_url,
+        'is_main': source == 'main',
+        'sha': sha[:8],
+        'sha_url': f'{repo_url}/commit/{sha}' if sha else '',
+    }
+
+
+build_info = get_build_info()
+
 html_favicon = '_static/favicon.svg'
-html_theme = 'sphinx_rtd_theme'
-html_title = name
+html_theme = 'furo'
+html_title = 'MR²'
 html_show_sphinx = False
+html_show_copyright = False
 html_show_sourcelink = False
 html_static_path = ['_static']
 html_css_files = ['custom.css']
-html_logo = '_static/logo_white.svg'
-html_sidebars = {'**': ['search-field', 'sidebar-nav-bs']}
+html_js_files = ['sidebar.js']
 html_theme_options = {
-    'logo_only': True,
-    'collapse_navigation': False,
-    'navigation_depth': -1
-
+    'light_logo': 'logo.svg',
+    'dark_logo': 'logo_white.svg',
+    'sidebar_hide_name': True,
+    'navigation_with_keys': True,
+    'top_of_page_buttons': [],
+    'announcement': ''
+    if build_info['is_main']
+    else f'Preview: {build_info["source"]}, commit {build_info["sha"]}. '
+    'Documentation of the main branch: '
+    '<a href="https://fzimmermann89.github.io/mr2/">fzimmermann89.github.io/mr2</a>',
+    'light_css_variables': {
+        'font-stack': 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+        'font-stack--monospace': 'ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace',
+        'font-stack--headings': 'var(--font-stack)',
+        'color-brand-primary': '#1a4f8b',
+        'color-brand-content': '#1f5fa8',
+        'color-brand-visited': '#1f5fa8',
+        'color-api-name': '#0f3d6e',
+        'color-api-pre-name': '#5b6b7d',
+        'color-highlight-on-target': '#fff4cc',
+        'color-announcement-background': '#1a4f8b',
+        'color-announcement-text': '#ffffff',
+    },
+    'dark_css_variables': {
+        'color-brand-primary': '#8fb8ec',
+        'color-brand-content': '#8fb8ec',
+        'color-brand-visited': '#8fb8ec',
+        'color-api-name': '#b4d1f5',
+        'color-api-pre-name': '#9aa7b6',
+        'color-highlight-on-target': '#3d3520',
+        'color-announcement-background': '#1a4f8b',
+        'color-announcement-text': '#ffffff',
+    },
+    'footer_icons': [
+        {
+            'name': 'GitHub',
+            'url': 'https://github.com/fzimmermann89/mr2',
+            'class': '',
+            'html': (
+                '<svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 16 16"><path fill-r'
+                'ule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-'
+                '.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1'
+                '.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31'
+                '-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .2'
+                '7 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3'
+                '.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-'
+                '3.58-8-8-8z"></path></svg>'
+            ),
+        },
+    ],
 }
 html_context = {
     'display_github': False,
     'github_user': 'fzimmermann89',
     'github_repo': 'mr2',
     'github_version': 'main',
+    'build_info': build_info,
 }
+toc_object_entries_show_parents = 'hide'
+python_maximum_signature_line_length = 88
 linkcode_blob = html_context['github_version']
 linkcode_link_text = '[source]'
 default_role = 'py:obj'
-pygments_style = 'default'
+pygments_style = 'friendly'
+pygments_dark_style = 'github-dark'
 
 def get_lambda_source(obj):
     """Convert lambda to source code."""
@@ -305,11 +392,23 @@ def object_description_function_repr_overwrite(obj, *, _seen: frozenset[int] = f
         return obj.__name__ + '()'
     return object_description_original(obj, _seen=_seen)
 
+
+def expand_navigation(app, pagename, templatename, context, doctree):
+    """Show the sidebar navigation tree fully expanded. Entries can still be collapsed by the reader."""
+    if 'furo_navigation_tree' in context:
+        context['furo_navigation_tree'] = re.sub(
+            r'<input (?![^>]*checked)([^>]*class="toctree-checkbox")',
+            r'<input checked="" \1',
+            context['furo_navigation_tree'],
+        )
+
+
 def setup(app):
     app.set_html_assets_policy('always')  # forces mathjax on all pages
     app.connect('autodoc-before-process-signature', rewrite_dataclass_init_default_factories)
     app.connect('autodoc-process-signature', autodoc_inherit_overload, 0)
     app.connect('source-read', replace_patterns_in_markdown)
+    app.connect('html-page-context', expand_navigation, priority=600)
     app.add_autodocumenter(CustomClassDocumenter, True)
     sphinx.util.inspect.object_description = object_description_function_repr_overwrite
 

@@ -1,0 +1,23 @@
+{% extends "!page.html" %}
+
+{% block content %}
+{%- if pagename != root_doc %}
+<nav class="mr2-breadcrumbs" aria-label="Breadcrumb">
+  <a href="{{ pathto(root_doc) }}">MR²</a>
+  {%- for parent in parents %}
+  <span class="mr2-breadcrumbs-separator">/</span><a href="{{ parent.link|e }}">{{ parent.title }}</a>
+  {%- endfor %}
+  <span class="mr2-breadcrumbs-separator">/</span><span aria-current="page">{{ title|striptags|e }}</span>
+</nav>
+{%- endif %}
+{{ super() }}
+{% endblock %}
+
+{% block footer %}
+{{ super() }}
+<div class="mr2-build-info">
+  MRtwo {{ version|e }} · Built from
+  {% if build_info.source_url %}<a href="{{ build_info.source_url }}">{{ build_info.source|e }}</a>{% else %}{{ build_info.source|e }}{% endif %}
+  {%- if build_info.sha %} at commit <a href="{{ build_info.sha_url }}"><code>{{ build_info.sha }}</code></a>{% endif %}
+</div>
+{% endblock %}
