@@ -36,53 +36,32 @@ In most cases, you can replace `mrpro` by `mr2` in you code and everything works
 - **Signal models** A range of different MR signal models are implemented (e.g. T1 recovery, WASABI).
 - **Regularized image reconstruction** Regularized image reconstruction algorithms including Wavelet-based compressed sensing or total variation regularized image reconstruction are available.
 
-## Examples
+## Quickstart
 
-In the following, we show some code snippets to highlight the use of MRtwo. Each code snippet only shows the main steps. A complete working notebook can be found in the provided link.
+Install the PyPI distribution, then import `mr2`:
 
-### Simple reconstruction
-
-Read the data and trajectory and reconstruct an image by applying a density compensation function and then the adjoint of the Fourier operator and the adjoint of the coil sensitivity operator.
+```bash
+pip install mrtwo
+```
 
 ```python
-# Read the trajectory from the ISMRMRD file
+import mr2
+
+# Use your ISMRMRD file with its stored trajectory.
 trajectory = mr2.data.traj_calculators.KTrajectoryIsmrmrd()
-# Load in the Data from the ISMRMRD file
-kdata = mr2.data.KData.from_file(data_file.name, trajectory)
-# Perform the reconstruction
+kdata = mr2.data.KData.from_file("acquisition.h5", trajectory)
 reconstruction = mr2.algorithms.reconstruction.DirectReconstruction(kdata)
-img = reconstruction(kdata)
+img = reconstruction(kdata)  # IData: complex image tensor and image header
 ```
 
-Full example: <https://github.com/fzimmermann89/mr2/blob/main/examples/scripts/direct_reconstruction.py>
-
-### Estimate quantitative parameters
-
-Quantitative parameter maps can be obtained by creating a functional to be minimized and calling a non-linear solver such as ADAM.
-
-```python
-# Define signal model
-model = MagnitudeOp() @ InversionRecovery(ti=idata_multi_ti.header.ti)
-# Define loss function and combine with signal model
-mse = MSE(idata_multi_ti.data.abs())
-functional = mse @ model
-[...]
-# Run optimization
-params_result = adam(functional, [m0_start, t1_start], n_iterations=n_iterations, learning_rate=learning_rate)
-```
-
-Full example: <https://github.com/fzimmermann89/mr2/blob/main/examples/scripts/qmri_sg_challenge_2024_t1.py>
-
-### Pulseq support
-
-The trajectory can be calculated directly from a provided pulseq-file.
-
-```python
-# Read raw data and calculate trajectory using KTrajectoryPulseq
-kdata = KData.from_file(data_file.name, KTrajectoryPulseq(seq_path=seq_file.name))
-```
-
-Full example: <https://github.com/fzimmermann89/mr2/blob/main/examples/scripts/comparison_trajectory_calculators.py>
+The [first reconstruction guide](https://fzimmermann89.github.io/mr2/user_guide.html)
+includes a complete download-and-plot example. Continue with
+[data containers](https://fzimmermann89.github.io/mr2/data.html),
+[operators](https://fzimmermann89.github.io/mr2/operators.html), or the
+[grouped examples](https://fzimmermann89.github.io/mr2/examples.html).
+Install `mrtwo[notebooks]` for example dependencies. The website follows
+`main`; features added since the latest PyPI release require a
+[development install](https://fzimmermann89.github.io/mr2/user_guide.html#installation).
 
 ## Development
 

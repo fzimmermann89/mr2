@@ -13,36 +13,36 @@ MR image reconstruction and processing for PyTorch
 | **Try it out:** |colab-badge|
 | **See our examples:** :doc:`examples`
 
-Main Features
--------------
-- **Standard file formats**
-  MRtwo supports the ISMRMRD format for MR raw data and DICOM for image data
+Start here
+----------
+New to MRtwo? Follow :doc:`user_guide` to install the package, download an
+acquisition and display your first reconstruction. MRtwo is a continuation
+of `MRpro <https://github.com/PTB-MR/mrpro/>`_, with a faster-moving development
+API. The Python import is ``mr2`` and the PyPI distribution is ``mrtwo``.
+This website documents git/main; installed releases can differ.
 
-- **PyTorch integration**
-  All data containers utilize PyTorch tensors to ensure easy integration with PyTorch-based network schemes.
+* **Work with your data:** :doc:`data` explains axes, units, broadcasting,
+  indexing and file formats.
+* **Build a reconstruction:** :doc:`operators` introduces acquisition models,
+  adjoints, losses and solver choices.
+* **Learn by application:** :doc:`examples` groups complete notebooks by task.
+* **Find an API:** :doc:`api` documents classes, functions and call signatures.
+* **Contribute:** :doc:`contributor_guide` describes code, tests and documentation.
 
-- **Cartesian and non-Cartesian trajectories**
-  MRtwo can reconstruct data obtained with Cartesian and non-Cartesian sampling schemes (e.g., radial, spiral). It automatically detects whether FFT or nuFFT is required to reconstruct the k-space data.
+MRtwo combines PyTorch tensors with MR metadata, Cartesian and non-Cartesian
+Fourier operators, coil sensitivity estimation, regularized reconstruction
+and quantitative signal models. Start with a high-level reconstruction and
+replace its components as your application requires.
 
-- **Pulseq support**
-  If the data acquisition was carried out using a pulseq-based sequence, the seq-file can be provided to MRtwo, which will automatically calculate the used trajectory.
-
-- **Signal models**
-  A range of MR signal models is implemented (e.g., T1 recovery, WASABI).
-
-- **Regularized image reconstruction**
-  Regularized image reconstruction algorithms, including wavelet-based compressed sensing and total variation regularized image reconstruction, are available.
-
-
-Content
-=======
+Contents
+--------
 .. toctree::
    :maxdepth: 2
 
    user_guide
    data
+   operators
    examples
    contributor_guide
    api
    faq
-

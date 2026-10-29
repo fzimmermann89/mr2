@@ -13,7 +13,7 @@ This repository uses a *pyproject.toml* file to specify all the requirements.
 **.vscode**
     Configuration files for VS Code.
 
-**.docs**
+**docs**
     Files to create this documentation.
 
 **examples**
@@ -30,13 +30,13 @@ This repository uses a *pyproject.toml* file to specify all the requirements.
 
 **tests**
     Tests which are automatically run by pytest.
-    The subfolder structure should follow the same structure as in *mr2/src*.
+    The subfolder structure should follow the same structure as in *src/mr2*.
 
 **src/mr2/algorithms**
     Everything which does something with the data, e.g. prewhiten k-space or remove oversampling.
 
 **src/mr2/data**
-    All the data classes such as ``KData``, ``ImageData`` or ``CsmData``.
+    All the data classes such as ``KData``, ``IData`` or ``CsmData``.
     As the names suggest these should mainly contain data and meta information.
     Any functionality beyond what is absolutely required for the classes should be put as separate functions.
 
@@ -84,18 +84,62 @@ You can use VSCode's test panel to discover and run tests. All tests must pass b
 CUDA tests run when a CUDA device is available and are skipped otherwise. Use ``pytest -m cuda`` to run only CUDA tests,
 or ``pytest -m "not cuda"`` to exclude them.
 
-Building the Documentation
+Documentation and examples
 ==========================
-You can build the documentation locally via running ``make html`` in the ``docs`` folder. The documentation will also be build in each PR and can be viewed online.
-Please check how your new additions render in the documentation before requesting a PR review.
+Install ``pip install -e ".[docs]"`` and run ``NORUN=1 make -C docs html``
+for a local HTML build without executing notebooks. Open the generated pages
+in ``docs/build/html`` and check links, mathematics and code formatting.
+Use ``make -C docs clean`` when generated API pages or notebook copies are
+stale. A normal build can execute newly copied notebooks; CI runs examples
+independently and supplies their executed outputs to the Sphinx build.
 
+Docstrings are the source for IDE help and the API site. ``api.rst`` selects
+public modules; recursive autosummary and the templates in
+``docs/source/_templates`` generate class and module pages. Public exports
+in ``__all__`` control discovery. Use NumPy-style docstrings, documenting
+parameters, returns, tensor shapes, units and assumptions. Put public call
+semantics on ``__call__`` and computation in ``forward``; users should call
+instances so PyTorch hooks are respected.
 
-Adding new Examples
-===================
-New exciting applications of MRtwo can be added in ``examples`` as only ``.py`` files with code-cells. These can, for example, be used in VSCode with the Python extension, or in JupyterLab with the `jupytext <https://jupytext.readthedocs.io/en/latest/>`_ extension.
-A pre-commit action will convert the scripts to notebooks. Our documetantion build will pick up these notebooks, run them, and include them with outputs in the documentation.
-The data to run the examples should be publicly available and hosted externally, for example at zenodo.
-Please be careful not to add any binary files to your commits.
+Example source lives in ``examples/scripts/*.py``. Mark code cells with
+``# %%`` and markdown cells with ``# %% [markdown]``. Pre-commit runs Jupytext
+and ``.precommit/add_notebook_preamble.py`` to generate
+``examples/notebooks/*.ipynb`` with the Colab badge, install cell and kernel
+metadata. Do not maintain a second version by editing the notebook directly.
+Only commit notebooks with outputs and execution counts cleared; nbstripout
+runs before and after conversion and removes ``language_info`` too.
+
+In notebook markdown, single backticks such as `` `~mr2.data.KData` ``
+link to Python objects; double backticks mark literal code. Use
+``project:other_notebook.ipynb`` for notebook cross-references. Keep ``tags``
+and ``mystnb`` cell metadata. A cell tagged ``hide-cell`` with
+``mystnb={"code_prompt_show": "Show download details"}`` can fold download,
+plotting or callback details while leaving the main reconstruction readable.
+The generated Colab T4 metadata does not establish a GPU requirement.
+
+Scripts matching the pre-commit pattern are converted broadly, and Sphinx
+copies notebooks from ``examples/notebooks`` into ``docs/source/_notebooks``.
+Keep research experiments outside those directories until they are ready
+for publication. Add a curated entry in ``examples.rst`` for a new tutorial.
+Provide explicit, reproducible downloads from public repositories rather
+than committing raw data or other large binary files. State prerequisites,
+data size and device needs, and make expensive settings visible to readers.
+
+Code and test design
+====================
+Prefer small Pythonic changes and existing APIs. Avoid one-off wrappers,
+new frameworks for a single use, redundant checks and silent fallback paths.
+Use readable type hints and descriptive names consistent with nearby code:
+``n_coils`` for counts, ``img`` for images and ``fourier_op`` for operators.
+Keep shape and physical assumptions near the code that depends on them.
+
+Tests should establish behavior: numerical results, adjoint identities,
+gradients where supported, shape/broadcast rules and regressions for actual
+bugs. Choose tolerances appropriate to dtype and algorithm. Prefer a small
+input that exposes the error over elaborate fixtures. Avoid duplicate tests
+and assertions that merely mirror the implementation. Run the checks relevant
+to your change before opening a PR; explain the change and its purpose in
+plain technical English.
 
 Release Strategy
 ================

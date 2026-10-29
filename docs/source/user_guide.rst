@@ -22,23 +22,56 @@ You can also install the latest development directly from github using::
     pip install "git+https://github.com/fzimmermann89/mr2"
 
 
-Usage
-=====
-MRtwo is designed to work directly from MR raw data using the `MRD <https://ismrmrd.readthedocs.io/en/latest/>`_ data format.
+Your first reconstruction
+=========================
+The distribution is named ``mrtwo``; Python code imports ``mr2``.
+The website follows git/main, which can contain features not yet released on
+PyPI. Use the development install above when following a main-only API, or
+check the documentation and examples in your installed release's source tag.
 
-A basic pipeline would contain the following steps:
+This complete CPU-capable example downloads the public radial acquisition
+used by :doc:`_notebooks/direct_reconstruction`. Install
+``mrtwo[notebooks]`` for its download and plotting dependencies. The first run
+needs network access and space for the raw-data record; reconstruction time
+and memory depend on your machine. Keep the temporary directory alive until
+the data have been loaded.
 
-* Reading in raw data
-* Preparation for reconstruction
-* Data reconstruction
-* Image processing
+.. code-block:: python
 
-.. |colab-badge| image:: https://colab.research.google.com/assets/colab-badge.svg
-    :target: https://colab.research.google.com/github/fzimmermann89/mr2
+    import tempfile
+    from pathlib import Path
 
-The following provides some basic information about these steps.
-For more detailed information please have a look at the :doc:`examples`.
-You can easily launch notebooks via the |colab-badge| badge and give the notebooks a try!
+    import matplotlib.pyplot as plt
+    import zenodo_get
+    import mr2
+
+    with tempfile.TemporaryDirectory() as directory:
+        data_folder = Path(directory)
+        zenodo_get.download(record='14617082', output_dir=data_folder)
+        trajectory = mr2.data.traj_calculators.KTrajectoryIsmrmrd()
+        kdata = mr2.data.KData.from_file(
+            data_folder / 'radial2D_402spokes_golden_angle_with_traj.h5',
+            trajectory,
+        )
+        reconstruction = mr2.algorithms.reconstruction.DirectReconstruction(kdata)
+        img = reconstruction(kdata)
+
+    plt.imshow(img.rss()[0, 0].detach().cpu(), cmap='gray')
+    plt.axis('off')
+    plt.show()
+
+The figure shows a magnitude image from the radial acquisition. Direct
+reconstruction estimates density compensation and coil sensitivity maps,
+applies the adjoint Fourier transform and combines coils. ``img`` is an
+`mr2.data.IData`, containing the complex image tensor in ``img.data`` and
+image metadata in ``img.header``. ``rss()`` computes root-sum-of-squares over
+coils for display; ``[0, 0]`` selects the first image and z plane.
+
+To compare an iterative reconstruction, continue with
+:doc:`_notebooks/iterative_sense_reconstruction_radial2D`. To understand
+containers and selection, read :doc:`data`; to build a custom model, read
+:doc:`operators`. The sections below explain how to adapt the pipeline to
+your own acquisition.
 
 Reading in raw data
 -------------------
