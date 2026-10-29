@@ -1,4 +1,4 @@
-"""Released SNRAware imaging transformers, ported from Microsoft (MIT; see LICENSE-SNRAware)."""
+"""Released SNRAware imaging transformers."""
 
 from collections.abc import Mapping
 from typing import Literal
@@ -77,17 +77,21 @@ class ImagingTransformerBlock(Sequential):
 
 
 class SNRAware(Module):
-    """Two-resolution HRNet imaging transformer used by released SNRAware models.
+    """Two-resolution HRNet imaging transformer used by released SNRAware models [SNRAWARE]_.
 
     Inputs contain real image, imaginary image and g-factor map channels in SNR
     units; no intensity or noise normalization is performed. The output contains
     the denoised real and imaginary channels. The spatially learned normalization
     fixes the patch size. Published weights use 64 x 64 patches and 64 heads.
+    Official MIT-licensed checkpoints are available from [WEIGHTS]_; use
+    `convert_state_dict` to load them into this implementation.
 
     References
     ----------
     .. [XUE25] Xue et al. SNRAware: Improved Deep Learning MRI Denoising with SNR
        Unit Training and G-factor Map Augmentation. https://arxiv.org/abs/2503.18162
+    .. [SNRAWARE] Microsoft SNRAware. https://github.com/microsoft/SNRAware
+    .. [WEIGHTS] Microsoft SNRAware checkpoints. https://huggingface.co/microsoft/SNRAware/tree/main
     """
 
     def __init__(
