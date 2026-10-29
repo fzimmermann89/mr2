@@ -50,7 +50,10 @@ def test_convolutional_attention_temporal_reference() -> None:
     layer = ConvolutionalAttention(n_channels=4, n_heads=2, image_size=16, mode='temporal').double()
     # Keep channel and pixel axes explicit instead of packing them into token features.
     q, k, v = (projection(x).unflatten(1, (layer.n_heads, -1)) for projection in (layer.to_q, layer.to_k, layer.to_v))
-    q, k = normalize(q.flatten(-2), dim=(2, 4)), normalize(k.flatten(-2), dim=(2, 4))
+    q, k = (
+        features / torch.linalg.vector_norm(features, dim=(2, 4), keepdim=True).clamp_min(1e-12)
+        for features in (q.flatten(-2), k.flatten(-2))
+    )
     weights = torch.einsum('bncti,bncsi->bnts', q, k).softmax(-1)
     expected = torch.einsum('bnts,bncsyx->bnctyx', weights, v).flatten(1, 2)
     torch.testing.assert_close(layer(x), layer.to_out(expected))
