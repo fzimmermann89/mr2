@@ -81,13 +81,39 @@ class ConvolutionalAttention(Module):
     def _pack(self, x: torch.Tensor) -> torch.Tensor:
         match self.mode:
             case 'temporal':
-                return rearrange(x, 'b (heads c) t h w -> b heads t (c h w)', heads=self.n_heads)
+                return rearrange(
+                    x,
+                    'batch (heads channels) frames height width -> batch heads frames (channels height width)',
+                    heads=self.n_heads,
+                )
             case 'local':
-                x = rearrange(x, 'b c t (gh nh ph) (gw nw pw) -> b t (gh gw) (nh nw) (ph pw c)', nh=2, nw=2, ph=4, pw=4)
-                return rearrange(x, 'b t g s (heads d) -> b t g heads s d', heads=self.n_heads)
+                x = rearrange(
+                    x,
+                    'batch channels frames (window_rows patch_rows patch_h) (window_cols patch_cols patch_w) '
+                    '-> batch frames (window_rows window_cols) (patch_rows patch_cols) (patch_h patch_w channels)',
+                    patch_rows=2,
+                    patch_cols=2,
+                    patch_h=4,
+                    patch_w=4,
+                )
+                return rearrange(
+                    x,
+                    'batch frames windows sequence (heads features) -> batch frames windows heads sequence features',
+                    heads=self.n_heads,
+                )
             case 'global':
-                x = rearrange(x, 'b c t (gh ph) (gw pw) -> b t 1 (gh gw) (ph pw c)', ph=4, pw=4)
-                return rearrange(x, 'b t g s (heads d) -> b t g heads s d', heads=self.n_heads)
+                x = rearrange(
+                    x,
+                    'batch channels frames (window_rows patch_h) (window_cols patch_w) '
+                    '-> batch frames 1 (window_rows window_cols) (patch_h patch_w channels)',
+                    patch_h=4,
+                    patch_w=4,
+                )
+                return rearrange(
+                    x,
+                    'batch frames windows sequence (heads features) -> batch frames windows heads sequence features',
+                    heads=self.n_heads,
+                )
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         """Apply convolutional attention.
@@ -115,19 +141,27 @@ class ConvolutionalAttention(Module):
         y = weights @ v
         match self.mode:
             case 'temporal':
-                y = rearrange(y, 'b heads t (c h w) -> b (heads c) t h w', h=self.image_size, w=self.image_size)
+                y = rearrange(
+                    y,
+                    'batch heads frames (channels height width) -> batch (heads channels) frames height width',
+                    height=self.image_size,
+                    width=self.image_size,
+                )
             case 'local' | 'global':
                 patches_per_window = 2 if self.mode == 'local' else self.image_size // 4
                 windows_per_axis = self.image_size // (4 * patches_per_window)
-                y = rearrange(y, 'b t g heads s d -> b t g s (heads d)')
+                y = rearrange(
+                    y, 'batch frames windows heads sequence features -> batch frames windows sequence (heads features)'
+                )
                 y = rearrange(
                     y,
-                    'b t (gh gw) (nh nw) (ph pw c) -> b c t (gh nh ph) (gw nw pw)',
-                    gh=windows_per_axis,
-                    gw=windows_per_axis,
-                    nh=patches_per_window,
-                    nw=patches_per_window,
-                    ph=4,
-                    pw=4,
+                    'batch frames (window_rows window_cols) (patch_rows patch_cols) (patch_h patch_w channels) '
+                    '-> batch channels frames (window_rows patch_rows patch_h) (window_cols patch_cols patch_w)',
+                    window_rows=windows_per_axis,
+                    window_cols=windows_per_axis,
+                    patch_rows=patches_per_window,
+                    patch_cols=patches_per_window,
+                    patch_h=4,
+                    patch_w=4,
                 )
         return self.to_out(y)
