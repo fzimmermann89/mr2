@@ -126,7 +126,6 @@ def synthesis_denoising(
     def stop(status: PGDStatus) -> bool:
         nonlocal previous
         current = status['solution'][0]
-        # Explicit magnitude reductions avoid slow complex norms on CPU.
         change = vector_norm(current - previous)
         scale = vector_norm(current)
         previous = current

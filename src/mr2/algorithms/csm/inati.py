@@ -88,7 +88,6 @@ def inati(
     for _ in range(n_iterations):
         csm = coil_img * combined_img.conj().unsqueeze(-4)
         csm = uniform_filter(csm, width=smoothing_width.zyx, dim=(-3, -2, -1))
-        # Explicit magnitude reductions are faster than complex norms on CPU.
         csm /= vector_norm(csm, dim=-4, keepdim=True) + eps
 
         combined_img = einsum(coil_img, csm.conj(), '... c z y x, ... c z y x -> ... z y x')

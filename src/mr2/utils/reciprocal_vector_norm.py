@@ -8,11 +8,10 @@ def reciprocal_vector_norm(
     dim: int | tuple[int, ...] | None = None,
     keepdim: bool = False,
 ) -> torch.Tensor:
-    """Compute ``1 / norm(x)`` using a magnitude reduction and rsqrt.
+    """Compute reciprocal Euclidean norms.
 
-    Explicit magnitude reductions improve complex norm performance on CPU.
-    Zero vectors return infinity and have undefined gradients.
-    Squared magnitudes can underflow or overflow at extreme scales.
+    Use a magnitude reduction and rsqrt on CPU for performance, and reciprocal
+    native norms on other devices. Zero vectors return infinity.
 
     Parameters
     ----------
@@ -28,4 +27,6 @@ def reciprocal_vector_norm(
     torch.Tensor
         Real-valued reciprocal norms.
     """
+    if x.device.type != 'cpu':
+        return torch.linalg.vector_norm(x, dim=dim, keepdim=keepdim).reciprocal()
     return x.abs().square().sum(dim=dim, keepdim=keepdim).rsqrt()

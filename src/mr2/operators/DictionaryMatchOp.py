@@ -101,7 +101,6 @@ class DictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]):
             x_list = [x.flatten() for x in torch.broadcast_tensors(*x)]
 
         y = y.flatten(start_dim=1)
-        # Explicit magnitude reductions and rsqrt are faster for complex signals on CPU.
         inverse_norm_y = reciprocal_vector_norm(y, dim=0)
         if not (torch.isfinite(inverse_norm_y) & (inverse_norm_y > 0)).all():
             raise ValueError('Dictionary signals must have finite, positive inverse norms.')

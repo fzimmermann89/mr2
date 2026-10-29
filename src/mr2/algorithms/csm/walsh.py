@@ -105,7 +105,6 @@ def walsh(
     # Power iterations for dominant eigenvector
     v = coil_covariance.sum(dim=-4)
     for _ in range(n_power_iterations):
-        # Explicit magnitude reductions are faster than complex norms on CPU.
         v = v / (vector_norm(v, dim=-4, keepdim=True) + eps)
         v = einsum(coil_covariance, v, '... coil_out coil_in z y x, ... coil_in z y x -> ... coil_out z y x')
 

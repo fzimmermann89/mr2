@@ -14,17 +14,20 @@ def test_reciprocal_vector_norm(dtype: torch.dtype, device: str) -> None:
         x = x + 0.5j * x
     x = (x * x.new_tensor([1e-5, 1e2])).requires_grad_()
     actual = reciprocal_vector_norm(x, dim=(0, 1), keepdim=True)
-    expected = torch.linalg.vector_norm(x, dim=(0, 1), keepdim=True).reciprocal()
+    expected_norm = torch.linalg.vector_norm(x, dim=(0, 1), keepdim=True)
+    expected = expected_norm.reciprocal()
 
+    torch.testing.assert_close(vector_norm(x, dim=(0, 1), keepdim=True), expected_norm)
     torch.testing.assert_close(actual, expected)
     actual_gradient = torch.autograd.grad(actual.sum(), x)[0]
     expected_gradient = torch.autograd.grad(expected.sum(), x)[0]
     torch.testing.assert_close(actual_gradient, expected_gradient)
 
 
-def test_reciprocal_vector_norm_zero() -> None:
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+def test_reciprocal_vector_norm_zero(device: str) -> None:
     """Zero vectors return infinity without NaNs."""
-    x = torch.zeros(2, 4, dtype=torch.complex128, requires_grad=True)
+    x = torch.zeros(2, 4, dtype=torch.complex128, device=device, requires_grad=True)
     actual = reciprocal_vector_norm(x, dim=-1)
     expected = x.norm(dim=-1).reciprocal()
     torch.testing.assert_close(actual, expected)
