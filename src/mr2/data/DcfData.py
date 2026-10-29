@@ -1,20 +1,27 @@
 """Density compensation data (DcfData) class."""
 
+from collections.abc import Sequence
 from functools import reduce
 from itertools import product
 from math import isfinite, prod
+from os import PathLike
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import torch
+from einops import rearrange
 from typing_extensions import Self
 
 from mr2.algorithms.dcf._trajectory import _trajectory_groups
 from mr2.algorithms.dcf.dcf_pipe import dcf_pipe
 from mr2.algorithms.dcf.dcf_voronoi import dcf_1d, dcf_2d3d_voronoi
+from mr2.data.bart import BART_NONCARTESIAN_DIMS, from_bart_layout, is_bart_file, read_bart, to_bart_layout, write_bart
 from mr2.data.Dataclass import Dataclass
+from mr2.data.enums import BartDimension
 from mr2.data.KTrajectory import KTrajectory
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.utils import reduce_repeat, smap
+from mr2.utils.typing import FileOrPath
 
 if TYPE_CHECKING:
     from mr2.operators.DensityCompensationOp import DensityCompensationOp
@@ -105,6 +112,51 @@ class DcfData(Dataclass):
             repeats = prod(traj.shape[d] for d in (-3, -2, -1) if all(k.shape[d] == 1 for k in ks))
             results.append((dcf / repeats).expand(1, *traj.shape[-3:]))
         return cls(data=torch.stack(results).reshape(traj.shape))
+
+    @classmethod
+    def from_file(cls, filename: FileOrPath, *, other_dims: Sequence[BartDimension] | None = None) -> Self:
+        """Load density compensation data from MR2 storage or a BART file.
+
+        BART files are expected in the non-Cartesian sample layout, see `to_bart`.
+        All readouts are restored along `k1` with singleton `k2`.
+
+        Parameters
+        ----------
+        filename
+            Path to MR2 file or BART file (``.cfl``, ``.hdr`` or ``.ra``), or seekable binary input with MR2 data.
+        other_dims
+            BART dimensions that become the `other` dimensions, in this order. Only used for BART files.
+            `None` uses the BART batch dimension.
+        """
+        if isinstance(filename, (str, PathLike)) and is_bart_file(filename):
+            data = from_bart_layout(read_bart(filename), BART_NONCARTESIAN_DIMS, other_dims)
+            if data.numel() and data.imag.abs().max() > 1e-6 * data.abs().max():
+                raise ValueError(f'Density compensation in {filename} has a non-zero imaginary part.')
+            return cls(data=data.real.unsqueeze(-3))
+        if other_dims is not None:
+            raise ValueError('other_dims is only supported for BART files.')
+        return super().from_file(filename)
+
+    def to_bart(self, filename: str | Path, other_dims: Sequence[BartDimension] | None = None) -> None:
+        """Save density compensation data as BART array.
+
+        Uses the BART layout of non-Cartesian k-space samples, as written by `KData.to_bart`:
+        `k0` is stored in `PHS1`, the readouts `(k2 k1)` in `PHS2` and coils in `COIL`.
+        Singleton dimensions are kept and are broadcast by BART.
+        The values are saved unchanged, i.e., without any normalization.
+        ``bart pics -p`` applies its weights inside the data consistency term, so the DCF-weighted
+        least squares problem of MR2 corresponds to the square root of the DCF, e.g. ``bart spow 0.5 dcf weights``.
+
+        Parameters
+        ----------
+        filename
+            A ``.cfl`` or ``.hdr`` suffix writes a ``.hdr``/``.cfl`` pair, a ``.ra`` suffix writes a single file.
+        other_dims
+            BART dimensions of the `other` dimensions, in tensor order. Should match the k-space data.
+            `None` flattens all `other` dimensions into `BartDimension.BATCH`.
+        """
+        data = rearrange(self.data, '... coils k2 k1 k0 -> ... coils (k2 k1) k0')
+        write_bart(filename, to_bart_layout(data, BART_NONCARTESIAN_DIMS, other_dims))
 
     def as_operator(self) -> 'DensityCompensationOp':
         """Create a density compensation operator using a copy of the DCF."""

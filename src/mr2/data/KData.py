@@ -34,9 +34,10 @@ from mr2.data.AcqInfo import (
     convert_time_stamp_to_siemens,
     write_acqinfo_to_ismrmrd_acquisition_,
 )
+from mr2.data.bart import BART_IMAGE_DIMS, BART_NONCARTESIAN_DIMS, BART_TRAJECTORY_DIMS, to_bart_layout, write_bart
 from mr2.data.Dataclass import Dataclass
 from mr2.data.EncodingLimits import EncodingLimits
-from mr2.data.enums import AcqFlags
+from mr2.data.enums import AcqFlags, BartDimension, TrajType
 from mr2.data.KHeader import KHeader
 from mr2.data.KNoise import KNoise
 from mr2.data.KTrajectory import KTrajectory
@@ -686,6 +687,65 @@ class KData(Dataclass):
                 ismrmrd_acq.data[:] = acq_data.conj() if self.header.vendor.lower() == 'siemens' else acq_data
                 ismrmrd_acq.scan_counter = scan_counter
                 dataset.append_acquisition(ismrmrd_acq)
+
+    def to_bart(
+        self,
+        filename: str | Path,
+        trajectory_filename: str | Path | None = None,
+        other_dims: Sequence[BartDimension] | None = None,
+    ) -> None:
+        """Save k-space data as BART array.
+
+        Cartesian data is sorted into the encoding matrix with zeros at non-acquired positions.
+        The k-space center is at index `n // 2`, matching BART's centered FFT.
+        `(coils, k2, k1, k0)` are stored in the BART dimensions `COIL`, `PHS2`, `PHS1` and `READ`.
+
+        Non-Cartesian data is saved as samples with `k0` in `PHS1`, the readouts `(k2 k1)` in `PHS2`
+        and coils in `COIL`. The trajectory is saved to a second file with the components `(kx, ky, kz)`
+        along `READ`, in units of 1/FOV, as used by `bart pics -t` and `bart nufft`.
+
+        No meta data is saved.
+
+        Parameters
+        ----------
+        filename
+            A ``.cfl`` or ``.hdr`` suffix writes a ``.hdr``/``.cfl`` pair, a ``.ra`` suffix writes a single file.
+        trajectory_filename
+            File for the trajectory. Required for non-Cartesian data, must be `None` for Cartesian data.
+        other_dims
+            BART dimensions of the `other` dimensions, in tensor order, e.g.
+            ``(BartDimension.TE, BartDimension.SLICE)``. `None` flattens all `other` dimensions
+            into `BartDimension.BATCH`.
+        """
+        from mr2.operators.CartesianSamplingOp import CartesianSamplingOp
+
+        if all(traj_type & TrajType.ONGRID for traj_type in self.traj.type_along_kzyx):
+            if trajectory_filename is not None:
+                raise ValueError('Cartesian data is saved on the encoding matrix without a trajectory.')
+            # Sorting into the matrix drops points outside of it and keeps only one of repeated points.
+            # Detect both by sorting unique sample ids into the matrix and selecting them again.
+            sample_ids = torch.arange(1, self.traj.shape.numel() + 1, dtype=torch.float64, device=self.data.device)
+            sample_ids = sample_ids.reshape(self.traj.shape)
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')  # points outside of the encoding matrix are checked below
+                sampling_op = CartesianSamplingOp(self.header.encoding_matrix, self.traj)
+                (selected_ids,) = sampling_op(*sampling_op.adjoint(sample_ids))
+            if not selected_ids.all():
+                raise ValueError('K-space points lie outside of the encoding matrix.')
+            if not torch.equal(selected_ids, sample_ids):
+                raise ValueError('Repeated k-space points cannot be saved on the encoding matrix. Average them first.')
+            (data,) = sampling_op.adjoint(self.data)
+            write_bart(filename, to_bart_layout(data, BART_IMAGE_DIMS, other_dims))
+            return
+
+        if trajectory_filename is None:
+            raise ValueError('A trajectory_filename is required for non-Cartesian data.')
+        data = rearrange(self.data, '... coils k2 k1 k0 -> ... coils (k2 k1) k0')
+        write_bart(filename, to_bart_layout(data, BART_NONCARTESIAN_DIMS, other_dims))
+        traj_shape = (*self.data.shape[:-4], 1, *self.data.shape[-3:])
+        traj = torch.stack([k.broadcast_to(traj_shape) for k in (self.traj.kx, self.traj.ky, self.traj.kz)], dim=-1)
+        traj = rearrange(traj, '... 1 k2 k1 k0 xyz -> ... (k2 k1) k0 xyz')
+        write_bart(trajectory_filename, to_bart_layout(traj, BART_TRAJECTORY_DIMS, other_dims))
 
     def __repr__(self):
         """Representation method for KData class."""

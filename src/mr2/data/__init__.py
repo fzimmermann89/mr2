@@ -1,6 +1,6 @@
 """Data containers, loading and saving data."""
 
-from mr2.data import enums, traj_calculators, acq_filters
+from mr2.data import bart, enums, traj_calculators, acq_filters
 from mr2.data.AcqInfo import AcqIdx, AcqInfo
 from mr2.data.CsmData import CsmData
 from mr2.data.Dataclass import Dataclass, InconsistentDeviceError
@@ -33,6 +33,7 @@ __all__ = [
     'Rotation',
     'SpatialDimension',
     'acq_filters',
+    'bart',
     'enums',
     'traj_calculators',
 ]
