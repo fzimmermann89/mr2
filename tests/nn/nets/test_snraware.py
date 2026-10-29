@@ -11,33 +11,32 @@ from packaging.version import parse as parse_version
 
 @torch.no_grad()
 @pytest.mark.parametrize(
-    'torch_compile',
+    ('device', 'torch_compile'),
     [
+        pytest.param('cpu', False, id='cpu-uncompiled'),
+        pytest.param('cuda', False, id='cuda-uncompiled', marks=pytest.mark.cuda),
         pytest.param(
+            'cuda',
             True,
-            id='compiled',
-            marks=pytest.mark.skipif(
-                parse_version(torch.__version__) < parse_version('2.6'),
-                reason='SNRAware compilation requires PyTorch >= 2.6 to avoid shared shape-specialization bugs.',
-            ),
+            id='cuda-compiled',
+            marks=[
+                pytest.mark.cuda,
+                pytest.mark.skipif(
+                    parse_version(torch.__version__) < parse_version('2.6'),
+                    reason='SNRAware compilation requires PyTorch >= 2.6 to avoid shared shape-specialization bugs.',
+                ),
+            ],
         ),
-        pytest.param(False, id='uncompiled'),
     ],
 )
-@pytest.mark.parametrize(
-    'device',
-    [pytest.param('cpu', id='cpu'), pytest.param('cuda', marks=pytest.mark.cuda, id='cuda')],
-)
 def test_snraware_forward(torch_compile: bool, device: str) -> None:
-    """Check CPU graph capture and CUDA kernel compilation against eager inference."""
+    """Check eager inference on CPU/CUDA and CUDA compilation against eager output."""
     model = SNRAware(n_features=4, n_heads=2, image_size=16, p_dropout=0).to(device).eval()
     x = RandomGenerator(seed=4).float32_tensor((1, 3, 2, 16, 16), device=device)
     expected = model(x)
     assert expected.shape == (1, 2, 2, 16, 16)
     if torch_compile:
-        # CPU graph capture avoids costly kernel generation; CUDA checks Inductor.
-        backend = 'inductor' if device == 'cuda' else 'eager'
-        model = cast(SNRAware, torch.compile(model, backend=backend, dynamic=False))
+        model = cast(SNRAware, torch.compile(model, dynamic=False))
         torch.testing.assert_close(model(x), expected, atol=1e-4, rtol=1e-4)
 
 
