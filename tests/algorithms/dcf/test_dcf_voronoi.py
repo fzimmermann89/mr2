@@ -1,12 +1,16 @@
 """Tests for algorithms to calculate the DCF with voronoi."""
 
 import math
+from itertools import product
 
+import numpy as np
 import pytest
 import torch
 from einops import repeat
 from mr2.algorithms.dcf import dcf_1d, dcf_2d3d_voronoi
+from mr2.algorithms.dcf.dcf_voronoi import _cell_volumes_3d
 from mr2.data import KTrajectory
+from scipy.spatial import ConvexHull, Voronoi
 
 
 def example_traj_rad_2d(n_kr, n_ka, phi0=0.0, broadcast=True):
@@ -193,3 +197,36 @@ def test_dcf_voronoi_float64(device: str, ndim: int) -> None:
     assert result.shape == traj.shape[1:]
     assert (result.isfinite() & (result > 0)).all()
     torch.testing.assert_close(result.float(), dcf_2d3d_voronoi(traj.float()), rtol=1e-4, atol=1e-6)
+
+
+@pytest.mark.parametrize('offset', [1e-6, 1e-12])
+def test_dcf_3d_voronoi_near_duplicate(offset: float) -> None:
+    """A second point very close to a grid point shares the cell of that grid point.
+
+    At 1e-12 Qhull no longer separates the two points.
+    """
+    grid = torch.stack(torch.meshgrid(*[torch.arange(6.0, dtype=torch.float64)] * 3, indexing='ij')).reshape(3, -1)
+    index = 3 * 36 + 3 * 6 + 2
+    extra = grid[:, index : index + 1] + torch.tensor([[offset], [0.0], [0.0]], dtype=torch.float64)
+    dcf = dcf_2d3d_voronoi(torch.cat((grid, extra), dim=1)[:, None, None, :]).ravel()
+    torch.testing.assert_close(dcf[[index, -1]], torch.full((2,), 0.5, dtype=torch.float64), rtol=0, atol=1e-5)
+    torch.testing.assert_close(dcf[index - 1], torch.tensor(1.0, dtype=torch.float64), rtol=0, atol=1e-5)
+
+
+def test_dcf_3d_voronoi_convex_hull() -> None:
+    """3D cell volumes match the convex hull of the vertices of each Voronoi region."""
+    points = np.random.default_rng(0).random((3, 500))
+    dcf = dcf_2d3d_voronoi(torch.from_numpy(points)[:, None, None, :]).ravel().numpy()
+    corners = np.array(list(product([-1, 1], repeat=3))) * 10
+    vdiagram = Voronoi(np.concatenate((points.T, corners)))
+    volume = np.array([ConvexHull(vdiagram.vertices[vdiagram.regions[r]]).volume for r in vdiagram.point_region[:500]])
+    inner = (np.abs(points - 0.5) < 0.3).all(0)  # cells away from the boundary are not replaced as outliers
+    np.testing.assert_allclose(dcf[inner], volume[inner], rtol=1e-10)
+
+
+def test_cell_volumes_3d_dropped_point() -> None:
+    """A point dropped by Qhull as coincident with another point shares the volume of that cell."""
+    grid = np.array(list(product(range(6), repeat=3)), dtype=np.float64)
+    index = 3 * 36 + 3 * 6 + 2
+    volume = _cell_volumes_3d(np.concatenate((grid, grid[index : index + 1] + np.array([1e-14, 0, 0]))))
+    np.testing.assert_allclose(volume[[index, -1, index - 1]], [0.5, 0.5, 1.0])
