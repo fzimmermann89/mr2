@@ -1,24 +1,27 @@
 # %% [markdown]
 # # Differentiating through an optimization result
 #
-# A reconstruction can itself be a layer in a learning problem. Here we solve a small
-# regularized inverse problem, then learn its regularization weight from a known target.
-# Everything runs on the CPU, with no downloads. We use double precision to make the
-# solution and gradient checks easy to inspect.
+# We solve a regularized inverse problem and learn its regularization weight by
+# differentiating through the solution. We use a synthetic signal with 16 entries,
+# so we can compare the iterative solution and its gradient with a dense solve.
+# This example runs on the CPU. We use double precision for the numerical checks.
 #
 # ## A small inverse problem
 #
-# We observe $y = Ax_{\mathrm{true}} + \epsilon$, where $A$ attenuates some components.
-# For a positive weight $\alpha$, the inner problem is
+# We simulate measurements $y = Ax_{\mathrm{true}} + \epsilon$ with additive Gaussian
+# noise. The singular values of $A$ range from 0.15 to 1, so directly inverting $A$
+# amplifies noise in components with small singular values. To regularize the
+# reconstruction, we minimize
 #
 # $$x^*(\alpha) = \arg\min_x \tfrac12\|Ax-y\|_2^2
 #                  + \tfrac\alpha2\|x\|_2^2.$$
 #
 # Its normal equations are $H_\alpha x^* = b$, with
 # $H_\alpha = A^H A + \alpha I$ and $b = A^H y$.
-# Positive $\alpha$ makes $H_\alpha$ positive definite, so the minimizer is unique.
-# A dense solve provides an independent reference; a large MRI problem would use
-# operators without explicitly forming this matrix.
+# For $\alpha > 0$, $H_\alpha$ is positive definite and the minimizer is unique.
+# We solve these equations using conjugate gradient (CG) and compare with
+# ``torch.linalg.solve``. For large MRI problems, we can apply the normal operator
+# without forming its matrix.
 
 # %%
 import matplotlib.pyplot as plt
@@ -47,17 +50,17 @@ normal_matrix = matrix.T @ matrix
 identity = torch.eye(size, dtype=dtype)
 
 # %% [markdown]
-# ## Factories define the parameterized solve
+# ## Set up the CG solver
 #
-# `~mr2.operators.ConjugateGradientOp` takes two factories. Each receives the tensors
-# passed to the solver: here, the weight and observations. One builds the system
-# operator, the other returns a **tuple** of right-hand sides. Pass learnable tensors
-# explicitly rather than capturing them in a closure: the implicit backward computes
-# derivatives with respect to these inputs.
+# We use `~mr2.operators.ConjugateGradientOp` with two factory functions. Both take
+# the regularization weight and observations as inputs. The first returns
+# $H_\alpha$; the second returns the right-hand side as a tuple.
+# We pass the learnable weight as a solver input so that the implicit backward
+# can compute its derivative.
 #
 # Adding a scalar tensor to a linear operator adds that scalar times the identity.
 # Thus ``encoding.gram + alpha`` represents $A^H A + \alpha I$.
-# The solver also returns a tuple. We call the instance, rather than ``forward``.
+# Like other MRtwo operators, the solver returns a tuple, which we unpack below.
 
 
 # %%
@@ -85,16 +88,18 @@ forward_relative_residual = (system_solution - rhs).norm() / rhs.norm()
 assert forward_relative_residual < 1e-10
 
 # %% [markdown]
-# A warm start only helps find the solution: this operator detaches initial values
-# requiring gradients, in both modes. It does not learn an initialization.
-# For general nonlinear objectives, `~mr2.operators.OptimizerOp` instead takes an
-# objective factory and an initializer callable returning a tuple of initial values.
-# Its implicit derivative also describes a stationary solution, rather than the path
-# from that initialization. The quadratic here needs only CG.
+# The optional ``initial_value`` gives CG a constant warm start. The solver detaches
+# initial values that require gradients in both differentiation modes.
+# For nonlinear objectives, we can use `~mr2.operators.OptimizerOp` with an objective
+# factory and an initializer that returns a tuple of initial values. Its implicit
+# backward requires a stationary solution with an invertible Hessian; its CG
+# backward solve also requires a positive definite Hessian. Here we use the normal
+# equations directly.
 #
 # ## Unrolled and implicit derivatives
 #
-# Our outer loss is $L = \|x^*(\alpha)-x_{\mathrm{true}}\|_2^2/n$.
+# We measure reconstruction error with the outer loss
+# $L = \|x^*(\alpha)-x_{\mathrm{true}}\|_2^2/n$, where $n=16$.
 # Unrolling differentiates the executed CG iterations and keeps their computation
 # graph. With early stopping, this is the derivative of that finite computation;
 # the stopping decision itself is not differentiated.
@@ -102,13 +107,15 @@ assert forward_relative_residual < 1e-10
 # Implicit differentiation instead differentiates $H_\alpha x^*=b$. It solves
 # $H_\alpha^H z = \nabla_x L$ in the backward pass and gives
 # $dL/d\alpha = -z^T x^*$. It avoids storing the forward iteration graph, but requires
-# **both** forward and backward solves to converge. The same tolerance and iteration
+# both forward and backward solves to converge. The same tolerance and iteration
 # limit control both solves in this operator. A small forward residual alone does
 # not establish gradient accuracy. Ill conditioning can amplify residual errors.
 # The current implicit CG implementation supports first derivatives only.
 #
-# We compare both modes to autograd through the dense solve and to a centered finite
-# difference. We also check the adjoint equation independently with a dense solve.
+# We compare the gradients with autograd through the dense solve and a centered
+# finite difference. We also solve the adjoint equation with ``torch.linalg.solve``
+# and evaluate $-z^T x^*$. The dense adjoint residual checks this reference solve;
+# it does not measure the internal backward CG residual.
 
 # %%
 implicit_loss = (solution - truth).square().mean()
@@ -132,8 +139,6 @@ with torch.no_grad():
 for gradient in (implicit_gradient, unrolled_gradient, finite_difference, analytic_gradient):
     torch.testing.assert_close(gradient, reference_gradient, rtol=1e-6, atol=1e-9)
 assert backward_relative_residual < 1e-10
-# These values should agree; the dense adjoint residual is a reference check,
-# not a measurement of the internal backward CG residual.
 {
     'implicit': implicit_gradient.item(),
     'unrolled': unrolled_gradient.item(),
@@ -144,13 +149,13 @@ assert backward_relative_residual < 1e-10
 }
 
 # %% [markdown]
-# ## Learn the objective parameter
+# ## Learn the regularization weight
 #
 # We optimize $\theta = \log\alpha$ so $\alpha = \exp\theta$ stays positive.
-# Adam updates only this scalar; each outer step solves the inner reconstruction
-# problem again. The target appears only in the outer loss, never in the factories.
-# This single synthetic pair demonstrates the mechanism; learning a useful shared
-# weight would require separate training and validation data.
+# At each Adam step, we reconstruct the signal and backpropagate the outer loss
+# through the CG solution. We use the target only to evaluate this loss.
+# We fit the weight to one noisy signal here. To assess whether a learned weight
+# generalizes, we would need separate training and validation data.
 
 # %%
 log_alpha = torch.nn.Parameter(torch.tensor(0.0, dtype=dtype))
@@ -179,9 +184,8 @@ assert learned_loss < 0.5 * loss_history[0]
 {'initial MSE': loss_history[0], 'learned MSE': learned_loss.item(), 'learned alpha': learned_alpha.item()}
 
 # %% [markdown]
-# The first panel shows the outer loss and the second the parameter being learned.
-# The last compares the initial and learned reconstructions with the target.
-# Learning reduces error here, but it cannot recover information lost to noise.
+# We plot the loss and regularization weight over the outer iterations, then
+# compare the reconstructions. The learned weight reduces the error for this signal.
 
 # %% tags=["hide-cell"] mystnb={"code_prompt_show": "Show plotting code"}
 fig, axes = plt.subplots(1, 3, figsize=(12, 3.2))
