@@ -1,21 +1,41 @@
 """Checks for SNRAware networks and official weight conversion."""
 
+from typing import cast
+
 import pytest
 import torch
 from mr2.nn.nets import SNRAware
+from mr2.utils import RandomGenerator
+
+
+@pytest.mark.parametrize('torch_compile', [True, False], ids=['compiled', 'uncompiled'])
+@pytest.mark.parametrize(
+    'device',
+    [pytest.param('cpu', id='cpu'), pytest.param('cuda', marks=pytest.mark.cuda, id='cuda')],
+)
+def test_snraware_forward(torch_compile: bool, device: str) -> None:
+    """Test compiled and uncompiled forward passes on CPU and CUDA."""
+    model = SNRAware(n_features=4, n_heads=2, image_size=16, p_dropout=0).to(device).eval()
+    x = RandomGenerator(seed=4).float32_tensor((2, 3, 3, 16, 16), device=device)
+    if torch_compile:
+        model = cast(SNRAware, torch.compile(model))
+    y = model(x)
+    assert y.shape == (2, 2, 3, 16, 16)
 
 
 @pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
 def test_snraware_backward(device: str) -> None:
     """Every branch participates in a differentiable compact model."""
     model = SNRAware(n_features=4, n_heads=2, image_size=16, p_dropout=0).to(device)
-    x = torch.randn(1, 3, 2, 16, 16, device=device, requires_grad=True)
+    x = RandomGenerator(seed=4).float32_tensor((1, 3, 2, 16, 16), device=device).requires_grad_()
     y = model(x)
     assert y.shape == (1, 2, 2, 16, 16)
     y.square().mean().backward()
-    for parameter in (x, *model.parameters()):
-        assert parameter.grad is not None
-        assert torch.isfinite(parameter.grad).all()
+    assert x.grad is not None, 'x.grad is None'
+    assert torch.isfinite(x.grad).all(), 'x.grad is not finite'
+    for name, parameter in model.named_parameters():
+        assert parameter.grad is not None, f'{name}.grad is None'
+        assert torch.isfinite(parameter.grad).all(), f'{name}.grad is not finite'
 
 
 def test_snraware_downsample_conversion(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -25,7 +45,7 @@ def test_snraware_downsample_conversion(monkeypatch: pytest.MonkeyPatch) -> None
     # Only the merging parameter is expected here, so the test isolates its ordering.
     monkeypatch.setattr(model, 'state_dict', lambda: {'down_initial.module.1.weight': torch.empty_like(weight)})
     converted = model.convert_state_dict({'bk.down_00_11.block.D2_0.conv.conv.weight': weight})
-    x = torch.randn(1, 4, 2, 16, 16, dtype=torch.float64)
+    x = RandomGenerator(seed=4).float64_tensor((1, 4, 2, 16, 16))
     official = torch.cat([x[..., 0::2, 0::2], x[..., 1::2, 0::2], x[..., 0::2, 1::2], x[..., 1::2, 1::2]], dim=1)
     expected = torch.einsum('oc,bcthw->bothw', weight[:, :, 0, 0], official)
     with torch.no_grad():
