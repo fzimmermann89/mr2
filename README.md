@@ -19,7 +19,7 @@ MR data processing and image reconstruction.
 This project is a faster moving continuation/fork of [MRpro](https://github.com/PTB-MR/mrpro/).
 Some of the additional features of MRtwo will eventually get backported to MRpro, all new features of MRpro will be included in MRtwo.
 
-In most cases, you can replace `mrpro` by `mr2` in you code and everything works.
+In most cases, you can replace `mrpro` by `mr2` in your code and everything works.
 
 - **Source code:** <https://github.com/fzimmermann89/mr2>
 - **Documentation:** <https://fzimmermann89.github.io/mr2/>
@@ -27,14 +27,15 @@ In most cases, you can replace `mrpro` by `mr2` in you code and everything works
 - **Try it out:** [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/fzimmermann89/mr2)
 
 ## Main features
-- **Data handling** Custom dataclasses for fast data subsetting, sorting, rearranging
-- **Neural Network Block** Common blocks and networks used for ML based MRI reconstruction
-- **ISMRMRD support** MRtwo supports [ismrmrd-format](https://ismrmrd.readthedocs.io/en/latest/) for MR raw data.
-- **PyTorch** All data containers utilize PyTorch tensors to ensure easy integration in PyTorch-based network schemes.
-- **Cartesian and non-Cartesian trajectories** MRtwo can reconstruct data obtained with Cartesian and non-Cartesian (e.g. radial, spiral...) sapling schemes. MRtwo automatically detects if FFT or nuFFT is required to reconstruct the k-space data.
-- **Pulseq support** If the data acquisition was carried out using a [pulseq-based](http://pulseq.github.io/) sequence, the seq-file can be provided to MRtwo and the used trajectory is automatically calculated.
-- **Signal models** A range of different MR signal models are implemented (e.g. T1 recovery, WASABI).
-- **Regularized image reconstruction** Regularized image reconstruction algorithms including Wavelet-based compressed sensing or total variation regularized image reconstruction are available.
+
+- Data containers store MR metadata with PyTorch tensors and support indexing
+  and rearranging fields together.
+- Cartesian and non-Cartesian Fourier operators support reconstruction with
+  coil sensitivity maps, density compensation and regularization.
+- Signal models support quantitative imaging, including T1 recovery and WASABI.
+- Neural network components support learned MRI reconstruction.
+- Raw-data loaders read ISMRMRD; trajectory calculators can use stored
+  coordinates or a [Pulseq](http://pulseq.github.io/) sequence file.
 
 ## Quickstart
 

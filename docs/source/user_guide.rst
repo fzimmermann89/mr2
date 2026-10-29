@@ -2,22 +2,22 @@
 User Guide
 ==========
 
-MRtwo is a MR image reconstruction and processing framework specifically developed to work well with pytorch.
-The data classes utilize `torch.Tensor` for storing data such as MR raw data or reconstructed image data.
-Operators are implemented as `torch.nn.Module` where possible batch parallelisation of pytorch is utilized to speed up image reconstruction.
+MRtwo reconstructs and processes MR images with PyTorch. Data containers
+store tensors with MR metadata; operators inherit from `torch.nn.Module`
+and use PyTorch's batch operations.
 
 Installation
 ============
 
-MRtwo is available on `pypi <https://pypi.org/project/mrtwo/>`_ and can be installed with::
+Install MRtwo from `PyPI <https://pypi.org/project/mrtwo/>`_::
 
     pip install mrtwo
 
-To install additional dependencies used in our example notebooks, use::
+For the example notebooks, install their dependencies too::
 
     pip install mrtwo[notebooks]
 
-You can also install the latest development directly from github using::
+For the development version on git/main, install from GitHub::
 
     pip install "git+https://github.com/fzimmermann89/mr2"
 
@@ -29,12 +29,12 @@ The website follows git/main, which can contain features not yet released on
 PyPI. Use the development install above when following a main-only API, or
 check the documentation and examples in your installed release's source tag.
 
-This complete CPU-capable example downloads the public radial acquisition
-used by :doc:`_notebooks/direct_reconstruction`. Install
-``mrtwo[notebooks]`` for its download and plotting dependencies. The first run
-needs network access and space for the raw-data record; reconstruction time
-and memory depend on your machine. Keep the temporary directory alive until
-the data have been loaded.
+Run this example on CPU to download and reconstruct the public radial
+acquisition from :doc:`_notebooks/direct_reconstruction`. It needs
+``mrtwo[notebooks]`` for downloading and plotting. Allow network access and
+space for the raw-data record; reconstruction time and memory use depend
+on your machine. The ``with`` block keeps the temporary directory available
+until reconstruction finishes.
 
 .. code-block:: python
 
@@ -60,32 +60,32 @@ the data have been loaded.
     plt.axis('off')
     plt.show()
 
-The figure shows a magnitude image from the radial acquisition. Direct
-reconstruction estimates density compensation and coil sensitivity maps,
-applies the adjoint Fourier transform and combines coils. ``img`` is an
-`mr2.data.IData`, containing the complex image tensor in ``img.data`` and
-image metadata in ``img.header``. ``rss()`` computes root-sum-of-squares over
-coils for display; ``[0, 0]`` selects the first image and z plane.
+The plot displays the reconstructed magnitude image. Direct reconstruction
+estimates density compensation and coil sensitivity maps, then applies the
+adjoint Fourier transform and combines coils. The returned `mr2.data.IData`
+stores the complex image in ``img.data`` and its metadata in ``img.header``.
+For display, ``rss()`` computes root-sum-of-squares over coils and ``[0, 0]``
+selects the first image and z plane.
 
-To compare an iterative reconstruction, continue with
-:doc:`_notebooks/iterative_sense_reconstruction_radial2D`. To understand
-containers and selection, read :doc:`data`; to build a custom model, read
-:doc:`operators`. The sections below explain how to adapt the pipeline to
-your own acquisition.
+Compare the result with
+:doc:`_notebooks/iterative_sense_reconstruction_radial2D`, or read :doc:`data`
+before selecting samples from your own acquisition. The :doc:`operators`
+guide covers custom acquisition models.
 
 Reading in raw data
 -------------------
-Reading in raw data from a MRD file works by creating a `mr2.data.KData` object and using the class method `~mr2.data.KData.from_file`.
-`~mr2.data.KData` contains the raw k-space data, the header information obtained from the MRD file and the k-space trajectory.
-To ensure the trajectory is calculated correctly, a `~mr2.data.traj_calculators.KTrajectoryCalculator` needs to be provided.
-The trajectory can either be calculated based on MRtwo functionality (e.g. for a 2D radial sampling scheme), read out
-from MRD or calculated from a `pulseq <http://pulseq.github.io/>`_ file. See `~mr2.data.traj_calculators`
-for available trajectory calculators and :doc:`_notebooks/comparison_trajectory_calculators` for an example.
+Load ISMRMRD raw data with `mr2.data.KData.from_file`, passing a
+`~mr2.data.traj_calculators.KTrajectoryCalculator` for the trajectory.
+The returned `~mr2.data.KData` stores k-space data with its header and
+sampling coordinates. Choose a calculator that reads stored coordinates,
+calculates them for a known sampling scheme, or uses a
+`Pulseq <http://pulseq.github.io/>`_ sequence file. See
+`~mr2.data.traj_calculators` and
+:doc:`_notebooks/comparison_trajectory_calculators` for the choices.
 
-
-Use `~mr2.data.KData.from_file` for MR2 storage and ISMRMRD files. MR2 files include their trajectory.
-Reconstruction servers can pass an XML header and received acquisitions to
-`~mr2.data.KData.from_ismrmrd` without writing an intermediate file.
+`~mr2.data.KData.from_file` also reads MR2 storage, which includes its
+trajectory. Reconstruction servers can pass an XML header and received
+acquisitions to `~mr2.data.KData.from_ismrmrd` without an intermediate file.
 
 
 .. note::
@@ -103,34 +103,24 @@ Reconstruction servers can pass an XML header and received acquisitions to
 
 Preparation for reconstruction
 ------------------------------
-MRtwo provides a range of functionality to prepare the data for image reconstruction such as:
-
-* Noise prewhiting
-* Removal of oversampling along readout direction
-* Calculation of the density compensation function
-* Estimation of coil sensitivity maps
-* Fourier transformation
+Before reconstruction, you can prewhiten k-space using a noise acquisition,
+remove readout oversampling, and estimate density compensation or coil
+sensitivities. Fourier operators map between image space and the sampled
+k-space coordinates.
 
 Data reconstruction
 -------------------
-MRtwo provides a flexible framework for MR image reconstruction. We provide some high level functions for commonly used
-reconstruction algorithms in `mr2.algorithms.reconstruction`, such as
-`~mr2.algorithms.reconstruction.RegularizedIterativeSENSEReconstruction`. We also provide all building blocks to
-create custom reconstruction algorithms and do manual reconstructions.
+`mr2.algorithms.reconstruction` provides reconstruction classes such as
+`~mr2.algorithms.reconstruction.RegularizedIterativeSENSEReconstruction`.
+For a custom reconstruction, combine a `~mr2.operators.SensitivityOp` with
+a `~mr2.operators.FourierOp` to model the coil signals at the measured
+coordinates. You can extend the model with motion operators or signal models
+and choose a solver from `mr2.algorithms.optimizers`.
 
-As a first step for a new reconstruction, an acquisition model consisting of linear and non-linear operators can be created.
-A simply acquisition model could consist of a `~mr2.operators.SensitivityOp` describing the effect of different
-receiver coils and `~mr2.operators.FourierOp` describing the transform from image space to k-space taking the sampling scheme
-(trajectory) into account. Additional operators describing transformations due to physiological motion or
-MR signal models can be added. See `~mr2.operators` for a list of available operators.
-All operators take one or more tensors as input and return a tuple of one or more tensors as output.
-Operators can be chained using ``@`` to form a full acquisition model. We also support addition, multiplication, etc.
-between operators.
-
-Based on the acquisition model either a suitable optimizer from `mr2.algorithms.optimizers` can be selected
-or a new optimizer using pytorch functions can be created.
-
-See for examples  :doc:`_notebooks/cartesian_reconstruction`, :doc:`_notebooks/direct_reconstruction`, and :doc:`_notebooks/iterative_sense_reconstruction_radial2D`
+See :doc:`operators` for composition and solver assumptions. The
+:doc:`_notebooks/cartesian_reconstruction` and
+:doc:`_notebooks/iterative_sense_reconstruction_radial2D` notebooks show
+complete reconstructions.
 
 For reconstruction with BART, use ``to_bart`` to export k-space, images, coil sensitivity maps or density compensation
 weights as ``.hdr``/``.cfl`` pairs or ``.ra`` files, and ``from_file`` to import images, maps or weights without installing BART
@@ -165,7 +155,7 @@ other loading failures propagate to the caller.
 
 Use ``torch.utils.data.DataLoader(dataset, batch_size=None)`` for unbatched
 iteration, or supply a custom collation function. Download helpers check Zenodo
-checksums and cache extracted paths and sizes. ``verify=True`` additionally checks
+checksums and cache extracted paths and sizes. ``verify=True`` also checks
 cached file hashes. Downloader calls require network access for record metadata;
 local dataset selection and loading work offline. Concurrent downloads to the same
 output directory fail explicitly. If a process is forcibly terminated, remove
@@ -175,9 +165,9 @@ completed downloads; installation of a multi-file archive is not atomic.
 
 Image processing
 ----------------
-Further processing of the reconstructed data such as quantitative parameter estimation is available.
-Our examples contain a notebook showing how to read in DICOM images and perform qMRI parameter estimation using
-a non-linear optimizer: :doc:`_notebooks/qmri_sg_challenge_2024_t1`,
+For quantitative parameter estimation from DICOM images, see
+:doc:`_notebooks/qmri_sg_challenge_2024_t1`. The notebook fits a signal model
+using a nonlinear optimizer.
 
 
 Citation

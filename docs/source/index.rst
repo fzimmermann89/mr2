@@ -15,24 +15,25 @@ MR image reconstruction and processing for PyTorch
 
 Start here
 ----------
-New to MRtwo? Follow :doc:`user_guide` to install the package, download an
-acquisition and display your first reconstruction. MRtwo is a continuation
-of `MRpro <https://github.com/PTB-MR/mrpro/>`_, with a faster-moving development
-API. The Python import is ``mr2`` and the PyPI distribution is ``mrtwo``.
-This website documents git/main; installed releases can differ.
+Follow :doc:`user_guide` to install MRtwo and reconstruct a downloaded
+acquisition. MRtwo continues development of
+`MRpro <https://github.com/PTB-MR/mrpro/>`_. Install the ``mrtwo`` distribution
+and import ``mr2`` in Python. This website documents git/main, so some APIs
+may differ from the latest PyPI release.
 
-* **Work with your data:** :doc:`data` explains axes, units, broadcasting,
-  indexing and file formats.
-* **Build a reconstruction:** :doc:`operators` introduces acquisition models,
-  adjoints, losses and solver choices.
-* **Learn by application:** :doc:`examples` groups complete notebooks by task.
-* **Find an API:** :doc:`api` documents classes, functions and call signatures.
-* **Contribute:** :doc:`contributor_guide` describes code, tests and documentation.
+* :doc:`data` explains tensor axes and units, with examples of indexing and
+  file storage.
+* :doc:`operators` covers acquisition models, operator algebra and solver
+  selection.
+* :doc:`examples` groups complete notebooks by application.
+* :doc:`api` lists public classes and functions with their call signatures.
+* :doc:`contributor_guide` describes the code and documentation conventions.
 
-MRtwo combines PyTorch tensors with MR metadata, Cartesian and non-Cartesian
-Fourier operators, coil sensitivity estimation, regularized reconstruction
-and quantitative signal models. Start with a high-level reconstruction and
-replace its components as your application requires.
+MRtwo stores MR metadata alongside PyTorch tensors. Its reconstruction tools
+include Cartesian and non-Cartesian Fourier operators, coil sensitivity
+estimation and regularized solvers; signal models support quantitative
+parameter fitting. Use a high-level reconstruction first, then replace its
+components when you need a different model or solver.
 
 Contents
 --------

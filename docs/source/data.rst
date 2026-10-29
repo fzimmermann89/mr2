@@ -1,10 +1,11 @@
 Data containers, dimensions and indexing
 ========================================
 
-`mr2.data.KData` holds raw data, a nested header and a trajectory.
-`mr2.data.IData` holds an image tensor and an image header. These are
-`~mr2.data.Dataclass` subclasses: inspect them with ``print(obj)`` or
-``obj.items()`` and use their methods to transform tensor fields together.
+`mr2.data.KData` stores raw data with its header and trajectory;
+`mr2.data.IData` stores an image tensor and image header. Both inherit from
+`~mr2.data.Dataclass`. Inspect their fields with ``print(obj)`` or
+``obj.items()``. Container methods apply the same selection or transformation
+to nested tensor fields.
 
 Axes, broadcasting and units
 ----------------------------
@@ -13,21 +14,22 @@ K-space tensors use ``(*other, coils, k2, k1, k0)``; image tensors use
 ``other`` axis. Additional batch axes go in front. For a 2D acquisition,
 ``k2`` is commonly singleton; ``k0`` is the readout axis.
 
-Fields need not have identical shapes. ``obj.shape`` is their joint broadcast
-shape. A Cartesian ``kx`` can vary only along ``k0``, and ``ky`` only along
-``k1``. Repeated values may be reduced to singleton axes to save storage.
+``obj.shape`` is the joint broadcast shape of its fields, which can have
+different singleton axes. For a Cartesian trajectory, ``kx`` can vary along
+``k0`` while ``ky`` varies along ``k1``. Dataclasses can reduce repeated values
+to singleton axes to save storage.
 
 Physical quantities use SI units: metres, seconds and radians. Matrix sizes
 and acquisition indices are counts. Trajectory coordinates use encoding-grid
 units: a full Cartesian axis of length 128 normally spans -64 through 63.
-`mr2.data.SpatialDimension` is a dataclass with ``z``, ``y`` and ``x`` fields,
-not a named tuple. `mr2.data.Rotation` represents orientation and supports
-rotation matrices, quaternions and Euler angles.
+`mr2.data.SpatialDimension` is a dataclass with ``z``, ``y`` and ``x`` fields.
+Use `mr2.data.Rotation` for orientations; it supports rotation matrices,
+quaternions and Euler angles.
 
 A small, self-contained acquisition
 -----------------------------------
-This synthetic example is for learning container operations, not simulating
-an MR signal. No download is needed.
+Create a small container with random k-space values to try the operations
+below without downloading data. These values don't simulate an MR signal.
 
 .. code-block:: python
 
@@ -56,11 +58,12 @@ an MR signal. No download is needed.
 
 Indexing the whole object
 -------------------------
-Indexing recursively selects tensor fields in the header and trajectory as
-if they were broadcast to the parent shape. Shared axes can remain singleton;
-selecting a coil does not duplicate the trajectory. Non-tensor scalar metadata
-is retained. Selection does not recalculate field of view or validate whether
-the selected samples still describe a suitable acquisition.
+Indexing selects nested tensor fields in the header and trajectory as if
+each field had the parent's broadcast shape. Shared axes can remain singleton,
+so selecting a coil doesn't duplicate the trajectory. The result retains
+non-tensor scalar metadata. Check the geometry after selection: indexing
+neither recalculates the field of view nor checks whether the samples still
+form a suitable acquisition.
 
 .. code-block:: python
 
@@ -79,8 +82,8 @@ the selected samples still describe a suitable acquisition.
 
 Integers and positive-step slices return tensor views. Negative slice steps
 are unsupported. Advanced indexing can allocate new tensors. Multiple integer
-sequences select paired positions, not an outer product; they must have the
-same shape. Their selection axis is added at the front and indexed axes become
+sequences must have the same shape and select paired positions, rather than
+an outer product. The selection axis goes at the front; indexed axes become
 singleton. For a single integer tensor, its last axis replaces the indexed
 axis and its other axes move to the front.
 
@@ -91,9 +94,9 @@ at the beginning of an index; one ellipsis fills omitted axes.
 
 Sharing, rearranging and joining
 --------------------------------
-A new container does not imply independent tensor storage. Mutating a slice's
-tensor can change the original. Clone before independent in-place edits.
-Broadcast views can have overlapping storage; avoid writing through them.
+A slice can share tensor storage with the original container. Call ``clone``
+before editing it in place if you need to keep the original values. Avoid
+writes through broadcast views, whose elements can share storage.
 
 .. code-block:: python
 
@@ -134,9 +137,9 @@ Device, precision and gradients
         lambda value: value.abs() if isinstance(value, torch.Tensor) else value
     )
 
-``to`` recursively moves tensors and changes floating-point precision while
-preserving real, complex and integer kinds. Unlike a tensor cast to a real
-dtype, it does not discard the imaginary part. ``to`` may share unchanged
+``to`` moves nested tensors and changes floating-point precision while
+preserving real, complex and integer kinds. A real dtype argument sets the
+precision of complex fields too, preserving their imaginary parts. ``to`` may share unchanged
 tensors; ``clone`` copies tensor storage and preserves autograd connections.
 ``detach`` removes gradient tracking but can share storage. ``apply`` clones
 and transforms fields recursively; ``apply_`` changes the object in place.
@@ -150,9 +153,9 @@ Storage and interchange
     kdata.save_as_mr2('acquisition.mr2')
     restored = mr2.data.KData.from_file('acquisition.mr2')
 
-MR2 is the package's HDF5 dataclass storage, including nested fields and the
-trajectory. Reload with the matching class's ``from_file``; there is no public
-``from_mr2`` method. Storage does not preserve a computation graph.
+MR2 stores dataclass fields in HDF5, including the trajectory and nested
+headers. Reload the file with the matching class's ``from_file`` method.
+The file contains tensor values without their computation graph.
 
 For scanner raw data, use ``KData.from_file(path, trajectory_calculator)`` for
 ISMRMRD HDF5, or ``KData.from_ismrmrd`` for an XML header and acquisitions.
@@ -162,6 +165,3 @@ folders, and BART arrays; BART image imports require a reference header.
 not provided by ``IData.from_file``. K-space, images, sensitivity maps and density
 weights also support BART export through ``to_bart``. Consult each method for
 format-specific shape and metadata requirements.
-
-Next, build acquisition models in :doc:`operators` or use a reconstruction in
-:doc:`user_guide`.
