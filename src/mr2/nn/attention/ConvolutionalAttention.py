@@ -117,16 +117,16 @@ class ConvolutionalAttention(Module):
             case 'temporal':
                 y = rearrange(y, 'b heads t (c h w) -> b (heads c) t h w', h=self.image_size, w=self.image_size)
             case 'local' | 'global':
-                n = 2 if self.mode == 'local' else self.image_size // 4
-                g = self.image_size // (4 * n)
+                patches_per_window = 2 if self.mode == 'local' else self.image_size // 4
+                windows_per_axis = self.image_size // (4 * patches_per_window)
                 y = rearrange(y, 'b t g heads s d -> b t g s (heads d)')
                 y = rearrange(
                     y,
                     'b t (gh gw) (nh nw) (ph pw c) -> b c t (gh nh ph) (gw nw pw)',
-                    gh=g,
-                    gw=g,
-                    nh=n,
-                    nw=n,
+                    gh=windows_per_axis,
+                    gw=windows_per_axis,
+                    nh=patches_per_window,
+                    nw=patches_per_window,
                     ph=4,
                     pw=4,
                 )
