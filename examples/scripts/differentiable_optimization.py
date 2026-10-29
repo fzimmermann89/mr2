@@ -18,23 +18,18 @@ from functools import partial
 from time import perf_counter
 
 import matplotlib.pyplot as plt
+import mr2
 import torch
-from mr2.algorithms.optimizers import lbfgs
-from mr2.data import SpatialDimension
-from mr2.operators import ConstraintsOp, DifferentiableDictionaryMatchOp, FunctionalType, OptimizerOp
-from mr2.operators.functionals import L2NormSquared
-from mr2.operators.models import MonoExponentialDecay
-from mr2.phantoms import EllipseParameters, EllipsePhantom
 
 # One CPU thread avoids parallelization overhead for these small images.
 previous_threads = torch.get_num_threads()
 torch.set_num_threads(1)
 dtype = torch.float64
-image_size = SpatialDimension(z=1, y=64, x=64)
+image_size = mr2.data.SpatialDimension(z=1, y=64, x=64)
 echo_times = torch.linspace(0.01, 0.15, 8, dtype=dtype)
-signal_model = MonoExponentialDecay(echo_times)
+signal_model = mr2.operators.models.MonoExponentialDecay(echo_times)
 training_seconds = 60.0
-batch_size = 4
+batch_size = 1
 
 # %% [markdown]
 # ## Generate phantoms
@@ -63,14 +58,14 @@ def make_phantoms(count: int, seed: int) -> tuple[torch.Tensor, torch.Tensor, to
         t2 = torch.full_like(m0, 0.035 + 0.145 * torch.rand((), generator=rng).item())
         ellipse_count = int(torch.randint(3, 13, (), generator=rng))
         for center_x, center_y, radius_x, radius_y in torch.rand((ellipse_count, 4), generator=rng):
-            ellipse = EllipseParameters(
+            ellipse = mr2.phantoms.EllipseParameters(
                 center_x=0.8 * (center_x.item() - 0.5),
                 center_y=0.8 * (center_y.item() - 0.5),
                 radius_x=0.025 + 0.235 * radius_x.item(),
                 radius_y=0.025 + 0.235 * radius_y.item(),
                 intensity=1,
             )
-            mask = EllipsePhantom([ellipse]).image_space(image_size).real.squeeze() > 0
+            mask = mr2.phantoms.EllipsePhantom([ellipse]).image_space(image_size).real.squeeze() > 0
             m0[mask] = 0.55 + 0.85 * torch.rand((), generator=rng).item()
             t2[mask] = 0.035 + 0.145 * torch.rand((), generator=rng).item()
         m0_maps.append(m0)
@@ -116,37 +111,55 @@ plt.show()
 # $M_0\in(0.3,1.8)$ and $T_2\in(0.015,0.23)$ s using sigmoid transforms.
 # For corrected echo images $\widetilde y$, the fit minimizes
 #
-# $$F(u,v;\widetilde y)=\tfrac12\|q(C(u,v))-\widetilde y\|_2^2
-#                  +\tfrac\alpha2\big(\|u\|_2^2+\|v\|_2^2\big).$$
+# $$F(u,v;\widetilde y)=\tfrac12\operatorname{MSE}(q(C(u,v)),\widetilde y)
+#     +\tfrac\alpha2\big(\operatorname{MSE}(u,0)+\operatorname{MSE}(v,0)\big).$$
 #
-# We fix $\alpha=10^{-3}$ for this example. The quadratic term pulls the solution
-# towards the midpoints of the parameter ranges. The factory builds the objective;
-# the initializer supplies two starting tensors. Both receive the fit inputs.
+# We use `~mr2.operators.functionals.MSE` and fix $\alpha=1.25\times10^{-4}$.
+# The quadratic term weakly regularizes the fit towards the parameter midpoints.
+# We multiply the objective by the number of voxels so its stopping tolerances do
+# not depend on the batch size. This constant does not change the minimizer.
+# The factory builds the objective. The initializer fits a straight line to the log
+# of the first four echoes and converts it to starting values for $M_0$ and $T_2$.
+# Both receive the fit inputs.
 # ``@`` composes operators, and ``|`` adds scalar functionals acting on separate
 # inputs. We call operators as ``op(x)`` and unpack their tuple outputs.
 
 # %%
-constraints = ConstraintsOp(bounds=((0.3, 1.8), (0.015, 0.23))).double()
+constraints = mr2.operators.ConstraintsOp(bounds=((0.3, 1.8), (0.015, 0.23))).double()
 constrained_model = signal_model @ constraints
-alpha = torch.tensor(1e-3, dtype=dtype)
+alpha = torch.tensor(1.25e-4, dtype=dtype)
 
 
-def objective_factory(observations: torch.Tensor, weight: torch.Tensor) -> FunctionalType:
+def objective_factory(observations: torch.Tensor, weight: torch.Tensor) -> mr2.operators.FunctionalType:
     """Build the nonlinear fitting objective for the corrected echoes."""
-    data_term = 0.5 * L2NormSquared(observations) @ constrained_model
-    regularizer = weight * (0.5 * L2NormSquared() | 0.5 * L2NormSquared())
-    return data_term + regularizer
+    data_term = mr2.operators.functionals.MSE(observations) @ constrained_model
+    regularizer = weight * (mr2.operators.functionals.MSE() | mr2.operators.functionals.MSE())
+    return (0.5 * observations[0].numel()) * (data_term + regularizer)
 
 
 def initializer(observations: torch.Tensor, _weight: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-    """Start at the midpoints of the physical parameter ranges."""
-    return torch.zeros_like(observations[0]), torch.zeros_like(observations[0])
+    """Initialize from a log-linear fit to the first four echoes."""
+    times = echo_times[:4].reshape((-1,) + (1,) * (observations.ndim - 1))
+    centered_times = times - times.mean()
+    # This supplies a constant warm start; gradients come through the objective.
+    log_signal = observations[:4].detach().clamp_min(1e-3).log()
+    slope = (centered_times * log_signal).sum(0) / centered_times.square().sum()
+    t2 = (-slope).clamp_min(1 / 0.21).reciprocal().clamp(0.025, 0.21)
+    m0 = (log_signal.mean(0) + times.mean() / t2).exp().clamp(0.35, 1.75)
+    u, v = constraints.inverse(m0, t2)
+    return u, v
 
 
-fit = OptimizerOp(
+fit = mr2.operators.OptimizerOp(
     objective_factory,
     initializer,
-    optimize=partial(lbfgs, max_iterations=60, max_evaluations=90, tolerance_grad=1e-7, tolerance_change=1e-11),
+    optimize=partial(
+        mr2.algorithms.optimizers.lbfgs,
+        max_iterations=60,
+        max_evaluations=90,
+        tolerance_grad=1e-7,
+        tolerance_change=1e-11,
+    ),
 )
 
 
@@ -193,7 +206,7 @@ def lbfgs_parameters(observations: torch.Tensor) -> tuple[torch.Tensor, torch.Te
 # the selected entry. One refinement step also need not reach a nonlinear minimum.
 
 # %%
-dictionary_match = DifferentiableDictionaryMatchOp[torch.Tensor, torch.Tensor](
+dictionary_match = mr2.operators.DifferentiableDictionaryMatchOp[torch.Tensor, torch.Tensor](
     signal_model, index_of_scaling_parameter=0, batch_size=4096
 )
 t2_grid = torch.linspace(0.025, 0.22, 96, dtype=dtype)
@@ -223,13 +236,21 @@ def parameter_error(
     m0: torch.Tensor, t2: torch.Tensor, target_m0: torch.Tensor, target_t2: torch.Tensor
 ) -> torch.Tensor:
     """Normalize squared errors by the widths of the fitting ranges."""
-    return (((m0 - target_m0) / 1.5).square() + ((t2 - target_t2) / 0.215).square()).mean()
+    (m0_error,) = mr2.operators.functionals.MSE(target_m0, weight=1 / 1.5)(m0)
+    (t2_error,) = mr2.operators.functionals.MSE(target_t2, weight=1 / 0.215)(t2)
+    return m0_error + t2_error
 
 
-check_fit = OptimizerOp(
+check_fit = mr2.operators.OptimizerOp(
     objective_factory,
     initializer,
-    optimize=partial(lbfgs, max_iterations=150, max_evaluations=200, tolerance_grad=1e-11, tolerance_change=1e-15),
+    optimize=partial(
+        mr2.algorithms.optimizers.lbfgs,
+        max_iterations=150,
+        max_evaluations=200,
+        tolerance_grad=1e-11,
+        tolerance_change=1e-15,
+    ),
 )
 voxel = validation_data[:, 0, 32, 32].unsqueeze(1).clone().requires_grad_(True)
 u, v = check_fit(voxel, alpha)
@@ -417,13 +438,13 @@ dictionary_cnn, dictionary_history, dictionary_updates, dictionary_validation_se
 # method. Neither run uses the test set to select weights.
 
 # %% tags=["hide-input"] mystnb={"code_prompt_show": "Show learning curve plotting code"}
-fig, axes = plt.subplots(1, 2, figsize=(10, 3.5), layout='constrained')
+fig, axes = plt.subplots(1, 2, figsize=(10, 3.5), sharey=True, layout='constrained')
 for axis, history, title in zip(
     axes, (lbfgs_history, dictionary_history), ('CNN + L-BFGS', 'CNN + dictionary'), strict=True
 ):
     times, training_errors, validation_errors = zip(*history, strict=True)
     axis.semilogy(times, training_errors, label='Training')
-    axis.semilogy(times, validation_errors, label='Validation')
+    axis.semilogy(times, validation_errors, '--', label='Validation')
     axis.set(xlabel='Training time (s)', ylabel='Normalized parameter error', title=title)
     axis.legend()
 plt.show()
@@ -432,9 +453,10 @@ plt.show()
 # ## Evaluate on the test phantoms
 #
 # We evaluate the selected checkpoints on the 16 test phantoms, using the same
-# noisy observations for both methods. For comparison, we also fit those observations
-# with the initial CNN, which makes no correction. We report mean absolute error
-# over all test voxels for $M_0$ and $T_2$, and the normalized squared parameter error.
+# noisy observations for both methods. We report the two trained estimators, using
+# `~mr2.operators.functionals.L1Norm` with averaging to compute mean absolute error
+# over all test voxels. The normalized parameter error uses
+# `~mr2.operators.functionals.MSE`, as in training.
 #
 # The two estimators solve different fitting problems: L-BFGS includes a quadratic
 # regularizer, whereas dictionary matching uses a discrete search and one refinement
@@ -445,21 +467,19 @@ plt.show()
 test_predictions = {}
 test_metrics = {}
 for name, cnn, estimate in (
-    ('L-BFGS, initial', initial_cnn, lbfgs_parameters),
-    ('L-BFGS, trained', lbfgs_cnn, lbfgs_parameters),
-    ('Dictionary, initial', initial_cnn, dictionary_parameters),
-    ('Dictionary, trained', dictionary_cnn, dictionary_parameters),
+    ('L-BFGS', lbfgs_cnn, lbfgs_parameters),
+    ('Dictionary', dictionary_cnn, dictionary_parameters),
 ):
     m0, t2 = evaluate(cnn, estimate, test_data, test_m0, test_t2)
     test_predictions[name] = (m0, t2)
     test_metrics[name] = {
-        'M0 MAE (a.u.)': (m0 - test_m0).abs().mean().item(),
-        'T2 MAE (ms)': 1000 * (t2 - test_t2).abs().mean().item(),
+        'M0 MAE (a.u.)': mr2.operators.functionals.L1Norm(test_m0, divide_by_n=True)(m0)[0].item(),
+        'T2 MAE (ms)': 1000 * mr2.operators.functionals.L1Norm(test_t2, divide_by_n=True)(t2)[0].item(),
         'normalized parameter error': parameter_error(m0, t2, test_m0, test_t2).item(),
     }
 
 # %% tags=["hide-input"] mystnb={"code_prompt_show": "Show metric table code"}
-fig, axis = plt.subplots(figsize=(10, 2), layout='constrained')
+fig, axis = plt.subplots(figsize=(10, 1.4), layout='constrained')
 axis.set_axis_off()
 metric_rows = [
     [
@@ -491,10 +511,10 @@ fig, axes = plt.subplots(3, 5, figsize=(13, 8), layout='constrained')
 for row, index in enumerate((0, 5, 10)):
     maps = (
         test_t2[index],
-        test_predictions['L-BFGS, trained'][1][index],
-        test_predictions['Dictionary, trained'][1][index],
-        test_predictions['L-BFGS, trained'][1][index] - test_t2[index],
-        test_predictions['Dictionary, trained'][1][index] - test_t2[index],
+        test_predictions['L-BFGS'][1][index],
+        test_predictions['Dictionary'][1][index],
+        test_predictions['L-BFGS'][1][index] - test_t2[index],
+        test_predictions['Dictionary'][1][index] - test_t2[index],
     )
     for column, (axis, image) in enumerate(zip(axes[row], maps, strict=True)):
         if column < 3:
