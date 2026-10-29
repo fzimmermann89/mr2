@@ -3,12 +3,11 @@
 #
 # We train a small unrolled network with a convolutional neural network (CNN)
 # and conjugate-gradient data consistency on simulated BrainWeb images.
-# Training runs for 60 seconds on CPU and requires a 4 MB download.
+# We train for 400 updates on CPU using a 4 MB download.
 # Install ``mrtwo[notebooks]`` to run the notebook.
 
 # %%
 import gzip
-import time
 
 import matplotlib.pyplot as plt
 import mr2
@@ -132,40 +131,26 @@ model = TinyMoDL().to(device)
 #
 # We minimize the complex MSE, $\operatorname{mean}|x-x_{\mathrm{true}}|^2$.
 # ``mse_loss`` averages over real and imaginary components, so we multiply
-# by two. Adam updates the CNN and regularization weight together; we compute
-# the held-out loss without gradients.
+# by two. Adam updates the CNN and regularization weight together.
 
 # %%
 optimizer = torch.optim.Adam(model.parameters(), lr=3e-3)
-train_losses, test_losses = [], []
-training_seconds = 60
-start = time.perf_counter()
-while time.perf_counter() - start < training_seconds:
-    model.train()
+for _ in range(400):
     optimizer.zero_grad()
     prediction = model(train_data, acquisition)
     loss = 2 * functional.mse_loss(torch.view_as_real(prediction), torch.view_as_real(train_truth))
     loss.backward()
     optimizer.step()
-    model.eval()
-    with torch.no_grad():
-        train_losses.append(loss.item())
-        test_prediction = model(test_data, acquisition)
-        test_loss = 2 * functional.mse_loss(torch.view_as_real(test_prediction), torch.view_as_real(test_truth))
-        test_losses.append(test_loss.item())
 
 with torch.no_grad():
     reconstruction = model(test_data, acquisition)
-    adjoint_loss = 2 * functional.mse_loss(torch.view_as_real(adjoint), torch.view_as_real(test_truth))
-print(f'Training and evaluation time: {time.perf_counter() - start:.1f} s')
-print(f'Learned regularization weight: {model.dc.log_weight.exp().item():.3f}')
-print(f'Held-out complex MSE: adjoint={adjoint_loss.item():.5f}, unrolled={test_losses[-1]:.5f}')
 
 # %% [markdown]
 # ## Compare with the adjoint reconstruction
 #
 # We compare the first held-out slice with the adjoint reconstruction.
-# Magnitudes and absolute complex errors each use a shared color scale.
+# The second row shows magnitude errors relative to the reference.
+# Magnitudes and errors each use a shared color scale.
 
 # %% tags=["hide-input"] mystnb={"code_prompt_show": "Show plotting code"}
 fig, axes = plt.subplots(2, 3, figsize=(9, 6), constrained_layout=True)
@@ -178,16 +163,12 @@ for axis, image, title in zip(
     axis.imshow(image[0, 0, 0].abs().numpy(), cmap='gray', vmin=0, vmax=1)
     axis.set_title(title)
     axis.axis('off')
-error_max = max((adjoint - test_truth).abs().max().item(), (reconstruction - test_truth).abs().max().item())
-for axis, image, title in zip(
-    axes[1, :2], [adjoint, reconstruction], ['Adjoint complex error', 'Unrolled complex error'], strict=True
-):
-    plot = axis.imshow((image - test_truth)[0, 0, 0].abs().numpy(), cmap='magma', vmin=0, vmax=error_max)
-    axis.set_title(title)
+errors = [(image.abs() - test_truth.abs()).abs() for image in (adjoint, reconstruction)]
+error_max = max(error.max().item() for error in errors)
+axes[1, 0].axis('off')
+for axis, error in zip(axes[1, 1:], errors, strict=True):
+    plot = axis.imshow(error[0, 0, 0].numpy(), cmap='magma', vmin=0, vmax=error_max)
+    axis.set_title('Magnitude error')
     axis.axis('off')
-fig.colorbar(plot, ax=axes[1, 1], shrink=0.7, label='Absolute error')
-axes[1, 2].plot(range(1, len(train_losses) + 1), train_losses, label='Training (before update)')
-axes[1, 2].plot(range(1, len(train_losses) + 1), test_losses, label='Held out (after update)')
-axes[1, 2].set(xlabel='Update', ylabel='Complex MSE', yscale='log')
-axes[1, 2].legend(fontsize='small')
+fig.colorbar(plot, ax=list(axes.ravel()), shrink=0.7, label='Absolute magnitude error')
 plt.show()
