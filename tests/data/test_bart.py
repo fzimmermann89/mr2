@@ -160,7 +160,7 @@ def test_kdata_to_bart_cartesian(tmp_path: Path) -> None:
     kspace = from_bart_layout(kspace, IMAGE_DIMS, (BartDimension.SLICE, BartDimension.TE))
     for line_idx, k1 in enumerate((-4, 2, 0, -1)):
         torch.testing.assert_close(kspace[..., 0, k1 + 4, :], kdata.data[..., 0, line_idx, :])
-    assert not kspace[..., 0, [1, 2, 5, 7], :].any()
+    assert not kspace[..., 0, [1, 2, 5, 7], :].abs().any()
 
 
 def test_kdata_to_bart_cartesian_repeated_points(tmp_path: Path) -> None:
