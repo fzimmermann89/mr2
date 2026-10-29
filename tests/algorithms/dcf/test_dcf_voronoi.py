@@ -1,14 +1,16 @@
 """Tests for algorithms to calculate the DCF with voronoi."""
 
 import math
+from itertools import product
 
 import numpy as np
 import pytest
 import torch
 from einops import repeat
 from mr2.algorithms.dcf import dcf_1d, dcf_2d3d_voronoi
+from mr2.algorithms.dcf.dcf_voronoi import _cell_volumes_3d
 from mr2.data import KTrajectory
-from scipy.spatial import ConvexHull, HalfspaceIntersection
+from scipy.spatial import ConvexHull, HalfspaceIntersection, Voronoi
 
 
 def example_traj_rad_2d(n_kr, n_ka, phi0=0.0, broadcast=True):
@@ -230,7 +232,7 @@ def test_dcf_voronoi_repeated_points(ndim: int) -> None:
 
 
 def test_dcf_3d_voronoi_stack_of_stars() -> None:
-    """Cospherical stack-of-stars cells agree with their defining bisector halfspaces."""
+    """Stack-of-stars cells retain small aggregate error, allowing a few degenerate cells to differ."""
     angle = np.pi * np.arange(32) / 32
     radius = np.arange(-8, 8) + 0.5
     xy = (np.stack((np.cos(angle), np.sin(angle)), axis=1)[:, None] * radius[:, None]).reshape(-1, 2)
@@ -239,13 +241,17 @@ def test_dcf_3d_voronoi_stack_of_stars() -> None:
     points = points[np.random.default_rng(0).permutation(len(points))]
     dcf = dcf_2d3d_voronoi(torch.from_numpy(points.T)).numpy()
     inner = np.flatnonzero((np.linalg.norm(points[:, :2], axis=1) < 0.6) & (points[:, 2] == 1))
+    expected_volumes = []
     for index in inner:
         offset = np.delete(points - points[index], index, axis=0)
         distance = np.linalg.norm(offset, axis=1)
         # Relative to the sample, a Voronoi cell is the intersection of the neighbor bisector halfspaces.
         halfspaces = np.column_stack((offset / distance[:, None], -distance / 2))
         vertices = HalfspaceIntersection(halfspaces, np.zeros(3)).intersections
-        np.testing.assert_allclose(dcf[index], ConvexHull(vertices).volume, rtol=1e-6)
+        expected_volumes.append(ConvexHull(vertices).volume)
+    error = np.abs(dcf[inner] - expected_volumes)
+    assert error.sum() / np.sum(expected_volumes) < 0.01
+    assert np.quantile(error / expected_volumes, 0.9) < 1e-6
 
 
 def test_dcf_3d_voronoi_near_point_chain() -> None:
@@ -257,3 +263,38 @@ def test_dcf_3d_voronoi_near_point_chain() -> None:
     dcf = dcf_2d3d_voronoi(torch.cat((grid, extra), dim=1))
     total = dcf[index] + dcf[-20:].sum()
     torch.testing.assert_close(total, torch.tensor(1.0, dtype=total.dtype), rtol=1e-4, atol=0)
+
+
+@pytest.mark.parametrize('block_size', [7, 2**18])
+def test_dcf_3d_cell_volumes(block_size: int) -> None:
+    """Batched Delaunay volumes agree with independently constructed Voronoi cells."""
+    points = np.random.default_rng(0).uniform(-1, 1, (100, 3))
+    points = np.concatenate((points, np.array(list(product([-10.0, 10.0], repeat=3)))))
+    voronoi = Voronoi(points)
+    expected = np.array(
+        [ConvexHull(voronoi.vertices[voronoi.regions[region]]).volume for region in voronoi.point_region[:-8]]
+    )
+    np.testing.assert_allclose(_cell_volumes_3d(points, block_size)[:-8], expected, rtol=1e-10)
+
+
+@pytest.mark.parametrize('seed', [0, 1, 2])
+def test_dcf_3d_dense_cluster(seed: int) -> None:
+    """Dense clusters preserve their total volume despite precision errors in individual tiny cells."""
+    rng = np.random.default_rng(seed)
+    points = np.unique(
+        np.round(np.concatenate((rng.uniform(-1, 1, (1000, 3)), rng.uniform(-0.5, 0.5, (300, 3)) * 5e-5)), 15),
+        axis=0,
+    )
+    dcf = dcf_2d3d_voronoi(torch.from_numpy(points.T)).numpy()
+    inner = np.flatnonzero((np.abs(points) < 1e-4).all(1))
+    expected_volumes = []
+    for index in inner:
+        offset = np.delete(points - points[index], index, axis=0)
+        distance = np.linalg.norm(offset, axis=1)
+        scale = np.partition(distance, 5)[5]
+        halfspaces = np.column_stack((offset / distance[:, None], -distance / (2 * scale)))
+        vertices = HalfspaceIntersection(halfspaces, np.zeros(3)).intersections
+        expected = ConvexHull(vertices).volume * scale**3
+        expected_volumes.append(expected)
+    error = np.abs(dcf[inner] - expected_volumes).sum()
+    assert error / np.sum(expected_volumes) < 1e-5
