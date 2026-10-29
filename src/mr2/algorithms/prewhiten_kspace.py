@@ -24,6 +24,7 @@ def prewhiten_kspace(kdata: KData, knoise: KNoise, scale_factor: float | torch.T
     If the noise data has more samples in the 'other'-dimensions (batch/slice/...),
     the covariance matrix is calculated independently for each sample in these dimensions.
     Singleton leading dimensions in ``knoise`` are broadcast over matching dimensions in ``kdata``.
+    Noise is moved to the k-space device without modifying the supplied noise data.
 
     Parameters
     ----------
@@ -48,8 +49,14 @@ def prewhiten_kspace(kdata: KData, knoise: KNoise, scale_factor: float | torch.T
     .. [ROE1990] Roemer P, Mueller O (1990) The NMR phased array. MRM 16(2)
             https://doi.org/10.1002/mrm.1910160203
     """
+    whitened = _prewhiten_tensor(kdata.data, knoise) * (scale_factor**0.5)
+    return KData(deepcopy(kdata.header), whitened, deepcopy(kdata.traj))
+
+
+def _prewhiten_tensor(data: torch.Tensor, knoise: KNoise) -> torch.Tensor:
+    """Apply the inverse noise Cholesky factor to tensors shaped (..., coils, z, y, x)."""
     # Reshape noise to (..., coil, everything else)
-    noise = rearrange(knoise.data, '... coils k2 k1 k0 -> ... coils (k2 k1 k0)')
+    noise = rearrange(knoise.data.to(device=data.device), '... coils k2 k1 k0 -> ... coils (k2 k1 k0)')
 
     # Calculate noise covariance matrix and Cholesky decomposition
     noise_cov = (1.0 / (noise.shape[-1])) * einsum(
@@ -59,14 +66,7 @@ def prewhiten_kspace(kdata: KData, knoise: KNoise, scale_factor: float | torch.T
     cholsky = torch.linalg.cholesky(noise_cov)
 
     # solve_triangular is numerically more stable than inverting the matrix
-    kdata_flat = rearrange(kdata.data, '... coils k2 k1 k0 -> ... coils (k2 k1 k0)')
+    kdata_flat = rearrange(data, '... coils k2 k1 k0 -> ... coils (k2 k1 k0)')
     whitened = torch.linalg.solve_triangular(cholsky, kdata_flat, upper=False)
-    whitened = rearrange(
-        whitened, '... coil (k2 k1 k0) -> ... coil k2 k1 k0', **parse_shape(kdata.data, '... k2 k1 k0')
-    )
-    whitened = whitened * (scale_factor**0.5)
-    whitened = whitened.reshape(kdata.data.shape)
-    header = deepcopy(kdata.header)
-    traj = deepcopy(kdata.traj)
-
-    return KData(header, whitened, traj)
+    whitened = rearrange(whitened, '... coil (k2 k1 k0) -> ... coil k2 k1 k0', **parse_shape(data, '... k2 k1 k0'))
+    return whitened
