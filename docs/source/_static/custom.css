@@ -526,4 +526,25 @@ section.mr2-landing > h1 {
     dl.py > dd {
         margin-left: 0.25rem;
     }
+
+    dl.py:not(.field-list) > dt.sig {
+        font-size: 0.85em;
+    }
+
+    dl.py dt.sig dd {
+        padding-left: 0.75em;
+    }
+
+    /* Long inline formulas scroll instead of widening the page. */
+    span.math > mjx-container:not([display="true"]) {
+        display: inline-block;
+        max-width: 100%;
+        overflow-x: auto;
+        overflow-y: hidden;
+        vertical-align: middle;
+    }
+
+    .announcement-content {
+        font-size: var(--font-size--small--2);
+    }
 }
