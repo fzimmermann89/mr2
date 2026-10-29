@@ -124,13 +124,12 @@ def filter_noise(noise: torch.Tensor, windows: Sequence[torch.Tensor], dim: Sequ
     for window, axis in zip(windows, normalize_indices(noise.ndim, dim, unique=False), strict=True):
         if window.ndim != 1 or window.numel() != noise.shape[axis]:
             raise ValueError('Each window must be one-dimensional and match its Fourier axis.')
-        window = window.to(device=noise.device, dtype=noise.dtype)
         magnitude = window.abs().max()
         if not torch.isfinite(magnitude) or magnitude <= 0:
             raise ValueError('Fourier windows must have finite positive energy.')
         # Overall window amplitude cancels during energy normalization. Remove it
         # before multiplication and squaring to avoid underflow or overflow.
-        window = window / magnitude
+        window = (window / magnitude).to(device=noise.device, dtype=noise.dtype)
         combined[axis] = combined[axis] * window if axis in combined else window
     if not combined:
         return noise

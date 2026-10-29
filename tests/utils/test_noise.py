@@ -47,11 +47,13 @@ def test_noise_pair(device: str) -> None:
     torch.testing.assert_close((noisy - target) * scale, sigma.to(device) * gmap.to(device) * noise)
 
 
-@pytest.mark.parametrize('amplitude', [1e-30, 1e30])
-def test_filter_noise_window_scale(amplitude: float) -> None:
+@pytest.mark.parametrize(
+    ('amplitude', 'dtype'), [(1e-30, torch.float32), (1e30, torch.float32), (1e-50, torch.float64)]
+)
+def test_filter_noise_window_scale(amplitude: float, dtype: torch.dtype) -> None:
     """Tiny and large constant windows remain identity filters, including repeated axes."""
     noise = RandomGenerator(9).randn_tensor((4, 32), dtype=torch.complex64)
-    window = torch.full((32,), amplitude, dtype=torch.float32)
+    window = torch.full((32,), amplitude, dtype=dtype)
     torch.testing.assert_close(filter_noise(noise, (window, window), (-1, -1)), noise)
 
 
