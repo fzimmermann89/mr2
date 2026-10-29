@@ -1,11 +1,191 @@
-/* Default font size */
-html {
-    --pst-font-size-base: 15px;
+/* MR² documentation styling on top of the Furo theme. */
+
+body {
+    --mr2-surface: #f6f8fb;
+    --mr2-border: #dde3ea;
+    --mr2-accent: var(--color-brand-primary);
+    --mr2-radius: 6px;
+    --mystnb-source-bg-color: var(--mr2-surface);
+    --mystnb-source-border-color: var(--mr2-border);
+    --mystnb-source-border-radius: var(--mr2-radius);
+    --mystnb-source-margin-color: var(--color-brand-primary);
+    --mystnb-stdout-bg-color: var(--color-background-primary);
+    --mystnb-stdout-border-color: var(--mr2-border);
 }
 
-/* Adjust the width of the content window */
-.wy-nav-content {
-    max-width: 75% !important;
+@media (prefers-color-scheme: dark) {
+    body:not([data-theme="light"]) {
+        --mr2-surface: #1d2127;
+        --mr2-border: #333a44;
+    }
+}
+
+body[data-theme="dark"] {
+    --mr2-surface: #1d2127;
+    --mr2-border: #333a44;
+}
+
+/* ---------- Typography ---------- */
+
+article h1 {
+    font-size: 2.1em;
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+}
+
+article h2 {
+    font-size: 1.55em;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    margin-top: 2.2rem;
+    padding-top: 1.2rem;
+    border-top: 1px solid var(--mr2-border);
+}
+
+article h3 {
+    font-size: 1.2em;
+    font-weight: 650;
+}
+
+article h1 + section > h2:first-child,
+article section:first-child > h2:first-child {
+    border-top: none;
+    padding-top: 0;
+}
+
+/* Fully qualified API names are long; let them break instead of overflowing on small screens. */
+article h1,
+article h2,
+article h3,
+.sidebar-tree .reference,
+.toc-tree .reference {
+    overflow-wrap: anywhere;
+}
+
+.rubric {
+    font-size: 1.15em;
+    font-weight: 650;
+    margin-top: 2rem;
+    padding-bottom: 0.3rem;
+    border-bottom: 1px solid var(--mr2-border);
+}
+
+/* ---------- Links ---------- */
+
+article a.reference.external,
+article a.reference.internal {
+    text-decoration: none;
+}
+
+article p a.reference:hover,
+article li a.reference:hover,
+article td a.reference:hover {
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
+}
+
+/* ---------- Sidebar ---------- */
+
+.sidebar-brand {
+    padding: 1rem var(--sidebar-item-spacing-horizontal) 0.5rem;
+}
+
+.sidebar-logo {
+    max-width: 9rem;
+}
+
+.sidebar-tree .toctree-l1 > .reference {
+    font-weight: 600;
+}
+
+.sidebar-tree .reference {
+    line-height: 1.35;
+}
+
+/* API class and function names nested below their module */
+.sidebar-tree .toctree-l3 > .reference,
+.sidebar-tree .toctree-l4 > .reference,
+.sidebar-tree .toctree-l5 > .reference {
+    font-size: 0.85em;
+}
+
+/* ---------- API reference ---------- */
+
+/* Autosummary tables (modules, classes, functions) */
+table.autosummary {
+    width: 100%;
+    border: 1px solid var(--mr2-border);
+    border-radius: var(--mr2-radius);
+    border-collapse: separate;
+    border-spacing: 0;
+    overflow: hidden;
+}
+
+table.autosummary td {
+    border: none;
+    border-top: 1px solid var(--mr2-border);
+    padding: 0.45rem 0.75rem;
+    vertical-align: top;
+}
+
+table.autosummary tr:first-child td {
+    border-top: none;
+}
+
+table.autosummary td:first-child {
+    white-space: nowrap;
+}
+
+table.autosummary td:first-child code {
+    background: none;
+    border: none;
+    padding: 0;
+    font-weight: 600;
+}
+
+/* Signature boxes for classes, functions, methods, attributes */
+dl.py:not(.field-list) > dt.sig {
+    position: relative;
+    background: var(--mr2-surface);
+    border: 1px solid var(--mr2-border);
+    border-left: 3px solid var(--mr2-accent);
+    border-radius: var(--mr2-radius);
+    padding: 0.45rem 0.75rem;
+    text-indent: 0;
+    margin-left: 0;
+    margin-right: 0;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+dl.py:not(.field-list) > dt.sig:target {
+    background: var(--color-highlight-on-target);
+}
+
+dl.py.class > dt.sig,
+dl.py.function > dt.sig,
+dl.py.exception > dt.sig {
+    border-left-width: 4px;
+}
+
+dl.py.class > dd > dl.py > dt.sig {
+    border-left-color: var(--mr2-border);
+}
+
+/* Multi-line signatures: one parameter per line */
+dl.py dt.sig dl,
+dl.py dt.sig dd {
+    margin: 0;
+}
+
+dl.py dt.sig dd {
+    padding-left: 1.5em;
+}
+
+dl.py > dd {
+    margin-left: 1rem;
 }
 
 /* new line after each property */
@@ -13,8 +193,149 @@ dl.py.property {
     display: block !important;
 }
 
-/* example notebooks outputs */
-.output>.highlight {
-    background: #efefef !important;
-    color: inherit !important;
+/* Source links created by sphinx_github_style */
+.linkcode-link,
+.linkcode-link .pre {
+    font-family: var(--font-stack);
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: var(--color-foreground-muted);
+}
+
+dt.sig a:hover .linkcode-link {
+    color: var(--color-brand-content);
+}
+
+/* Parameter / returns field lists */
+dl.field-list > dt {
+    font-size: 0.8rem;
+    font-weight: 650;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--color-foreground-secondary);
+}
+
+/* ---------- Code and notebooks ---------- */
+
+div.highlight,
+.highlight pre {
+    background: var(--mr2-surface);
+    border-radius: var(--mr2-radius);
+}
+
+div[class*="highlight-"] {
+    border: 1px solid var(--mr2-border);
+    border-radius: var(--mr2-radius);
+}
+
+div.cell {
+    margin: 1.25rem 0;
+}
+
+div.cell div.cell_input div[class*="highlight-"] {
+    border: none;
+}
+
+div.cell div.cell_output {
+    margin-top: 0.4rem;
+}
+
+div.cell_output .output .highlight,
+div.cell_output .output pre {
+    background: var(--color-background-primary);
+}
+
+div.cell_output img {
+    display: block;
+    margin: 0.5rem auto;
+    max-width: 100%;
+    height: auto;
+    border-radius: 4px;
+}
+
+/* Matplotlib figures have white backgrounds; give them a matching plate in dark mode. */
+body[data-theme="dark"] div.cell_output img {
+    background: #fff;
+    padding: 0.25rem;
+}
+
+@media (prefers-color-scheme: dark) {
+    body:not([data-theme="light"]) div.cell_output img {
+        background: #fff;
+        padding: 0.25rem;
+    }
+}
+
+/* Collapsible (hide-cell) toggles */
+div.cell details.hide {
+    border: 1px solid var(--mr2-border);
+    border-radius: var(--mr2-radius);
+    background: var(--mr2-surface);
+    box-shadow: none;
+}
+
+div.cell details.hide > summary {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.9rem;
+    color: var(--color-foreground-secondary);
+    background: none;
+}
+
+div.cell details.hide > summary:hover {
+    color: var(--color-brand-content);
+}
+
+div.cell details.hide[open] > summary {
+    border-bottom: 1px solid var(--mr2-border);
+}
+
+div.cell details.hide > div.cell_input {
+    margin: 0;
+    border: none;
+    border-radius: 0 0 var(--mr2-radius) var(--mr2-radius);
+}
+
+/* ---------- Admonitions ---------- */
+
+.admonition {
+    border-radius: var(--mr2-radius);
+    box-shadow: none;
+}
+
+.admonition > .admonition-title {
+    font-weight: 650;
+}
+
+/* ---------- Tables ---------- */
+
+article table.docutils:not(.autosummary) {
+    border-radius: var(--mr2-radius);
+    box-shadow: none;
+    border: 1px solid var(--mr2-border);
+}
+
+/* ---------- Math ---------- */
+
+div.math,
+mjx-container[display="true"] {
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
+/* ---------- Small screens ---------- */
+
+@media (max-width: 40em) {
+    article h1 {
+        font-size: 1.7em;
+    }
+
+    table.autosummary td:first-child {
+        white-space: normal;
+        overflow-wrap: anywhere;
+        width: 45%;
+    }
+
+    dl.py > dd {
+        margin-left: 0.25rem;
+    }
 }
