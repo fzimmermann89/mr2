@@ -1,4 +1,9 @@
-"""Fourier noise correlation and noise-scaled image pairs."""
+"""Complex MRI noise augmentation.
+
+Use `noise_pair` to create a denoising training input and target from a calibrated
+image and supplied noise. Use `filter_noise` with the window builders to model
+spatial or temporal noise correlation before creating the pair.
+"""
 
 import math
 from collections.abc import Sequence
@@ -18,6 +23,9 @@ def gaussian_kspace_window(
     dtype: torch.dtype | None = None,
 ) -> torch.Tensor:
     """Create a Gaussian window on centered, normalized k-space coordinates.
+
+    Use with `filter_noise` to model smooth spatial or temporal noise correlation.
+    This filters the supplied noise, not the training image or target.
 
     Parameters
     ----------
@@ -55,6 +63,9 @@ def tapered_kspace_window(
     dtype: torch.dtype | None = None,
 ) -> torch.Tensor:
     """Create a supported Fourier window with optional raised-cosine transitions.
+
+    Use with `filter_noise` to model noise correlations from reduced resolution
+    (centered support) or partial-Fourier acquisition (asymmetric support).
 
     Parameters
     ----------
@@ -94,6 +105,10 @@ def tapered_kspace_window(
 
 def filter_noise(noise: torch.Tensor, windows: Sequence[torch.Tensor], dim: Sequence[int]) -> torch.Tensor:
     """Correlate complex noise with variance-preserving Fourier windows.
+
+    Use to prepare noise for `noise_pair`, or to study reconstruction noise
+    correlations. Spatial and temporal axes are treated alike. Apply g-factor
+    modulation after filtering; `noise_pair` handles that step.
 
     Parameters
     ----------
@@ -156,7 +171,18 @@ def noise_pair(
     sigma: float | torch.Tensor,
     gmap: float | torch.Tensor = 1.0,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Build a corrupted image and target using the released SNRAware scaling.
+    """Create a denoising training input and target using SNRAware scaling [XUE25]_.
+
+    This is the entry point for training-pair augmentation. Supply a calibrated
+    complex image, independent unit-component-variance noise, an added noise
+    level, and optionally a g-factor map. Use `filter_noise` first when correlated
+    noise is needed. Random noise levels, measured g-maps and image/map geometry
+    transforms are chosen by the caller.
+
+    The scaling preserves local component noise SD only when the input image's
+    baseline component SD already equals ``gmap``. It does not calibrate arbitrary
+    image intensities. Targets retain the original acquisition noise, and spatial
+    covariance need not be preserved.
 
     Parameters
     ----------
@@ -181,8 +207,34 @@ def noise_pair(
         ``(image + sigma*gmap*unit_noise)/sqrt(1+sigma**2)`` and
         ``image/sqrt(1+sigma**2)``. Keep the map unchanged when supplying it to a
         network. For baseline component SD s0(p), output component variance is
-        ``(s0(p)**2 + sigma**2*gmap(p)**2)/(1+sigma**2)``. This need not be unity,
-        nor preserve baseline spatial covariance. Targets retain acquisition noise.
+        ``(s0(p)**2 + sigma**2*gmap(p)**2)/(1+sigma**2)``.
+
+    Examples
+    --------
+    Create a pair with spatially correlated noise. Here ``image`` is a calibrated
+    complex tensor shaped ``(batch, frames, height, width)`` and ``gmap`` is a real
+    tensor broadcastable to that shape. Generate and filter on the full matrix
+    before cropping training patches.
+
+    >>> from mr2.utils import RandomGenerator
+    >>> from mr2.utils.noise import filter_noise, gaussian_kspace_window, noise_pair
+    >>> image = torch.ones(2, 4, 64, 64, dtype=torch.complex64)
+    >>> gmap = torch.ones(64, 64)
+    >>> rng = RandomGenerator(seed=42, device=image.device)
+    >>> unit_noise = 2**0.5 * rng.randn_like(image)
+    >>> window = gaussian_kspace_window(image.shape[-1], sigma=2.0)
+    >>> unit_noise = filter_noise(unit_noise, (window, window), dim=(-2, -1))
+    >>> noisy, target = noise_pair(image, unit_noise, sigma=4.0, gmap=gmap)
+
+    The factor ``sqrt(2)`` gives unit variance in each real component of PyTorch
+    complex Gaussian noise. ``sigma`` is then applied exactly once. For per-batch
+    noise levels, pass a tensor shaped ``(batch, 1, 1, 1)`` to broadcast over frames
+    and spatial axes. Without correlation, pass the sampled noise directly.
+
+    References
+    ----------
+    .. [XUE25] Xue et al. SNRAware: Improved Deep Learning MRI Denoising with SNR
+       Unit Training and G-factor Map Augmentation. https://arxiv.org/abs/2503.18162
     """
     if not image.is_complex() or not unit_noise.is_complex():
         raise ValueError('image and unit_noise must be complex.')
