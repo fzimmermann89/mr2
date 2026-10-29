@@ -7,6 +7,7 @@ import torch
 
 from mr2.operators.Functional import ElementaryProximableFunctional, throw_if_negative_or_complex
 from mr2.utils.reshape import normalize_indices
+from mr2.utils.vector_norm import vector_norm
 
 
 class L21Norm(ElementaryProximableFunctional):
@@ -90,7 +91,7 @@ class L21Norm(ElementaryProximableFunctional):
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor]:
         """Compute the sum or mean of weighted group norms."""
         diff, group, outer, _ = self._prepare(x)
-        value = torch.linalg.vector_norm(self.weight * diff, dim=group, keepdim=True)
+        value = vector_norm(self.weight * diff, dim=group, keepdim=True)
         if outer:
             value = value.mean(dim=outer, keepdim=True) if self.divide_by_n else value.sum(dim=outer, keepdim=True)
         if not self.keepdim:
@@ -126,7 +127,7 @@ class L21Norm(ElementaryProximableFunctional):
             raise ValueError('Proximal mappings cannot expand the input shape')
         sigma = sigma.to(device=x.device) if isinstance(sigma, torch.Tensor) else x.real.new_tensor(sigma)
         self._check_group_scalar(sigma, diff.shape, group, 'sigma')
-        norm = torch.linalg.vector_norm(diff, dim=group, keepdim=True)
+        norm = vector_norm(diff, dim=group, keepdim=True)
         threshold = sigma * radius
         denominator = torch.where(norm > 0, norm, 1)
         factor = torch.where(norm > threshold, 1 - threshold / denominator, 0)
@@ -163,7 +164,7 @@ class L21Norm(ElementaryProximableFunctional):
         sigma = sigma.to(device=x.device) if isinstance(sigma, torch.Tensor) else x.real.new_tensor(sigma)
         self._check_group_scalar(sigma, diff.shape, group, 'sigma')
         shifted = x - sigma * self.target
-        norm = torch.linalg.vector_norm(shifted, dim=group, keepdim=True)
+        norm = vector_norm(shifted, dim=group, keepdim=True)
         denominator = torch.maximum(norm, radius)
         factor = radius / torch.where(denominator > 0, denominator, 1)
         return (torch.where(sigma == 0, x, shifted * factor),)

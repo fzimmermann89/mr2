@@ -10,6 +10,7 @@ from math import log, sqrt
 import torch
 
 from mr2.utils.RandomGenerator import RandomGenerator
+from mr2.utils.vector_norm import vector_norm
 
 
 def sample_vmf(mu: torch.Tensor, kappa: float, n_samples: int, rng: RandomGenerator | None = None) -> torch.Tensor:
@@ -57,8 +58,8 @@ def sample_vmf(mu: torch.Tensor, kappa: float, n_samples: int, rng: RandomGenera
     weights = torch.cat(ws)[:total_samples].reshape(mu_.shape[:-1])
 
     v = rng.randn_tensor(mu_.shape, mu_.dtype, device=mu_.device)
-    orthogonal_vectors = v - (mu_ * v).sum(-1, keepdim=True) * mu_ / mu_.norm(dim=-1, keepdim=True)
-    orthonormal_vectors = orthogonal_vectors / orthogonal_vectors.norm(dim=-1, keepdim=True)
+    orthogonal_vectors = v - (mu_ * v).sum(-1, keepdim=True) * mu_ / vector_norm(mu_, dim=-1, keepdim=True)
+    orthonormal_vectors = orthogonal_vectors / vector_norm(orthogonal_vectors, dim=-1, keepdim=True)
     samples = orthonormal_vectors * (1.0 - weights**2).sqrt().unsqueeze(-1) + weights.unsqueeze(-1) * mu_
     if mu.dim() == 1:
         samples = samples.squeeze(-2)
