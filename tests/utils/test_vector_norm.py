@@ -33,3 +33,32 @@ def test_vector_norm_zero_gradient(dtype: torch.dtype, device: str) -> None:
     actual_gradient = torch.autograd.grad(actual.sum(), x)[0]
     expected_gradient = torch.autograd.grad(expected.sum(), x)[0]
     torch.testing.assert_close(actual_gradient, expected_gradient)
+
+
+@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
+def test_vector_norm_reduced_precision(dtype: torch.dtype) -> None:
+    """Preserve native accumulation precision when component squares overflow."""
+    x = torch.tensor([300, 400], dtype=dtype)
+    torch.testing.assert_close(vector_norm(x), torch.linalg.vector_norm(x))
+
+
+@pytest.mark.parametrize('dtype', [torch.int64, torch.bool])
+def test_vector_norm_rejects_nonfloating_input(dtype: torch.dtype) -> None:
+    """Reject input types unsupported by the native norm."""
+    with pytest.raises(RuntimeError, match='floating point or complex'):
+        vector_norm(torch.ones(3, dtype=dtype))
+
+
+def test_vector_norm_second_derivative() -> None:
+    """Preserve curvature at zero components of a nonzero complex vector."""
+    x = torch.tensor([[1.0, 0.0], [0.0, 0.0]], dtype=torch.float64)
+
+    def norm(x: torch.Tensor) -> torch.Tensor:
+        return vector_norm(torch.view_as_complex(x))
+
+    def reference(x: torch.Tensor) -> torch.Tensor:
+        return torch.linalg.vector_norm(torch.view_as_complex(x))
+
+    actual = torch.autograd.functional.hessian(norm, x)
+    expected = torch.autograd.functional.hessian(reference, x)
+    torch.testing.assert_close(actual, expected)
