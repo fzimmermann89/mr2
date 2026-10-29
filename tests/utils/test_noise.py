@@ -17,15 +17,14 @@ def test_noise_covariance() -> None:
     power = combined.square() / combined.square().mean()
     expected = 2 * torch.fft.ifft(torch.fft.ifftshift(power))
     # Circular complex noise has equal component variances and zero covariance at one pixel.
-    torch.testing.assert_close(
-        filtered.real.square().mean(), torch.tensor(1.0, dtype=torch.float64), atol=0.015, rtol=0
+    moments = torch.stack(
+        (
+            filtered.real.square().mean(),
+            filtered.imag.square().mean(),
+            (filtered.real * filtered.imag).mean(),
+        )
     )
-    torch.testing.assert_close(
-        filtered.imag.square().mean(), torch.tensor(1.0, dtype=torch.float64), atol=0.015, rtol=0
-    )
-    torch.testing.assert_close(
-        (filtered.real * filtered.imag).mean(), torch.tensor(0.0, dtype=torch.float64), atol=0.015, rtol=0
-    )
+    torch.testing.assert_close(moments, torch.tensor([1.0, 1.0, 0.0], dtype=torch.float64), atol=0.015, rtol=0)
     for lag in (0, 1, 3):
         observed = (filtered.roll(-lag, -1) * filtered.conj()).mean()
         torch.testing.assert_close(observed, expected[lag], atol=0.02, rtol=0)
@@ -50,3 +49,22 @@ def test_filter_noise_window_scale(amplitude: float) -> None:
     noise = RandomGenerator(9).randn_tensor((4, 32), dtype=torch.complex64)
     window = torch.full((32,), amplitude, dtype=torch.float32)
     torch.testing.assert_close(filter_noise(noise, (window, window), (-1, -1)), noise)
+
+
+def test_filter_noise_small_window_overlap() -> None:
+    """Complementary windows with tiny overlapping support still normalize to identity."""
+    noise = RandomGenerator(9).randn_tensor((4, 2), dtype=torch.complex64)
+    window = torch.tensor([1.0, 1e-24])
+    torch.testing.assert_close(filter_noise(noise, (window, window.flip(0)), (-1, -1)), noise)
+
+
+def test_noise_windows() -> None:
+    """Windows peak at FFT DC and taper only retained cut boundaries."""
+    torch.testing.assert_close(gaussian_kspace_window(4, 2), torch.tensor([-2.0, -0.5, 0.0, -0.5]).exp())
+    torch.testing.assert_close(gaussian_kspace_window(1, 2), torch.ones(1))
+    torch.testing.assert_close(gaussian_kspace_window(5, 0), torch.ones(5))
+    torch.testing.assert_close(
+        tapered_kspace_window(8, 2, 8, 2), torch.tensor([0.0, 0.0, 0.25, 0.75, 1.0, 1.0, 1.0, 1.0])
+    )
+    with pytest.raises(ValueError, match='overlapping'):
+        tapered_kspace_window(8, 2, 6, 3)

@@ -47,13 +47,11 @@ patches: using the same normalized window on a smaller matrix changes the
 correlation length. G-factor modulation is applied after filtering, matching the
 released code; the paper's description places modulation before filtering.
 
-The window builders use explicitly documented conventions rather than reproduce
-all upstream endpoint choices. Gaussian coordinates cover [-1,1], including both
-endpoints, with no forced zero first sample for even lengths. Its ``sigma`` is a
-frequency suppression strength, not an image-domain standard deviation. Tapered
-windows use a half-open retained interval and taper only its cut boundaries. See
-the function docstrings for the exact transition formula. Caller-supplied windows
-can reproduce other reconstruction filters.
+The window builders have explicit conventions rather than reproduce all upstream
+endpoints. Gaussian coordinates peak at FFT DC; ``sigma`` controls frequency
+suppression, not image-domain standard deviation. Tapered windows use half-open
+support and taper only cut boundaries. See the docstrings for exact coordinates
+and transition values; supplied windows can model other reconstruction filters.
 
 Noise-scaled pairs
 ------------------

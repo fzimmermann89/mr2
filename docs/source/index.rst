@@ -40,10 +40,10 @@ Content
    :maxdepth: 2
 
    user_guide
+   noise
    data
    examples
    contributor_guide
    api
    faq
-   noise
 

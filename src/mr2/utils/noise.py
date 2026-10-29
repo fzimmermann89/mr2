@@ -25,7 +25,8 @@ def gaussian_kspace_window(
         Length of the Fourier axis.
     sigma
         Nonnegative strength in ``exp(-0.5 * (sigma * coordinate)**2)``.
-        Coordinates run from -1 to 1, inclusive. Larger values suppress more
+        Coordinates are centered on the FFT DC sample with spacing
+        ``1 / max(size // 2, 1)``. Larger values suppress more
         high frequencies. Zero gives an all-ones window. This is not an
         image-domain Gaussian standard deviation.
     device
@@ -40,9 +41,7 @@ def gaussian_kspace_window(
     """
     if size < 1 or sigma < 0:
         raise ValueError('size must be positive and sigma must be nonnegative.')
-    coordinate = torch.linspace(-1, 1, size, device=device, dtype=dtype)
-    if size == 1:
-        coordinate = torch.zeros_like(coordinate)
+    coordinate = (torch.arange(size, device=device, dtype=dtype) - size // 2) / max(size // 2, 1)
     return gaussian_window(sigma * coordinate, width=math.sqrt(8 * math.log(2)))
 
 
@@ -138,9 +137,13 @@ def filter_noise(noise: torch.Tensor, windows: Sequence[torch.Tensor], dim: Sequ
     transform = FastFourierOp(dim=tuple(combined))
     (spectrum,) = transform(noise)
     for axis, window in combined.items():
-        energy = window.abs().square().mean()
-        if not torch.isfinite(energy) or energy <= 0:
+        magnitude = window.abs().max()
+        if not torch.isfinite(magnitude) or magnitude <= 0:
             raise ValueError('Fourier windows must have finite positive energy.')
+        # Repeated windows can have small overlapping support even when each
+        # individual window has unit peak magnitude.
+        window = window / magnitude
+        energy = window.abs().square().mean()
         shape = [1] * noise.ndim
         shape[axis] = window.numel()
         spectrum = spectrum * (window / energy.sqrt()).reshape(shape)
