@@ -4,11 +4,13 @@ Examples
 Each notebook includes data acquisition and plotting cells, with a Colab
 badge for running it in a browser. Downloads need network access and local
 storage. The B0 correction notebook generates a phantom instead.
+The Colab install cell installs the PyPI release if ``mr2`` is absent. For
+APIs only available on main, replace it with the GitHub installation from
+:doc:`user_guide`.
 
 Start with a direct reconstruction on CPU. Before running an iterative
 reconstruction or parameter fit, check the iteration counts and tensor sizes;
-runtime and memory use depend on those settings and your machine. Colab GPU
-metadata alone doesn't establish a GPU requirement.
+runtime and memory use depend on those settings and your machine.
 
 Getting started
 ---------------
@@ -64,4 +66,5 @@ Learning and differentiable optimization
 The quantitative imaging notebooks use autograd to fit signal models through
 a composed loss. For learned reconstruction, :doc:`operators` explains how
 to keep gradients through an acquisition model and manage tuple outputs.
-`mr2.nn` provides neural network components that return tensors.
+``mr2.nn`` provides neural network components; check each module's return
+type, since some return a tensor and others return tuples.

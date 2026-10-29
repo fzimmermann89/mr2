@@ -64,7 +64,8 @@ The plot displays the reconstructed magnitude image. Direct reconstruction
 estimates density compensation and coil sensitivity maps, then applies the
 adjoint Fourier transform and combines coils. The returned `mr2.data.IData`
 stores the complex image in ``img.data`` and its metadata in ``img.header``.
-For display, ``rss()`` computes root-sum-of-squares over coils and ``[0, 0]``
+Here coil combination has already produced a singleton coil axis. For
+display, ``rss()`` takes the magnitude and removes that axis; ``[0, 0]``
 selects the first image and z plane.
 
 Compare the result with

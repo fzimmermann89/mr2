@@ -52,9 +52,9 @@ below without downloading data. These values don't simulate an MR signal.
         header=header, traj=traj,
         data=torch.randn(2, 4, 1, 8, 16, dtype=torch.complex64),
     )
-    print(kdata.shape)                         # (2, 4, 1, 8, 16)
-    print(kdata.traj.shape)                    # (1, 1, 1, 8, 16)
-    print(kdata.header.acq_info.idx.k1.shape)   # (1, 1, 1, 8, 1)
+    print(kdata.shape)                         # torch.Size([2, 4, 1, 8, 16])
+    print(kdata.traj.shape)                    # torch.Size([1, 1, 1, 8, 16])
+    print(kdata.header.acq_info.idx.k1.shape)   # torch.Size([1, 1, 1, 8, 1])
 
 Indexing the whole object
 -------------------------
@@ -119,8 +119,9 @@ an incomplete trailing window. With dilation, the span is
 ``stack`` adds a first axis; identical repeated fields can reduce back to
 singleton, as elsewhere in dataclasses.
 ``concatenate`` joins an existing axis, broadcasts tensor fields on other axes,
-joins lists and keeps other fields from the first object. Check geometry,
-timing and other metadata yourself before joining acquisitions.
+joins lists, and concatenates fields that support it, such as
+`mr2.data.Rotation`. It keeps remaining fields from the first object.
+Check geometry, timing and other metadata yourself before joining acquisitions.
 
 Device, precision and gradients
 -------------------------------
@@ -133,8 +134,8 @@ Device, precision and gradients
     assert double.header.acq_info.idx.k1.dtype == torch.int64
     detached = kdata.detach()
     copied = kdata.clone()
-    absolute = kdata.apply(
-        lambda value: value.abs() if isinstance(value, torch.Tensor) else value
+    contiguous = kdata.apply(
+        lambda value: value.contiguous() if isinstance(value, torch.Tensor) else value
     )
 
 ``to`` moves nested tensors and changes floating-point precision while
@@ -143,7 +144,8 @@ precision of complex fields too, preserving their imaginary parts. ``to`` may sh
 tensors; ``clone`` copies tensor storage and preserves autograd connections.
 ``detach`` removes gradient tracking but can share storage. ``apply`` clones
 and transforms fields recursively; ``apply_`` changes the object in place.
-A callback receives non-tensor fields too, so return them unchanged when appropriate.
+The callback receives every nested field, including trajectory and header
+tensors. Return non-tensor fields unchanged when appropriate.
 
 Storage and interchange
 -----------------------
