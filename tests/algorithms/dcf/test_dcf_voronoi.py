@@ -1,12 +1,17 @@
 """Tests for algorithms to calculate the DCF with voronoi."""
 
 import math
+from itertools import product
+from unittest.mock import patch
 
+import numpy as np
 import pytest
 import torch
 from einops import repeat
 from mr2.algorithms.dcf import dcf_1d, dcf_2d3d_voronoi
+from mr2.algorithms.dcf.dcf_voronoi import _cell_volumes_3d
 from mr2.data import KTrajectory
+from scipy.spatial import ConvexHull, Delaunay, HalfspaceIntersection, Voronoi
 
 
 def example_traj_rad_2d(n_kr, n_ka, phi0=0.0, broadcast=True):
@@ -193,3 +198,130 @@ def test_dcf_voronoi_float64(device: str, ndim: int) -> None:
     assert result.shape == traj.shape[1:]
     assert (result.isfinite() & (result > 0)).all()
     torch.testing.assert_close(result.float(), dcf_2d3d_voronoi(traj.float()), rtol=1e-4, atol=1e-6)
+
+
+@pytest.mark.parametrize('offset', [1e-6, 1e-12])
+def test_dcf_3d_voronoi_near_duplicate(offset: float) -> None:
+    """A second point very close to a grid point shares the cell of that grid point.
+
+    The public function merges the 1e-12 pair before Qhull; the 1e-6 pair remains separate.
+    """
+    grid = torch.stack(torch.meshgrid(*[torch.arange(6.0, dtype=torch.float64)] * 3, indexing='ij')).reshape(3, -1)
+    index = 3 * 36 + 3 * 6 + 2
+    extra = grid[:, index : index + 1] + torch.tensor([[offset], [0.0], [0.0]], dtype=torch.float64)
+    dcf = dcf_2d3d_voronoi(torch.cat((grid, extra), dim=1)[:, None, None, :]).ravel()
+    torch.testing.assert_close(dcf[[index, -1]], torch.full((2,), 0.5, dtype=torch.float64), rtol=0, atol=1e-5)
+    torch.testing.assert_close(dcf[index - 1], torch.tensor(1.0, dtype=torch.float64), rtol=0, atol=1e-5)
+
+
+@pytest.mark.parametrize('ndim', [2, 3])
+def test_dcf_voronoi_repeated_points(ndim: int) -> None:
+    """Repeated and nearly coincident samples preserve the total weight of their cell."""
+    grid = torch.stack(torch.meshgrid(*[torch.arange(6.0, dtype=torch.float64)] * ndim, indexing='ij')).reshape(
+        ndim, -1
+    )
+    index = int((grid == 3).all(dim=0).nonzero().item())
+    extra = grid[:, index : index + 1].repeat(1, 3)
+    if ndim == 3:
+        extra[0, -1] += 1e-12
+    reference = dcf_2d3d_voronoi(grid)
+    dcf = dcf_2d3d_voronoi(torch.cat((grid, extra), dim=1)[:, None, None, :]).ravel()
+    repeated = torch.tensor([index, grid.shape[1], grid.shape[1] + 1, grid.shape[1] + 2])
+    torch.testing.assert_close(dcf[repeated], reference[index].expand(4) / 4)
+    keep = torch.arange(grid.shape[1]) != index
+    torch.testing.assert_close(dcf[: grid.shape[1]][keep], reference[keep])
+
+
+def test_dcf_3d_voronoi_stack_of_stars() -> None:
+    """Stack-of-stars cells retain small aggregate error, allowing a few degenerate cells to differ."""
+    angle = np.pi * np.arange(32) / 32
+    radius = np.arange(-8, 8) + 0.5
+    xy = (np.stack((np.cos(angle), np.sin(angle)), axis=1)[:, None] * radius[:, None]).reshape(-1, 2)
+    points = np.concatenate([np.column_stack((xy, np.full(len(xy), z))) for z in range(-3, 3)])
+    points = np.round(points, 9)
+    points = points[np.random.default_rng(0).permutation(len(points))]
+    dcf = dcf_2d3d_voronoi(torch.from_numpy(points.T)).numpy()
+    # Sample across an interior slice so a few central cells do not dominate the aggregate error.
+    inner = np.flatnonzero((np.linalg.norm(points[:, :2], axis=1) < 6) & (points[:, 2] == 1))
+    expected_volumes = []
+    for index in inner:
+        offset = np.delete(points - points[index], index, axis=0)
+        distance = np.linalg.norm(offset, axis=1)
+        # Relative to the sample, a Voronoi cell is the intersection of the neighbor bisector halfspaces.
+        halfspaces = np.column_stack((offset / distance[:, None], -distance / 2))
+        vertices = HalfspaceIntersection(halfspaces, np.zeros(3)).intersections
+        expected_volumes.append(ConvexHull(vertices).volume)
+    error = np.abs(dcf[inner] - expected_volumes)
+    assert error.sum() / np.sum(expected_volumes) < 0.01
+    assert np.quantile(error / expected_volumes, 0.9) < 1e-6
+
+
+def test_dcf_3d_voronoi_near_point_chain() -> None:
+    """A chain of close points preserves the total volume, including cells shared by Qhull."""
+    grid = torch.stack(torch.meshgrid(*[torch.arange(6.0, dtype=torch.float64)] * 3, indexing='ij')).reshape(3, -1)
+    index = 3 * 36 + 3 * 6 + 2
+    extra = grid[:, index : index + 1].repeat(1, 20)
+    extra[0] += torch.arange(1, 21, dtype=torch.float64) * 3e-7
+    dcf = dcf_2d3d_voronoi(torch.cat((grid, extra), dim=1))
+    total = dcf[index] + dcf[-20:].sum()
+    torch.testing.assert_close(total, torch.tensor(1.0, dtype=total.dtype), rtol=1e-4, atol=0)
+
+
+@pytest.mark.parametrize('block_size', [7, 2**18])
+def test_dcf_3d_cell_volumes(block_size: int) -> None:
+    """Batched Delaunay volumes agree with independently constructed Voronoi cells."""
+    points = np.random.default_rng(0).uniform(-1, 1, (100, 3))
+    points = np.concatenate((points, np.array(list(product([-10.0, 10.0], repeat=3)))))
+    voronoi = Voronoi(points)
+    expected = np.array(
+        [ConvexHull(voronoi.vertices[voronoi.regions[region]]).volume for region in voronoi.point_region[:-8]]
+    )
+    np.testing.assert_allclose(_cell_volumes_3d(points, block_size)[:-8], expected, rtol=1e-10)
+
+
+def test_dcf_3d_cell_volumes_qhull_coincident() -> None:
+    """Points omitted by Qhull share their owner's cell volume."""
+    grid = np.stack(np.meshgrid(*[np.arange(6.0)] * 3, indexing='ij')).reshape(3, -1).T
+    index = 3 * 36 + 3 * 6 + 2
+    corners = np.array(list(product([-100.0, 100.0], repeat=3)))
+    points = np.concatenate((grid, grid[index : index + 1] + np.array([1e-14, 0, 0]), corners))
+    coplanar = Delaunay(points).coplanar
+    # Qhull may keep either point, but must identify this specific pair as coincident.
+    pair = np.sort(coplanar[:, [0, 2]], axis=1)
+    assert np.any(np.all(pair == [index, len(grid)], axis=1))
+    volumes = _cell_volumes_3d(points)
+    np.testing.assert_allclose(volumes[[index, len(grid)]], 0.5, rtol=0, atol=1e-5)
+
+
+def test_dcf_3d_cell_volumes_cartesian() -> None:
+    """A regular grid keeps unit interior volumes without per-cell hull calculations."""
+    grid = np.stack(np.meshgrid(*[np.arange(6.0)] * 3, indexing='ij')).reshape(3, -1).T
+    corners = np.array(list(product([-100.0, 100.0], repeat=3)))
+    with patch('mr2.algorithms.dcf.dcf_voronoi.ConvexHull', wraps=ConvexHull) as hull:
+        volumes = _cell_volumes_3d(np.concatenate((grid, corners)))
+    inner = ((grid > 0) & (grid < 5)).all(axis=1)
+    np.testing.assert_allclose(volumes[:-8][inner], 1, rtol=1e-10)
+    hull.assert_not_called()
+
+
+@pytest.mark.parametrize('seed', [0, 1, 2])
+def test_dcf_3d_dense_cluster(seed: int) -> None:
+    """Dense clusters preserve their total volume despite precision errors in individual tiny cells."""
+    rng = np.random.default_rng(seed)
+    points = np.unique(
+        np.round(np.concatenate((rng.uniform(-1, 1, (1000, 3)), rng.uniform(-0.5, 0.5, (300, 3)) * 5e-5)), 15),
+        axis=0,
+    )
+    dcf = dcf_2d3d_voronoi(torch.from_numpy(points.T)).numpy()
+    inner = np.flatnonzero((np.abs(points) < 1e-4).all(1))
+    expected_volumes = []
+    for index in inner:
+        offset = np.delete(points - points[index], index, axis=0)
+        distance = np.linalg.norm(offset, axis=1)
+        scale = np.partition(distance, 5)[5]
+        halfspaces = np.column_stack((offset / distance[:, None], -distance / (2 * scale)))
+        vertices = HalfspaceIntersection(halfspaces, np.zeros(3)).intersections
+        expected = ConvexHull(vertices).volume * scale**3
+        expected_volumes.append(expected)
+    error = np.abs(dcf[inner] - expected_volumes).sum()
+    assert error / np.sum(expected_volumes) < 1e-5
