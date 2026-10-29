@@ -7,7 +7,8 @@ def vector_norm(x: torch.Tensor, dim: int | tuple[int, ...] | None = None, keepd
     """Compute Euclidean norms with zero gradients at zero vectors.
 
     Use real and imaginary squares for complex64/complex128 inputs on CPU.
-    Other inputs use the native norm.
+    Other inputs use the native norm. Reduction rounding can depend on input
+    batching. Component squares can underflow or overflow at extreme magnitudes.
 
     Parameters
     ----------

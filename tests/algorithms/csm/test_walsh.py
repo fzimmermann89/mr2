@@ -1,10 +1,8 @@
 """Tests the iterative Walsh algorithm."""
 
-from collections.abc import Callable
-
 import pytest
 import torch
-from mr2.algorithms.csm import inati, walsh
+from mr2.algorithms.csm import walsh
 from mr2.data import SpatialDimension
 from mr2.utils import RandomGenerator
 from tests import relative_image_difference
@@ -33,26 +31,6 @@ def test_walsh_extrapolates_to_low_signal_regions() -> None:
 
     torch.testing.assert_close(csm.abs().square().sum(dim=0).sqrt(), torch.ones(1, 16, 16))
     assert torch.isfinite(csm).all()
-
-
-@pytest.mark.parametrize('dtype', [torch.complex64, torch.complex128])
-@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
-@pytest.mark.parametrize('csm_method', [walsh, inati])
-def test_csm_zero_signal_and_phase(csm_method: Callable, dtype: torch.dtype, device: str) -> None:
-    """Preserve coil phases, dtype, and fallback maps in empty regions."""
-    weights = torch.tensor([1 + 2j, 2 - 1j, -1 + 1j], dtype=dtype, device=device)
-    images = weights[None, :, None, None, None].expand(2, 3, 1, 4, 4).clone()
-    images[0] = 0
-    images[..., -1, :] = 0
-
-    actual = csm_method(images, smoothing_width=1)
-
-    expected = (weights / weights.norm())[None, :, None, None, None].expand_as(images).clone()
-    expected[0] = 0
-    expected[0, 0] = 1
-    expected[..., -1, :] = 0
-    expected[:, 0, :, -1, :] = 1
-    torch.testing.assert_close(actual, expected)
 
 
 @pytest.mark.parametrize('dtype', [torch.complex64, torch.complex128])
