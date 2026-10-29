@@ -19,7 +19,7 @@ different singleton axes. For a Cartesian trajectory, ``kx`` can vary along
 ``k0`` while ``ky`` varies along ``k1``. Dataclasses can reduce repeated values
 to singleton axes to save storage.
 
-Physical quantities use SI units: metres, seconds and radians. Matrix sizes
+Physical quantities use SI units: meters, seconds and radians. Matrix sizes
 and acquisition indices are counts. Trajectory coordinates use encoding-grid
 units: a full Cartesian axis of length 128 normally spans -64 through 63.
 `mr2.data.SpatialDimension` is a dataclass with ``z``, ``y`` and ``x`` fields.

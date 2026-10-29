@@ -50,7 +50,7 @@ import mr2
 
 # Use your ISMRMRD file with its stored trajectory.
 trajectory = mr2.data.traj_calculators.KTrajectoryIsmrmrd()
-kdata = mr2.data.KData.from_file("acquisition.h5", trajectory)
+kdata = mr2.data.KData.from_file('acquisition.h5', trajectory)
 reconstruction = mr2.algorithms.reconstruction.DirectReconstruction(kdata)
 img = reconstruction(kdata)  # IData: complex image tensor and image header
 ```
