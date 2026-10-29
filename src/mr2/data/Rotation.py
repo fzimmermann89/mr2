@@ -59,9 +59,11 @@ from typing_extensions import Self, Unpack, overload
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.utils import RandomGenerator
 from mr2.utils.indexing import Indexer
+from mr2.utils.reciprocal_vector_norm import reciprocal_vector_norm
 from mr2.utils.reduce_repeat import reduce_repeat
 from mr2.utils.reshape import broadcasted_rearrange, normalize_indices
 from mr2.utils.typing import NestedSequence, TorchIndexerType
+from mr2.utils.vector_norm import vector_norm
 from mr2.utils.vmf import sample_vmf
 
 AXIS_ORDER = 'zyx'  # This can be modified
@@ -197,8 +199,8 @@ def _quaternion_to_axis_angle(quaternion: torch.Tensor, degrees: bool = False) -
         The rotation angle, shape (...)
     """
     quaternion = _canonical_quaternion(quaternion)
-    angle = 2 * torch.atan2(torch.linalg.vector_norm(quaternion[..., :3], dim=-1), quaternion[..., 3])
-    axis = quaternion[..., :3] / torch.linalg.vector_norm(quaternion[..., :3], dim=-1, keepdim=True)
+    angle = 2 * torch.atan2(vector_norm(quaternion[..., :3], dim=-1), quaternion[..., 3])
+    axis = quaternion[..., :3] * reciprocal_vector_norm(quaternion[..., :3], dim=-1, keepdim=True)
     if degrees:
         angle = torch.rad2deg(angle)
     return axis, angle
@@ -294,7 +296,7 @@ def _align_vectors(
         raise ValueError(f'Expected inputs to have shape (..., 3), got {a.shape} and {b.shape}')
     if weights.shape != (n_vecs,) or (weights < 0).any():
         raise ValueError(f'Invalid weights: expected shape ({n_vecs},) with non-negative values')
-    if (a.norm(dim=-1) < 1e-6).any() or (b.norm(dim=-1) < 1e-6).any():
+    if (vector_norm(a, dim=-1) < 1e-6).any() or (vector_norm(b, dim=-1) < 1e-6).any():
         raise ValueError('Cannot align zero length primary vectors')
     dtype = torch.result_type(a, b)
     # we require double precision for the calculations to match scipy results
@@ -315,7 +317,7 @@ def _align_vectors(
         a_primary, b_primary = (a[0], b[0]) if n_vecs == 1 else (a[inf_mask][0], b[inf_mask][0])
         a_primary, b_primary = F.normalize(a_primary, dim=0), F.normalize(b_primary, dim=0)
         cross = torch.linalg.cross(b_primary, a_primary, dim=0)
-        angle = torch.atan2(torch.norm(cross), torch.dot(a_primary, b_primary))
+        angle = torch.atan2(vector_norm(cross), torch.dot(a_primary, b_primary))
         rot_primary = _axisangle_to_matrix(cross, angle)
 
         if n_vecs == 1:
@@ -472,10 +474,11 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
             self._single = False
 
         if normalize:
-            norms = torch.linalg.vector_norm(quaternions_, dim=-1, keepdim=True)
+            inverse_norms = reciprocal_vector_norm(quaternions_, dim=-1, keepdim=True)
+            norms = inverse_norms.reciprocal()
             if torch.any(torch.isclose(norms.float(), torch.tensor(0.0))):
                 raise ValueError('Found zero norm quaternion in `quaternions`.')
-            quaternions_ = quaternions_ / norms
+            quaternions_ = quaternions_ * inverse_norms
         elif copy:
             # no need to clone if we are normalizing
             quaternions_ = quaternions_.clone()
@@ -711,7 +714,7 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         if rotvec_.shape[-1] != 3:
             raise ValueError(f'Expected `rot_vec` to have shape (..., 3), got {rotvec_.shape}')
 
-        angles = torch.linalg.vector_norm(rotvec_, dim=-1, keepdim=True)
+        angles = vector_norm(rotvec_, dim=-1, keepdim=True)
         scales = torch.special.sinc(angles / (2 * torch.pi)) / 2
         quaternions = torch.cat((scales * rotvec_, torch.cos(angles / 2)), -1)
         if reflection_.any():
@@ -994,7 +997,7 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
             quaternions, is_improper = self.as_quat(canonical=True, improper=improper)
         else:
             quaternions, is_improper = self.as_quat(canonical=True, improper=improper), None
-        angles = 2 * torch.atan2(torch.linalg.vector_norm(quaternions[..., :3], dim=-1), quaternions[..., 3])
+        angles = 2 * torch.atan2(vector_norm(quaternions[..., :3], dim=-1), quaternions[..., 3])
         scales = 2 / (torch.special.sinc(angles / (2 * torch.pi)))
         rotvec = scales[..., None] * quaternions[..., :3]
         if degrees:
@@ -1602,9 +1605,7 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
         magnitude
             Angles in radians. The magnitude will always be in the range ``[0, pi]``.
         """
-        angles = 2 * torch.atan2(
-            torch.linalg.vector_norm(self._quaternions[..., :3], dim=-1), torch.abs(self._quaternions[..., 3])
-        )
+        angles = 2 * torch.atan2(vector_norm(self._quaternions[..., :3], dim=-1), torch.abs(self._quaternions[..., 3]))
         if self._single:
             angles = angles[0]
         return angles

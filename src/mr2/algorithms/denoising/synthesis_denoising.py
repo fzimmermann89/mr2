@@ -11,6 +11,7 @@ from mr2.data import IData
 from mr2.operators import IdentityOp, LinearOperator
 from mr2.operators.functionals import L1Norm, L2NormSquared
 from mr2.utils import RandomGenerator
+from mr2.utils.vector_norm import vector_norm
 
 Image = TypeVar('Image', torch.Tensor, IData)
 
@@ -125,8 +126,9 @@ def synthesis_denoising(
     def stop(status: PGDStatus) -> bool:
         nonlocal previous
         current = status['solution'][0]
-        change = torch.linalg.vector_norm(current - previous)
-        scale = torch.linalg.vector_norm(current)
+        # Explicit magnitude reductions avoid slow complex norms on CPU.
+        change = vector_norm(current - previous)
+        scale = vector_norm(current)
         previous = current
         return bool(change > tolerance * scale)
 

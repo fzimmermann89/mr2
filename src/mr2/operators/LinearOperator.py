@@ -13,6 +13,7 @@ from typing_extensions import Any, Unpack, overload
 
 import mr2.operators
 from mr2.operators.Operator import Operator, OperatorComposition, OperatorSum, Tin2
+from mr2.utils.reciprocal_vector_norm import reciprocal_vector_norm
 
 
 class _AutogradWrapper(torch.autograd.Function):
@@ -178,8 +179,9 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
 
         dim = tuple(dim) if dim is not None else dim  # must be tuple or None for torch.sum
 
-        norm_initial_value = torch.linalg.vector_norm(initial_value, dim=dim, keepdim=True)
-        if not (norm_initial_value > 0).all():
+        # Explicit magnitude reductions and rsqrt avoid slow complex norms on CPU.
+        inverse_norm_initial_value = reciprocal_vector_norm(initial_value, dim=dim, keepdim=True)
+        if not torch.isfinite(inverse_norm_initial_value).all():
             if dim is None:
                 raise ValueError('The initial value for the iteration should be different from the zero-vector.')
             else:
@@ -193,11 +195,11 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
         # operator norm is a strictly positive number. This ensures that the first time the
         # change between the old and the new estimate of the operator norm is non-zero and
         # thus prevents the loop from exiting despite a non-correct estimate.
-        op_norm_old = torch.zeros_like(norm_initial_value)
+        op_norm_old = torch.zeros_like(inverse_norm_initial_value)
 
         gram = self.gram  # self.H@self
 
-        vector = initial_value / norm_initial_value
+        vector = initial_value * inverse_norm_initial_value
         for _ in range(max_iterations):
             # apply the operator to the vector
             (vector_new,) = gram(vector)
@@ -215,7 +217,7 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
                 break
 
             # normalize vector
-            vector = vector_new / torch.linalg.vector_norm(vector_new, dim=dim, keepdim=True)
+            vector = vector_new * reciprocal_vector_norm(vector_new, dim=dim, keepdim=True)
             op_norm_old = op_norm
 
             if callback is not None:

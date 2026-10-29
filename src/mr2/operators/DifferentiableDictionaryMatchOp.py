@@ -183,6 +183,7 @@ class DifferentiableDictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]
         y = y.flatten(start_dim=1)
 
         x_list = [t.flatten() for t in torch.broadcast_tensors(*x_stored)]
+        # Keep the native norm: explicit reductions change complex64 refinement results.
         norm_y = y.norm(dim=0)
         if (norm_y < 1e-12).any():
             raise ValueError('Dictionary entries must have non-zero norm.')

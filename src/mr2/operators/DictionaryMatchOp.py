@@ -7,6 +7,7 @@ import torch
 from typing_extensions import Self, TypeVarTuple, Unpack
 
 from mr2.operators.Operator import Operator
+from mr2.utils.reciprocal_vector_norm import reciprocal_vector_norm
 from mr2.utils.TensorList import TensorList
 
 Tin = TypeVarTuple('Tin')
@@ -100,7 +101,8 @@ class DictionaryMatchOp(Operator[torch.Tensor, tuple[Unpack[Tin]]]):
             x_list = [x.flatten() for x in torch.broadcast_tensors(*x)]
 
         y = y.flatten(start_dim=1)
-        inverse_norm_y = torch.linalg.norm(y, dim=0).reciprocal()
+        # Explicit magnitude reductions and rsqrt are faster for complex signals on CPU.
+        inverse_norm_y = reciprocal_vector_norm(y, dim=0)
         if not (torch.isfinite(inverse_norm_y) & (inverse_norm_y > 0)).all():
             raise ValueError('Dictionary signals must have finite, positive inverse norms.')
         y = y * inverse_norm_y

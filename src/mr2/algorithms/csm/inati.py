@@ -6,6 +6,7 @@ from einops import einsum
 from mr2.algorithms.csm.extrapolate import extrapolate_csm
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.utils.filters import uniform_filter
+from mr2.utils.reciprocal_vector_norm import reciprocal_vector_norm
 
 
 def inati(
@@ -80,19 +81,19 @@ def inati(
         raise ValueError('kernel_size must be odd')
 
     d_sum = torch.sum(coil_img, dim=(-3, -2, -1))
-    d_sum /= d_sum.norm(dim=-1, keepdim=True) + eps
+    d_sum *= reciprocal_vector_norm(d_sum, dim=-1, keepdim=True, eps=eps)
     combined_img = einsum(d_sum.conj(), coil_img, '... c, ... c z y x -> ... z y x')
 
     for _ in range(n_iterations):
         csm = coil_img * combined_img.conj().unsqueeze(-4)
         csm = uniform_filter(csm, width=smoothing_width.zyx, dim=(-3, -2, -1))
         # Explicit magnitude reductions are faster than complex norms on CPU.
-        csm /= csm.abs().square().sum(dim=-4, keepdim=True).sqrt() + eps
+        csm *= reciprocal_vector_norm(csm, dim=-4, keepdim=True, eps=eps)
 
         combined_img = einsum(coil_img, csm.conj(), '... c z y x, ... c z y x -> ... z y x')
 
         d_sum = (csm * combined_img.unsqueeze(-4)).sum(dim=(-3, -2, -1))
-        d_sum /= d_sum.norm(dim=-1, keepdim=True) + eps
+        d_sum *= reciprocal_vector_norm(d_sum, dim=-1, keepdim=True, eps=eps)
 
         phase = einsum(d_sum.conj(), csm, '... c, ... c z y x -> ... z y x').angle()
         combined_img *= torch.exp(1j * phase)
@@ -102,9 +103,9 @@ def inati(
         confidence = coil_img.abs().square().sum(dim=-4).sqrt()
         csm = extrapolate_csm(csm, confidence, smoothing_width)
 
-    norm = csm.abs().square().sum(dim=-4, keepdim=True).sqrt()
+    inverse_norm = reciprocal_vector_norm(csm, dim=-4, keepdim=True)
     fallback = torch.zeros_like(csm)
     fallback[..., 0, :, :, :] = 1
-    valid = torch.isfinite(norm) & (norm > eps)
-    csm = csm / norm.clamp_min(eps)
+    valid = torch.isfinite(inverse_norm) & (inverse_norm > 0) & (inverse_norm < 1 / eps)
+    csm = csm * inverse_norm.clamp_max(1 / eps)
     return torch.where(valid.expand_as(csm), csm, fallback)
