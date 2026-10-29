@@ -68,6 +68,8 @@ def check_distinct_outputs(*filenames: str | PathLike) -> None:
 
     ``name.cfl`` and ``name.hdr`` both refer to the same ``.hdr``/``.cfl`` pair.
     """
+    for filename in filenames:
+        _check_suffix(Path(filename))
     paths = [
         {path.resolve() for path in (_cfl_paths(name) if name.suffix.lower() != '.ra' else (name,))}
         for name in map(Path, filenames)
@@ -115,6 +117,8 @@ def read_bart(filename: str | PathLike) -> torch.Tensor:
             dims = [int(dim) for dim in np.fromfile(file, dtype=_RA_HEADER_DTYPE, count=n_dims)]
             if len(dims) != n_dims or data_size != math.prod(dims) * _ELEMENT_DTYPE.itemsize:
                 raise ValueError(f'Inconsistent .ra header in {filename}.')
+            if filename.stat().st_size - file.tell() != data_size:
+                raise ValueError(f'Data size does not match the dimensions {dims} in {filename}.')
             data = np.fromfile(file, dtype=_ELEMENT_DTYPE, count=math.prod(dims))
             if data.size != math.prod(dims) or file.read(1):
                 raise ValueError(f'Data size does not match the dimensions {dims} in {filename}.')
