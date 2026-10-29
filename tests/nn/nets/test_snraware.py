@@ -33,11 +33,14 @@ def test_snraware_forward(torch_compile: bool, device: str) -> None:
     """Check eager inference on CPU/CUDA and CUDA compilation against eager output."""
     model = SNRAware(n_features=4, n_heads=2, image_size=16, p_dropout=0).to(device).eval()
     x = RandomGenerator(seed=4).float32_tensor((1, 3, 2, 16, 16), device=device)
+    if torch_compile:
+        # Compare in float64 to avoid CUDA float32 kernel precision differences.
+        model, x = model.double(), x.double()
     expected = model(x)
     assert expected.shape == (1, 2, 2, 16, 16)
     if torch_compile:
         model = cast(SNRAware, torch.compile(model, dynamic=False))
-        torch.testing.assert_close(model(x), expected, atol=1e-4, rtol=1e-4)
+        torch.testing.assert_close(model(x), expected)
 
 
 @pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
