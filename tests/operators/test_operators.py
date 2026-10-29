@@ -4,7 +4,7 @@ from typing import cast
 
 import pytest
 import torch
-from mr2.operators import LinearOperator, Operator
+from mr2.operators import IdentityOp, LinearOperator, LinearOperatorMatrix, Operator
 from mr2.utils import RandomGenerator
 from typing_extensions import Any, assert_type
 
@@ -37,6 +37,15 @@ class DummyLinearOperator(LinearOperator):
     def adjoint(self, x: torch.Tensor):
         """Dummy adjoint linear operator."""
         return (self._value.mH @ x,)
+
+
+def test_operator_double_invalidates_cached_properties() -> None:
+    """Converting an operator to double clears its cached Gram."""
+    operator = LinearOperatorMatrix([[DummyLinearOperator(torch.eye(2))]])
+    _ = operator.gram
+    assert 'gram' in operator.__dict__
+    operator.double()
+    assert 'gram' not in operator.__dict__
 
 
 def test_composition_operator():
@@ -179,6 +188,41 @@ def test_sum_operator_linearoperator():
     assert isinstance(c, Operator), 'Operator + LinearOperator should be an Operator'
     assert not isinstance(c, LinearOperator), 'Operator + LinearOperator should not be a LinearOperator'
     assert_type(c, Operator[torch.Tensor, tuple[torch.Tensor]])
+
+
+def test_neg_operator():
+    rng = RandomGenerator(0)
+    a = DummyOperator(torch.tensor(3.0))
+    c = -a
+    x = rng.complex64_tensor(10)
+    torch.testing.assert_close(c(x)[0], -a(x)[0])
+    assert not isinstance(c, LinearOperator), '-Operator should not be a LinearOperator'
+    assert_type(c, Operator[torch.Tensor, tuple[torch.Tensor]])
+
+
+def test_neg_linearoperator():
+    rng = RandomGenerator(0)
+    a = DummyLinearOperator(rng.complex64_tensor((3, 10)))
+    c = -a
+    x = rng.complex64_tensor(10)
+    torch.testing.assert_close(c(x)[0], -a(x)[0])
+    assert isinstance(c, LinearOperator), '-LinearOperator should be a LinearOperator'
+    assert_type(c, LinearOperator)
+
+
+@pytest.mark.parametrize('operator', [IdentityOp(), DummyOperator(torch.tensor(1))])
+def test_neg_operator_integer(operator):
+    """Negation preserves integer dtype and values beyond float32 precision."""
+    x = torch.tensor([16777217], dtype=torch.int64)
+    torch.testing.assert_close((-operator)(x)[0], -operator(x)[0])
+
+
+def test_sub_operator_integer():
+    """Subtraction uses integer-preserving negation on either side."""
+    operator = DummyOperator(torch.tensor(1))
+    x = torch.tensor([16777217], dtype=torch.int64)
+    torch.testing.assert_close((0 - operator)(x)[0], -operator(x)[0])
+    torch.testing.assert_close((IdentityOp() - operator)(x)[0], x - operator(x)[0])
 
 
 def test_sum_operator_tensor():

@@ -64,7 +64,7 @@ def test_pgd_solution_fourier_wavelet(stepsize: float, backtrack_factor: float) 
     dim = (-3, -2, -1)
 
     fourier_op = FastFourierOp(dim=dim)
-    wavelet_op = WaveletOp(domain_shape=image_shape, dim=dim)
+    wavelet_op = WaveletOp(domain_shape=image_shape, dim=dim, wavelet_name='haar', level=1)
 
     (kspace,) = fourier_op(image)
 
@@ -116,6 +116,28 @@ def test_callback() -> None:
 
     pgd(f=f, g=g, initial_value=initial_values, max_iterations=1, callback=callback)
     assert callback_was_called
+
+
+@pytest.mark.cuda
+def test_cuda_backtracking_solution() -> None:
+    """Backtracking PGD recovers the soft-thresholded CUDA solution."""
+    data = torch.tensor([[-1 + 0.3j, -0.2j, 0.4, 1.5 - 0.5j]], device='cuda')
+    regularization_parameter = 0.25
+    f = 0.5 * L2NormSquared(target=data, divide_by_n=False)
+    g = regularization_parameter * L1NormViewAsReal(divide_by_n=False)
+    expected = torch.view_as_complex(torch.nn.functional.softshrink(torch.view_as_real(data), regularization_parameter))
+
+    (solution,) = pgd(
+        f=f,
+        g=g,
+        initial_value=torch.zeros_like(data),
+        stepsize=10.0,
+        backtrack_factor=0.5,
+        max_iterations=64,
+    )
+
+    assert solution.is_cuda
+    torch.testing.assert_close(solution, expected, atol=1e-4, rtol=1e-4)
 
 
 def test_callback_early_stop() -> None:

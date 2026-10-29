@@ -13,6 +13,14 @@ from mr2.operators import EinsumOp, LinearOperator, LinearOperatorMatrix
 from mr2.utils import RandomGenerator
 
 
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+def test_cg_exact_convergence(device: str) -> None:
+    """CG stops at an exact solution even with zero tolerance."""
+    rhs = torch.ones(2, device=device)
+    (result,) = cg(EinsumOp(torch.eye(2, device=device)), rhs, max_iterations=2, tolerance=0)
+    torch.testing.assert_close(result, rhs)
+
+
 @pytest.fixture(
     params=[  # (batch-size, vector-size, complex-valued system, separate initial_value)
         ((), 16, False, False),

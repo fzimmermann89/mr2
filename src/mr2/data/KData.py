@@ -3,14 +3,20 @@
 import copy
 import datetime
 import warnings
-from collections.abc import Callable, Mapping, Sequence
+from collections import deque
+from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
+from contextlib import contextmanager, nullcontext
 from importlib.metadata import version
+from math import prod
+from os import PathLike
+from pathlib import Path
 from types import EllipsisType
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, BinaryIO, Literal, cast
 from xml.etree import ElementTree as ET
 
 import h5py
 import ismrmrd
+import ismrmrd.serialization
 import numpy as np
 import torch
 from einops import rearrange
@@ -35,8 +41,11 @@ from mr2.data.KHeader import KHeader
 from mr2.data.KNoise import KNoise
 from mr2.data.KTrajectory import KTrajectory
 from mr2.data.Rotation import Rotation
+from mr2.data.SpatialDimension import SpatialDimension
 from mr2.data.traj_calculators.KTrajectoryCalculator import KTrajectoryCalculator
 from mr2.data.traj_calculators.KTrajectoryIsmrmrd import KTrajectoryIsmrmrd
+from mr2.data.traj_calculators.KTrajectorySunflowerGoldenRpe import KTrajectorySunflowerGoldenRpe
+from mr2.utils.filters import gaussian_window, hann_window, radial_hann_window
 from mr2.utils.reshape import normalize_index, normalize_indices
 from mr2.utils.summarize import summarize_object
 from mr2.utils.typing import FileOrPath
@@ -78,6 +87,37 @@ OTHER_LABELS = (
 T = TypeVar('T', Rotation, torch.Tensor, Rotation | torch.Tensor)
 
 
+class _ReadExact:
+    """Read full protocol fields from blocking streams that return short reads."""
+
+    def __init__(self, stream: BinaryIO) -> None:
+        """Wrap a binary stream."""
+        self.stream = stream
+
+    def read(self, size: int) -> bytes:
+        """Read size bytes or stop at EOF."""
+        chunks = []
+        while size:
+            chunk = self.stream.read(size)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size -= len(chunk)
+        return b''.join(chunks)
+
+
+@contextmanager
+def _open_ismrmrd_stream(
+    filename: str | PathLike | BinaryIO,
+) -> Generator[ismrmrd.serialization.ProtocolDeserializer, None, None]:
+    """Open a protocol reader, leaving caller-owned streams open."""
+    with (
+        Path(filename).open('rb') if isinstance(filename, (str, PathLike)) else nullcontext(filename) as stream,
+        ismrmrd.serialization.ProtocolDeserializer(cast(BinaryIO, _ReadExact(stream))) as reader,
+    ):
+        yield reader
+
+
 class KData(Dataclass):
     """MR raw data / k-space data class."""
 
@@ -93,36 +133,252 @@ class KData(Dataclass):
     @classmethod
     def from_file(
         cls,
-        filename: FileOrPath,
-        trajectory: KTrajectoryCalculator | KTrajectory | KTrajectoryIsmrmrd,
+        filename: FileOrPath | BinaryIO,
+        trajectory: KTrajectoryCalculator | KTrajectory | KTrajectoryIsmrmrd | None = None,
         header_overwrites: Mapping[str, object] | None = None,
         dataset_idx: int = -1,
-        acquisition_filter_criterion: Callable = is_image_acquisition,
+        acquisition_filter_criterion: Callable[[ismrmrd.Acquisition], bool] | None = is_image_acquisition,
+        *,
+        file_format: Literal['mr2', 'ismrmrd-hdf5', 'ismrmrd-stream'] | None = None,
     ) -> Self:
-        """Load k-space data from an ISMRMRD file.
+        """Load k-space data from an MR2 or ISMRMRD file.
+
+        Detect the format from the file contents. File-like inputs default to HDF5;
+        pass ``file_format='ismrmrd-stream'`` for binary streams such as sys.stdin.buffer.
+        MR2 files restore the saved KData; the remaining options apply to ISMRMRD input.
 
         Parameters
         ----------
         filename
-            path to the ISMRMRD file or file-like object
+            path or binary file-like object
         trajectory
-            KTrajectoryCalculator to calculate the k-space trajectory or an already calculated KTrajectory
-            If a KTrajectory is given, the shape should be `(acquisisions 1 1 k0)` in the same order as the acquisitions
-            in the ISMRMRD file.
+            Trajectory source for ISMRMRD input. MR2 files contain their own trajectory.
+            A KTrajectory should have shape `(acquisitions 1 1 1 k0)` and match the acquisition order
+            retained after filtering, coil selection and readout-length selection.
         header_overwrites
             dictionary of key-value pairs to overwrite the header
         dataset_idx
-            index of the ISMRMRD dataset to load (converter creates dataset, dataset_1, ...)
+            index of the dataset or serialized measurement to load; defaults to the last
         acquisition_filter_criterion
-            function which returns True if an acquisition should be included in KData
+            function which returns True if an acquisition should be included in KData, or None to disable filtering
+        file_format
+            Explicit input format. If None, detect path formats and assume HDF5 for file-like inputs.
         """
+        if file_format is None:
+            if isinstance(filename, (str, PathLike)) and not h5py.is_hdf5(filename):
+                file_format = 'ismrmrd-stream'
+            else:
+                file_format = 'mr2' if cls._is_mr2_file(filename) else 'ismrmrd-hdf5'
+        match file_format:
+            case 'mr2':
+                return super().from_file(filename)
+            case 'ismrmrd-hdf5' | 'ismrmrd-stream':
+                if trajectory is None:
+                    raise ValueError('A trajectory source is required for ISMRMRD input.')
+                if file_format == 'ismrmrd-hdf5':
+                    return cls._from_ismrmrd_hdf5(
+                        filename, trajectory, header_overwrites, dataset_idx, acquisition_filter_criterion
+                    )
+                return cls._from_ismrmrd_stream(
+                    cast(str | PathLike | BinaryIO, filename),
+                    trajectory,
+                    header_overwrites,
+                    dataset_idx,
+                    acquisition_filter_criterion,
+                )
+            case _:
+                raise ValueError(f'Unknown file_format {file_format!r}')
+
+    @classmethod
+    def _from_ismrmrd_hdf5(
+        cls,
+        filename: FileOrPath,
+        trajectory: KTrajectoryCalculator | KTrajectory | KTrajectoryIsmrmrd,
+        header_overwrites: Mapping[str, object] | None = None,
+        dataset_idx: int = -1,
+        acquisition_filter_criterion: Callable[[ismrmrd.Acquisition], bool] | None = is_image_acquisition,
+    ) -> Self:
+        """Read a selected ISMRMRD HDF5 dataset."""
         # Can raise FileNotFoundError
-        with ismrmrd.File(filename, 'r') as file:
+        # Open with h5py's file-object driver when needed; ismrmrd.File forces stdio.
+        with h5py.File(filename, 'r') as hdf5_file:
+            file = ismrmrd.file.Folder(hdf5_file)
             dataset = file[list(file.keys())[dataset_idx]]
             try:
                 ismrmrd_header = dataset.header
             except TypeError:
-                root = ET.fromstring(dataset._contents['xml'][0])  # noqa: S314
+                ismrmrd_header = dataset._contents['xml'][0]
+            acquisitions = dataset.acquisitions[:]
+            try:
+                mtime: int = h5py.h5g.get_objinfo(dataset['data']._contents.id).mtime
+            except AttributeError:
+                mtime = 0
+            modification_time = datetime.datetime.fromtimestamp(mtime) if mtime else None
+
+        return cls.from_ismrmrd(
+            ismrmrd_header,
+            acquisitions,
+            trajectory,
+            header_overwrites,
+            acquisition_filter_criterion,
+            header_defaults={'datetime': modification_time},
+        )
+
+    @classmethod
+    def _from_ismrmrd_stream(
+        cls,
+        filename: str | PathLike | BinaryIO,
+        trajectory: KTrajectoryCalculator | KTrajectory | KTrajectoryIsmrmrd,
+        header_overwrites: Mapping[str, object] | None = None,
+        dataset_idx: int = -1,
+        acquisition_filter_criterion: Callable[[ismrmrd.Acquisition], bool] | None = is_image_acquisition,
+    ) -> Self:
+        """Read a complete measurement from a serialized ISMRMRD stream.
+
+        A measurement ends at the next header or CLOSE. Nonnegative selection consumes that next header;
+        negative selection reads to CLOSE, retaining at most ``abs(dataset_idx)`` measurements.
+        Caller streams remain open. Missing CLOSE and corrupt messages raise deserializer errors.
+        Images, waveforms and other non-acquisition messages are ignored.
+        """
+        header_defaults: dict[str, object] = {}
+        if isinstance(filename, (str, PathLike)):
+            header_defaults['datetime'] = datetime.datetime.fromtimestamp(Path(filename).stat().st_mtime)
+        trailing: deque[tuple[ismrmrd.xsd.ismrmrdHeader, list[ismrmrd.Acquisition]]] = deque(
+            maxlen=-dataset_idx if dataset_idx < 0 else 1
+        )
+        header = None
+        acquisitions: list[ismrmrd.Acquisition] = []
+        index = 0
+        with _open_ismrmrd_stream(filename) as reader:
+            for obj in reader.deserialize():
+                if isinstance(obj, ismrmrd.xsd.ismrmrdHeader):
+                    if header is not None:
+                        trailing.append((header, acquisitions))
+                        if index == dataset_idx:
+                            break
+                        index += 1
+                    header, acquisitions = obj, []
+                elif isinstance(obj, ismrmrd.Acquisition):
+                    if header is None:
+                        raise ValueError('ISMRMRD stream contains acquisitions before the first header.')
+                    acquisitions.append(obj)
+            else:
+                if header is not None:
+                    trailing.append((header, acquisitions))
+                if not trailing:
+                    raise ValueError('No ISMRMRD header found in stream.')
+                if dataset_idx > index or (dataset_idx < 0 and len(trailing) < -dataset_idx):
+                    raise IndexError('ISMRMRD measurement index out of range.')
+        header, acquisitions = trailing[0]
+        return cls.from_ismrmrd(
+            header,
+            acquisitions,
+            trajectory,
+            header_overwrites,
+            acquisition_filter_criterion,
+            header_defaults=header_defaults,
+        )
+
+    @classmethod
+    def iter_ismrmrd(
+        cls,
+        filename: str | PathLike | BinaryIO,
+        trajectory: KTrajectoryCalculator | KTrajectory | KTrajectoryIsmrmrd,
+        header_overwrites: Mapping[str, object] | None = None,
+        acquisition_filter_criterion: Callable[[ismrmrd.Acquisition], bool] | None = is_image_acquisition,
+    ) -> Generator[Self, None, None]:
+        """Yield one KData per selected acquisition in stream order.
+
+        Each KData contains one readout and its acquisition counters. The XML header
+        supplies the encoding geometry. Images, waveforms and other messages are ignored.
+        Missing CLOSE and corrupt messages raise the deserializer's errors.
+
+        Parameters
+        ----------
+        filename
+            Path or blocking binary stream, including sys.stdin.buffer. Caller streams
+            remain open. Close the iterator when stopping early to release an owned file.
+        trajectory
+            Trajectory source, as in `from_ismrmrd`, applied to each acquisition.
+            A precomputed KTrajectory must match one readout, rather than the full measurement.
+            KTrajectoryIsmrmrd must use normalize=False, since normalization requires the full measurement.
+            KTrajectorySunflowerGoldenRpe also requires a full measurement and cannot be used here.
+        header_overwrites
+            Header fields to overwrite.
+        acquisition_filter_criterion
+            Acquisition predicate, or None to disable filtering.
+
+        Yields
+        ------
+        KData
+            K-space data with shape ``(1, coils, 1, 1, samples)``.
+        """
+        if isinstance(trajectory, KTrajectoryIsmrmrd) and trajectory.normalize:
+            raise ValueError('Trajectory normalization requires a complete measurement. Use from_file instead.')
+        if isinstance(trajectory, KTrajectorySunflowerGoldenRpe):
+            raise ValueError('Sunflower shifts require a complete measurement. Use from_file instead.')
+        header_defaults: dict[str, object] = {}
+        if isinstance(filename, (str, PathLike)):
+            header_defaults['datetime'] = datetime.datetime.fromtimestamp(Path(filename).stat().st_mtime)
+        header = None
+        with _open_ismrmrd_stream(filename) as reader:
+            for obj in reader.deserialize():
+                if isinstance(obj, ismrmrd.xsd.ismrmrdHeader):
+                    header = obj
+                elif isinstance(obj, ismrmrd.Acquisition):
+                    if header is None:
+                        raise ValueError('ISMRMRD stream contains acquisitions before the first header.')
+                    if acquisition_filter_criterion is None or acquisition_filter_criterion(obj):
+                        kdata = cls.from_ismrmrd(
+                            header,
+                            [obj],
+                            trajectory,
+                            header_overwrites,
+                            acquisition_filter_criterion=None,
+                            header_defaults=header_defaults,
+                        )
+                        del obj  # Release raw samples while the caller processes KData.
+                        yield kdata
+
+    @classmethod
+    def from_ismrmrd(
+        cls,
+        ismrmrd_header: ismrmrd.xsd.ismrmrdHeader | str | bytes,
+        acquisitions: Iterable[ismrmrd.Acquisition],
+        trajectory: KTrajectoryCalculator | KTrajectory | KTrajectoryIsmrmrd,
+        header_overwrites: Mapping[str, object] | None = None,
+        acquisition_filter_criterion: Callable[[ismrmrd.Acquisition], bool] | None = is_image_acquisition,
+        *,
+        header_defaults: Mapping[str, object] | None = None,
+    ) -> Self:
+        """Normalize an ISMRMRD header and acquisitions into sorted k-space data.
+
+        Parameters
+        ----------
+        ismrmrd_header
+            Parsed ISMRMRD header or XML string/bytes, as received by a reconstruction server.
+        acquisitions
+            Acquisition objects in acquisition order, including a one-pass iterator.
+            The input objects are not modified. Filtering, coil selection and selection of
+            the longest post-discard readouts precede metadata and trajectory construction.
+        trajectory
+            Trajectory calculator, stored ISMRMRD trajectory reader, or a KTrajectory
+            of shape ``(acquisitions 1 1 1 k0)`` matching the retained, cropped acquisitions.
+            Stored ISMRMRD trajectories are currently read without discard cropping.
+        header_overwrites
+            Header fields to overwrite.
+        acquisition_filter_criterion
+            Acquisition predicate, or None to disable filtering.
+        header_defaults
+            Fallback header fields, used only when absent from the ISMRMRD header.
+            Header overwrites take precedence, including explicit None values.
+            Without a measurement timestamp or a default, datetime remains unknown.
+        """
+        if isinstance(ismrmrd_header, (str, bytes)):
+            try:
+                ismrmrd_header = ismrmrd.xsd.CreateFromDocument(ismrmrd_header)
+            except TypeError:
+                root = ET.fromstring(ismrmrd_header)  # noqa: S314
                 prefix = root.tag.removesuffix('ismrmrdHeader')
                 measurement = root.find(f'{prefix}measurementInformation')
                 if measurement is not None and measurement.find(f'{prefix}patientPosition') is None:
@@ -131,14 +387,10 @@ class KData(Dataclass):
                     if encoding.find(f'{prefix}trajectory') is None:
                         ET.SubElement(encoding, f'{prefix}trajectory').text = 'other'
                 ismrmrd_header = ismrmrd.xsd.CreateFromDocument(ET.tostring(root))
-            acquisitions = dataset.acquisitions[:]
-            try:
-                mtime: int = h5py.h5g.get_objinfo(dataset['data']._contents.id).mtime
-            except AttributeError:
-                mtime = 0
-            modification_time = datetime.datetime.fromtimestamp(mtime)
 
-        acquisitions = [acq for acq in acquisitions if acquisition_filter_criterion(acq)]
+        acquisitions = [
+            acq for acq in acquisitions if acquisition_filter_criterion is None or acquisition_filter_criterion(acq)
+        ]
 
         # we need the same number of receiver coils for all acquisitions
         n_coils_available = {acq.data.shape[0] for acq in acquisitions}
@@ -161,6 +413,20 @@ class KData(Dataclass):
 
         if not acquisitions:
             raise ValueError('No acquisitions meeting the given filter criteria were found.')
+
+        shapes = sorted({acq.number_of_samples - acq.discard_pre - acq.discard_post for acq in acquisitions})
+        if len(shapes) > 1:
+            has_discards = any(acq.discard_pre or acq.discard_post for acq in acquisitions)
+            warnings.warn(
+                f'Acquisitions have different shape. Got {shapes}. '
+                f'Keeping only acquisistions with {shapes[-1]} data samples. Note: discard_pre and discard_post '
+                f'{"have been applied. " if has_discards else "were empty. "}'
+                'Please open an issue of you need to handle this kind of data.',
+                stacklevel=1,
+            )
+            acquisitions = [
+                acq for acq in acquisitions if acq.number_of_samples - acq.discard_pre - acq.discard_post == shapes[-1]
+            ]
 
         if ismrmrd_header.acquisitionSystemInformation is not None and isinstance(
             ismrmrd_header.acquisitionSystemInformation.systemVendor, str
@@ -205,22 +471,10 @@ class KData(Dataclass):
                 stacklevel=1,
             )
 
-        shapes = (
-            torch.as_tensor([acq.data.shape[-1] for acq in acquisitions]) - discard_pre_1d - discard_post_1d
-        ).unique()
-        if len(shapes) > 1:
-            warnings.warn(
-                f'Acquisitions have different shape. Got {list(shapes)}. '
-                f'Keeping only acquisistions with {shapes[-1]} data samples. Note: discard_pre and discard_post '
-                f'{"have been applied. " if discard_pre_1d.any() or discard_post_1d.any() else "were empty. "}'
-                'Please open an issue of you need to handle this kind of data.',
-                stacklevel=1,
-            )
         data = torch.stack(
             [
                 torch.as_tensor(acq.data[..., pre : acq.data.shape[-1] - post], dtype=torch.complex64)
                 for acq, pre, post in zip(acquisitions, discard_pre_1d, discard_post_1d, strict=True)
-                if acq.data.shape[-1] - pre - post == shapes[-1]
             ]
         )
         n_k0_tensor = n_k0_tensor - discard_pre - discard_post
@@ -231,8 +485,8 @@ class KData(Dataclass):
             ismrmrd_header,
             acq_info,
             defaults={
-                'datetime': modification_time,  # use the modification time of the dataset as fallback
                 'trajectory': trajectory,
+                **(header_defaults or {}),
             },
             overwrite=header_overwrites,
         )
@@ -264,12 +518,6 @@ class KData(Dataclass):
                     encoding_matrix=header.encoding_matrix,
                 )
             case KTrajectory():
-                try:
-                    torch.broadcast_shapes(trajectory.shape, (data.shape[0], *data.shape[-3:]))
-                except RuntimeError:
-                    raise ValueError(
-                        f'Trajectory shape {trajectory.shape} does not match data shape {data.shape}.'
-                    ) from None
                 trajectory_ = trajectory
             case _:
                 raise TypeError(
@@ -277,9 +525,16 @@ class KData(Dataclass):
                     f'not {type(trajectory)}',
                 )
 
+        expected_shape = (data.shape[0], 1, *data.shape[-3:])
+        try:
+            trajectory_shape = torch.broadcast_shapes(trajectory_.shape, expected_shape)
+        except RuntimeError:
+            raise ValueError(f'Trajectory shape {trajectory_.shape} does not match data shape {data.shape}.') from None
+        if trajectory_shape != expected_shape:
+            raise ValueError(f'Trajectory shape {trajectory_.shape} does not match data shape {data.shape}.')
+
         kdata = cls(header, data, trajectory_)
-        kdata = kdata.reshape_by_idx()
-        return kdata
+        return kdata.reshape_by_idx() if data.shape[0] > 1 else kdata
 
     def reshape_by_idx(self) -> Self:
         """Sort and reshape according to the acquisition indices.
@@ -603,6 +858,74 @@ class KData(Dataclass):
         whitened = prewhiten_kspace(self, knoise, scale_factor)
         return type(self)(whitened.header, whitened.data, whitened.traj)
 
+    def apodize(
+        self,
+        width: float | SpatialDimension[float] | None = None,
+        *,
+        window: Literal['hann', 'gaussian'] = 'hann',
+        radial: bool = False,
+    ) -> Self:
+        """Return a copy with a centered k-space window applied at trajectory coordinates.
+
+        Suppressing high spatial frequencies smooths the reconstructed image and
+        reduces ringing at the cost of spatial resolution. Weights are shared
+        across coils, with unit gain at DC and no energy/noise normalization.
+        Trajectory, header and acquisition metadata are copied unchanged.
+
+        Parameters
+        ----------
+        width
+            Full window width in trajectory units: one unit normally corresponds
+            to one Cartesian encoding step, or ``1 / encoding_fov`` in spatial
+            frequency. A scalar applies to all spatial directions; a
+            `SpatialDimension` specifies z, y and x separately. Defaults to the
+            header's encoding matrix sizes, independent of acquired sample count.
+            All widths must be finite and positive.
+        window
+            ``'hann'`` has compact support of the specified width.
+            ``'gaussian'`` uses width as its full width at half maximum,
+            with no hard cutoff. See :func:`mr2.utils.filters.hann_window` and
+            :func:`mr2.utils.filters.gaussian_window` for the formulas.
+        radial
+            If False, multiply the windows along kz, ky and kx (separable).
+            If True, evaluate one window at the radius formed from coordinates
+            scaled by their respective widths (ellipsoidal support for Hann).
+            Gaussian weights coincide for both choices.
+
+        Returns
+        -------
+            Apodized copy with the same dtype and device. Repeated data dimensions
+            are reduced to singletons following the usual KData convention.
+            Density compensation is not applied or modified.
+        """
+        widths: tuple[float, float, float]
+        if width is None:
+            widths = self.header.encoding_matrix.zyx
+        elif isinstance(width, SpatialDimension):
+            widths = width.zyx
+        else:
+            widths = (width, width, width)
+        coordinates = tuple(
+            coordinate.to(device=self.data.device, dtype=self.data.real.dtype)
+            for coordinate in (self.traj.kz, self.traj.ky, self.traj.kx)
+        )
+        match window, radial:
+            case 'hann', True:
+                weight = radial_hann_window(coordinates, widths)
+            case 'hann', False:
+                weight = prod(
+                    (hann_window(k, w) for k, w in zip(coordinates, widths, strict=True)),
+                    start=self.data.real.new_ones(()),
+                )
+            case 'gaussian', _:
+                weight = prod(
+                    (gaussian_window(k, w) for k, w in zip(coordinates, widths, strict=True)),
+                    start=self.data.real.new_ones(()),
+                )
+            case _:
+                raise ValueError("window must be 'hann' or 'gaussian'.")
+        return type(self)(self.header.clone(), self.data * weight, self.traj.clone())
+
     def remove_readout_os(self: Self) -> Self:
         """Remove any oversampling along the readout direction.
 
@@ -663,6 +986,100 @@ class KData(Dataclass):
         header.encoding_fov.x = self.header.recon_fov.x
 
         return type(self)(header, cropped_data, cropped_traj)
+
+    def partial_fourier(
+        self: Self,
+        dim: int = -2,
+        method: Literal['pocs', 'homodyne'] = 'pocs',
+        *,
+        n_iterations: int = 10,
+    ) -> Self:
+        """Complete one Cartesian partial Fourier direction using trajectory-derived support.
+
+        Requires separable Cartesian axes with shared sampling across batches
+        and a contiguous acquired interval touching either edge.
+
+        Parameters
+        ----------
+        dim
+            Partial Fourier axis within ``(k2, k1, k0)``; accepts positive or negative indices.
+        method
+            ``'pocs'`` preserves acquired values; ``'homodyne'`` uses ramp weighting.
+        n_iterations
+            POCS iteration count; unused for homodyne.
+
+        Returns
+        -------
+            KData with completed k-space, a full Cartesian trajectory and updated
+            encoding indices. Metadata for synthesized lines inherits the nearest
+            acquired line's values. The input is unchanged.
+        """
+        from mr2.algorithms.partial_fourier import homodyne, pocs
+        from mr2.data.enums import TrajectoryType
+        from mr2.operators.CartesianSamplingOp import CartesianSamplingOp
+
+        data = self.data.expand(torch.broadcast_shapes(self.data.shape, self.traj.shape))
+        axis = normalize_index(data.ndim, dim) - data.ndim
+        if axis not in (-3, -2, -1):
+            raise ValueError('dim must select one of the last three KData dimensions.')
+        if method not in ('pocs', 'homodyne'):
+            raise ValueError("method must be 'pocs' or 'homodyne'.")
+
+        # Align metadata with the sorted grid, extending edge metadata to missing lines.
+        indices = []
+        coordinates = []
+        for d, coord, size in zip(
+            (-3, -2, -1), (self.traj.kz, self.traj.ky, self.traj.kx), self.header.encoding_matrix.zyx, strict=True
+        ):
+            if coord.numel() != coord.shape[d] or coord.shape[d] != data.shape[d]:
+                raise ValueError('Trajectory must be separable and aligned with the Cartesian data axes.')
+            values = coord.reshape(-1)
+            if not torch.allclose(values, values.round(), atol=self.traj.grid_detection_tolerance, rtol=0):
+                raise ValueError('Trajectory must lie on the integer Cartesian grid.')
+            values = values.round()
+            grid = torch.arange(size, device=coord.device, dtype=coord.dtype) - size // 2
+            if values.min() < grid[0] or values.max() > grid[-1]:
+                raise ValueError('Trajectory lies outside the encoding matrix.')
+            sorted_values, order = values.sort()
+            if (sorted_values.diff() == 0).any():
+                raise ValueError('Repeated Cartesian coordinates are unsupported.')
+            source = torch.searchsorted(sorted_values, grid).clamp(max=values.numel() - 1)
+            indices.append(order[source])
+            shape = [1] * data.ndim
+            shape[d] = size
+            coordinates.append(grid.reshape(shape))
+
+        sampling = CartesianSamplingOp(self.header.encoding_matrix, self.traj)
+        (grid_data,) = sampling.H(data)
+        (mask,) = sampling.H(torch.ones_like(data.real[..., :1, :, :, :]))
+        mask = mask.bool()
+        if method == 'pocs':
+            completed = pocs(grid_data, mask, (-3, -2, -1), axis, n_iterations=n_iterations)
+        else:
+            completed = homodyne(grid_data, mask, (-3, -2, -1), axis)
+        if completed.shape[-3:] != self.header.encoding_matrix.zyx:
+            raise ValueError('Trajectory must cover every non-partial encoded Cartesian axis.')
+
+        header = copy.deepcopy(self.header)
+
+        def extend_metadata(field: object) -> object:
+            if isinstance(field, torch.Tensor | Rotation):
+                for d, index in zip((-3, -2, -1), indices, strict=True):
+                    if field.shape[d] > 1:
+                        indexer: list[slice | torch.Tensor] = [slice(None)] * len(field.shape)
+                        indexer[d] = index.to(field.device)
+                        field = field[tuple(indexer)]
+            return field
+
+        header.acq_info.apply_(extend_metadata)
+        header.trajectory_type = TrajectoryType.CARTESIAN
+        for d, label in ((-3, 'k2'), (-2, 'k1')):
+            size = completed.shape[d]
+            shape = [1] * data.ndim
+            shape[d] = size
+            setattr(header.acq_info.idx, label, torch.arange(size, device=data.device).reshape(shape))
+        trajectory = KTrajectory(coordinates[0], coordinates[1], coordinates[2])
+        return type(self)(header, completed, trajectory)
 
     def select_other_subset(
         self: Self,

@@ -80,7 +80,9 @@ for images.
 Testing
 =======
 We use pytest for testing. All required packages will be installed if you install MRtwo via ``pip install -e .[dev]`` or ``pip install -e .[tests]``.
-You can use VSCode's test panel to discover and run tests. All tests must pass before a PR can be merged. By default, we skip running CUDA tests.  You can use ``pytest -m cuda`` to run the CUDA tests if your development machine has a GPU available.
+You can use VSCode's test panel to discover and run tests. All tests must pass before a PR can be merged.
+CUDA tests run when a CUDA device is available and are skipped otherwise. Use ``pytest -m cuda`` to run only CUDA tests,
+or ``pytest -m "not cuda"`` to exclude them.
 
 Building the Documentation
 ==========================

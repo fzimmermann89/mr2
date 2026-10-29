@@ -74,8 +74,13 @@ class AveragingOp(LinearOperator):
         self._last_domain_size = x.shape[self.dim]
 
         placeholder = (slice(None),) * (self.dim % x.ndim)
-        averaged = torch.stack([x[(*placeholder, i)].mean(self.dim) for i in self.idx], self.dim)
-        return (averaged,)
+        averaged = []
+        for group in self.idx:
+            selected = x[(*placeholder, group)]
+            if selected.shape[self.dim] == 0:
+                raise ValueError('Averaging requires nonempty groups.')
+            averaged.append(selected.mean(self.dim))
+        return (torch.stack(averaged, self.dim),)
 
     def adjoint(self, x: torch.Tensor) -> tuple[torch.Tensor]:
         """Apply the adjoint of the averaging operator.
@@ -111,10 +116,17 @@ class AveragingOp(LinearOperator):
         for i, group in enumerate(self.idx):
             if isinstance(group, slice):
                 n = len(range(*group.indices(self.domain_size)))
-            elif isinstance(group, torch.Tensor) and group.dtype == torch.bool:
-                n = int(group.sum())
             else:
-                n = len(group)
+                indices = torch.as_tensor(group)
+                if indices.dtype in (torch.bool, torch.uint8):
+                    n = int(indices.count_nonzero())
+                else:
+                    n = indices.numel()
+                    indices = torch.where(indices < 0, indices + self.domain_size, indices)
+                    if indices.unique().numel() != n:
+                        raise ValueError('Averaging adjoint requires nonempty groups without repeated indices.')
+            if n == 0:
+                raise ValueError('Averaging adjoint requires nonempty groups without repeated indices.')
 
             adjoint[(*placeholder, group)] += (
                 x[(*placeholder, i, None)].expand(*x.shape[:dim], n, *x.shape[dim + 1 :]) / n

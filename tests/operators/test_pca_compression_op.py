@@ -67,11 +67,9 @@ def test_pca_compression_op_forward_mode_autodiff(
     )
 
 
-def test_pca_compression_op_wrong_shapes() -> None:
+@pytest.mark.parametrize(('init_data_shape', 'input_shape'), [((10, 6), (100, 3)), ((2, 10, 6), (3, 20, 6))])
+def test_pca_compression_op_wrong_shapes(init_data_shape: Sequence[int], input_shape: Sequence[int]) -> None:
     """Test if Operator raises error if shape mismatch."""
-    init_data_shape = (10, 6)
-    input_shape = (100, 3)
-
     # Create test data
     rng = RandomGenerator(seed=0)
     data_to_calculate_compression_matrix_from = rng.complex64_tensor(init_data_shape)
@@ -84,6 +82,32 @@ def test_pca_compression_op_wrong_shapes() -> None:
 
     with pytest.raises(RuntimeError, match=r'Matrix\^H'):
         pca_comp_op.adjoint(input_data)
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('batch_shape', [(), (1,), (1, 4)])
+@pytest.mark.parametrize('adjoint', [False, True])
+def test_pca_compression_op_unexpanded_batch(batch_shape: tuple[int, ...], adjoint: bool, device: str) -> None:
+    """Inputs must include all batch entries needed by the compression matrices."""
+    rng = RandomGenerator(seed=0)
+    op = PCACompressionOp(rng.complex64_tensor((2, 20, 5)), 3).to(device)
+    data = rng.complex64_tensor((*batch_shape, 3 if adjoint else 5)).to(device)
+    with pytest.raises(ValueError, match='fully expanded batch dimensions'):
+        (op.H if adjoint else op)(data)
+
+
+@pytest.mark.parametrize('adjoint', [False, True])
+def test_pca_compression_op_checks_before_matmul(adjoint: bool, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Invalid batch expansion must fail before allocating the matrix product."""
+    op = PCACompressionOp(torch.randn(2, 20, 5), 3)
+    data = torch.ones(3 if adjoint else 5)
+
+    def unexpected_matmul(*args: torch.Tensor) -> torch.Tensor:
+        raise AssertionError('Invalid input reached matrix multiplication.')
+
+    monkeypatch.setattr(torch.Tensor, '__matmul__', unexpected_matmul)
+    with pytest.raises(ValueError, match='fully expanded batch dimensions'):
+        (op.H if adjoint else op)(data)
 
 
 def test_pca_compression_op_with_varimax_rotation() -> None:
@@ -102,6 +126,44 @@ def test_pca_compression_op_with_varimax_rotation() -> None:
         rotated_pca_comp_op._compression_matrix.mH @ rotated_pca_comp_op._compression_matrix,
         pca_comp_op._compression_matrix.mH @ pca_comp_op._compression_matrix,
     )
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('dtype', [torch.float32, torch.complex64])
+@pytest.mark.parametrize('centering', [False, True])
+def test_pca_compression_op_rank_one_reconstruction(device: str, dtype: torch.dtype, centering: bool) -> None:
+    """One principal component reconstructs rank-one data with arbitrary coil phases."""
+    rng = RandomGenerator(seed=0)
+    weights = rng.randn_tensor((2, 6), dtype, device=device)
+    signal = torch.tensor([1, 2, -1, -2], dtype=dtype, device=device)
+    data = signal[:, None] * weights[:, None, :]
+    operator = PCACompressionOp(data, n_components=1, centering=centering)
+
+    (reconstructed,) = (operator.H @ operator)(data)
+
+    torch.testing.assert_close(reconstructed, data, atol=1e-5, rtol=1e-5)
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+@pytest.mark.parametrize('dtype', [torch.float32, torch.complex64])
+@pytest.mark.parametrize('centering', [False, True])
+@pytest.mark.parametrize('rotate', [False, True])
+@pytest.mark.parametrize('n_components', [1, 3])
+def test_pca_compression_op_captured_energy(
+    device: str, dtype: torch.dtype, centering: bool, rotate: bool, n_components: int
+) -> None:
+    """PCA retains the same energy as the optimal truncated SVD, including after rotation."""
+    rng = RandomGenerator(seed=0)
+    data = rng.randn_tensor((2, 40, 6), dtype, device=device) @ rng.randn_tensor((2, 6, 6), dtype, device=device)
+    operator = PCACompressionOp(data, n_components=n_components, centering=centering, rotate=rotate)
+    if centering:
+        data = data - data.mean(-2, keepdim=True)
+
+    (compressed,) = operator(data)
+    captured_energy = compressed.abs().square().sum(dim=(-2, -1))
+    optimal_energy = torch.linalg.svdvals(data)[..., :n_components].square().sum(-1)
+
+    torch.testing.assert_close(captured_energy, optimal_energy, atol=1e-5, rtol=1e-5)
 
 
 @pytest.mark.cuda

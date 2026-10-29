@@ -1,8 +1,8 @@
 """MR noise measurements class."""
 
 from collections.abc import Callable
-from pathlib import Path
 
+import h5py
 import ismrmrd
 import torch
 from einops import repeat
@@ -10,6 +10,7 @@ from typing_extensions import Self
 
 from mr2.data.acq_filters import is_noise_acquisition
 from mr2.data.Dataclass import Dataclass
+from mr2.utils.typing import FileOrPath
 
 
 class KNoise(Dataclass):
@@ -20,21 +21,23 @@ class KNoise(Dataclass):
 
     @classmethod
     def from_file(
-        cls, filename: str | Path, dataset_idx: int = -1, acquisition_filter_criterion: Callable = is_noise_acquisition
+        cls, filename: FileOrPath, dataset_idx: int = -1, acquisition_filter_criterion: Callable = is_noise_acquisition
     ) -> Self:
-        """Load noise measurements from ISMRMRD file.
+        """Load noise measurements from an MR2 or ISMRMRD HDF5 file.
 
         Parameters
         ----------
         filename
-            Path to the ISMRMRD file
+            Path or seekable binary file containing MR2 or ISMRMRD data.
         dataset_idx
             Index of the dataset to load (converter creates dataset, dataset_1, ...)
         acquisition_filter_criterion
             function which returns True if an acquisition should be included in KNoise
         """
-        # Can raise FileNotFoundError
-        with ismrmrd.File(filename, 'r') as file:
+        if cls._is_mr2_file(filename):
+            return super().from_file(filename)
+        with h5py.File(filename, 'r') as hdf5_file:
+            file = ismrmrd.file.Folder(hdf5_file)
             ds = file[list(file.keys())[dataset_idx]]
             acquisitions = ds.acquisitions[:]
 

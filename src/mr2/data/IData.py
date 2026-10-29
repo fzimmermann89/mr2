@@ -4,8 +4,11 @@ import datetime
 import re
 import warnings
 from collections.abc import Iterable
+from os import PathLike
 from pathlib import Path
+from typing import cast
 
+import h5py
 import nibabel
 import numpy as np
 import pydicom
@@ -22,6 +25,7 @@ from mr2.data.KHeader import KHeader
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.utils.reshape import unsqueeze_right
 from mr2.utils.summarize import summarize_values
+from mr2.utils.typing import FileOrPath
 from mr2.utils.unit_conversion import m_to_mm, rad_to_deg, s_to_ms
 
 
@@ -103,7 +107,30 @@ class IData(Dataclass):
         return cls(header=iheader, data=data)
 
     @classmethod
-    def from_dicom_files(cls, filenames: Iterable[str | Path] | str | Path) -> Self:
+    def from_file(cls, filename: FileOrPath | Iterable[str | Path], *, suffix: str | None = 'dcm') -> Self:
+        """Load image data from MR2 storage, DICOM files or a DICOM folder.
+
+        Parameters
+        ----------
+        filename
+            Path to an MR2 or DICOM file, a DICOM folder, or an iterable of DICOM paths.
+            Seekable binary inputs must contain MR2 data.
+        suffix
+            File extension to select in DICOM folders. None includes all files.
+        """
+        if isinstance(filename, (str, PathLike)):
+            filename = Path(filename)
+            if filename.is_dir():
+                return cls._from_dicom_folder(filename, suffix)
+            if h5py.is_hdf5(filename):
+                return super().from_file(filename)
+            return cls._from_dicom_files(filename)
+        if hasattr(filename, 'read'):
+            return super().from_file(cast(FileOrPath, filename))
+        return cls._from_dicom_files(cast(Iterable[str | Path], filename))
+
+    @classmethod
+    def _from_dicom_files(cls, filenames: Iterable[str | Path] | str | Path) -> Self:
         """Read multiple DICOM files and return IData object.
 
         DICOM images can be saved as single-frame or multi-frame images [DCMMF]_.
@@ -160,7 +187,7 @@ class IData(Dataclass):
         return cls(data=data, header=header)
 
     @classmethod
-    def from_dicom_folder(cls, foldername: str | Path, suffix: str | None = 'dcm') -> Self:
+    def _from_dicom_folder(cls, foldername: str | Path, suffix: str | None = 'dcm') -> Self:
         """Read all DICOM files from a folder and return IData object.
 
         Parameters
@@ -176,7 +203,7 @@ class IData(Dataclass):
             raise ValueError(f'No dicom files with suffix {suffix} found in {foldername}')
 
         # Pass on sorted file list as order of dicom files is often the same as the required order
-        return cls.from_dicom_files(filenames=sorted(file_paths))
+        return cls._from_dicom_files(filenames=sorted(file_paths))
 
     def to_nifti(self, filename: str | Path, magnitude_only: bool = False) -> None:
         """Save image data as NIFTI file.
@@ -190,23 +217,31 @@ class IData(Dataclass):
             otherwise the complex image data is saved as a NIFTI2 file.
             Many software packages do not support complex data.
         """
-        orientation = self.header.orientation.mean().as_matrix()
-        position = torch.stack([p.mean() for p in self.header.position.zyx])
-        affine_zyx = torch.cat(
-            [torch.tensor([[1.0, 0.0, 0.0, 0.0]]), torch.cat([position[:, None], orientation], 1)], 0
-        )
-        affine = affine_zyx.flip([0, 1])
+        orientation = self.header.orientation.mean()
+        resolution_mm = self.header.resolution.apply(m_to_mm)
+        position_mm = self.header.position.apply(torch.mean).apply(m_to_mm)
+        nz, ny, nx = self.data.shape[-3:]
+        # In-plane axes use N/2 even for one pixel; a single slice has no z offset.
+        center = SpatialDimension(z=nz / 2 if nz > 1 else 0, y=ny / 2, x=nx / 2)
+        origin_mm = position_mm - orientation(resolution_mm * center)
+
+        # Reorder both physical axes (rows) and voxel axes (columns) from zyx to xyz.
+        rotation_xyz = orientation.as_matrix().flip([0, 1]).numpy()
+        affine = np.eye(4)
+        affine[:3, :3] = rotation_xyz * (resolution_mm.x, resolution_mm.y, resolution_mm.z)
+        affine[:3, 3] = torch.stack((origin_mm.x, origin_mm.y, origin_mm.z)).numpy()
+        affine[:2] *= -1  # LPS to RAS
         data = rearrange(self.data, '... other coils z y x-> x y z 1 other (...) coils')
         if magnitude_only:
-            nifti = nibabel.nifti2.Nifti1Image(data.abs().numpy(), affine.numpy(), dtype=np.float32)
+            nifti = nibabel.nifti2.Nifti1Image(data.abs().numpy(), affine, dtype=np.float32)
         else:
-            nifti = nibabel.nifti2.Nifti2Image(data.numpy(), affine.numpy(), dtype=np.complex64)
+            nifti = nibabel.nifti2.Nifti2Image(data.numpy(), affine, dtype=np.complex64)
 
-        nifti.header['pixdim'][1:4] = [self.header.resolution.x, self.header.resolution.y, self.header.resolution.z]
+        nifti.header.set_xyzt_units('mm')
         description = (
-            f'TE={summarize_values(self.header.te)}ms; '
-            f'TI={summarize_values(self.header.ti)}ms; '
-            f'TR={summarize_values(self.header.tr)}ms; '
+            f'TE={summarize_values(self.header.te)}s; '
+            f'TI={summarize_values(self.header.ti)}s; '
+            f'TR={summarize_values(self.header.tr)}s; '
             f'FA={summarize_values(self.header.fa)}rad'
         )
         nifti.header['descrip'] = description.encode('utf-8')
