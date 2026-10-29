@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - src/mr2/VERSION
+      - .github/workflows/deployment.yml
 
 jobs:
   build-testpypi-package:
