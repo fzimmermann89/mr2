@@ -58,12 +58,10 @@ import torch
 # Two CPU threads avoid excessive overhead for these small convolutions.
 torch.set_num_threads(2)
 torch.manual_seed(7)
-iterations = 1000
-stop_iteration = 300
 kdata = mr2.data.KData.from_file(raw_path, mr2.data.traj_calculators.KTrajectoryCartesian())
 source_fourier = mr2.operators.FourierOp.from_kdata(kdata)
 (source_volume,) = source_fourier.H(kdata.data)
-reference = source_volume[:, :, 16:17].clone()
+reference = source_volume[:, :, 16:17]
 height, width = reference.shape[-2:]
 
 # %% [markdown]
@@ -108,7 +106,8 @@ plt.show()
 # %% [markdown]
 # We apply the adjoint with ``.H`` to obtain the zero-filled inverse FFT baseline.
 # Undersampling prevents this adjoint from inverting the acquisition.
-# We can also apply the normal operator $A^H A$ using ``.gram``:
+# We can also apply the normal operator $A^H A$ using ``.gram``. Here,
+# $y=A x_\mathrm{ref}$, so $A^H A x_\mathrm{ref}=A^H y$.
 
 # %%
 (normal_image,) = acquisition.gram(reference)
@@ -127,7 +126,8 @@ torch.testing.assert_close(normal_image, explicit_normal_image)
 #
 # We draw the latent input once and optimize only the network parameters with Adam.
 # Scaling the data by the adjoint image's RMS keeps the fitting problem near unit
-# intensity. Multiplying the reconstructed image by ``scale`` restores input units.
+# intensity. We keep the plots in these normalized units.
+
 # %%
 decoder = mr2.nn.ComplexAsChannel(
     mr2.nn.nets.ConvDecoder(
@@ -149,27 +149,28 @@ optimizer = torch.optim.Adam(decoder.parameters(), lr=0.005)
 # After each Adam update, we record this data fidelity and the relative complex
 # image error $\|x-x_\mathrm{ref}\|_2/\|x_\mathrm{ref}\|_2$.
 # We use the reference only to evaluate image error, not in the loss or to select
-# a checkpoint. We save the image after 300 updates and continue fitting to 1000.
+# a checkpoint. We save an intermediate image after 300 updates and continue to 1000.
+
 # %%
+iterations = 1000
+intermediate_iteration = 300
 fidelity_history = []
 error_history = []
 checkpoints = {}
 for iteration in range(iterations + 1):
-    if iteration:
-        optimizer.zero_grad(set_to_none=True)
-        image = decoder(latent).unsqueeze(-3)
-        (prediction,) = acquisition(image)
-        loss = (prediction - measurement).abs().square().sum() / acquired_samples
-        loss.backward()
-        optimizer.step()
-
+    optimizer.zero_grad(set_to_none=True)
+    image = decoder(latent).unsqueeze(-3)
+    (prediction,) = acquisition(image)
+    loss = (prediction - measurement).abs().square().sum() / acquired_samples
     with torch.no_grad():
-        image = decoder(latent).unsqueeze(-3)
-        (prediction,) = acquisition(image)
-        fidelity_history.append(float((prediction - measurement).abs().square().sum() / acquired_samples))
+        fidelity_history.append(float(loss))
         error_history.append(float(torch.linalg.vector_norm(image - reference) / torch.linalg.vector_norm(reference)))
-        if iteration in (0, stop_iteration, iterations):
-            checkpoints[iteration] = image.clone()
+        if iteration in (intermediate_iteration, iterations):
+            checkpoints[iteration] = image.detach().clone()
+    if iteration == iterations:
+        break
+    loss.backward()
+    optimizer.step()
 
 assert torch.isfinite(torch.tensor(fidelity_history)).all()
 assert fidelity_history[-1] < fidelity_history[0]
@@ -178,16 +179,17 @@ assert fidelity_history[-1] < fidelity_history[0]
 # ## Compare the reconstructions
 #
 # We plot the data fidelity and relative complex error against the number of
-# updates. The error compares each estimate with the source-volume reference,
-# including its noise. Further fitting can fit acquired noise; unmeasured
-# frequencies remain unconstrained by the loss. An error increase can indicate
-# overfitting, but need not occur within this fitting budget.
+# updates. The reference contains the source acquisition's noise, and the
+# measurement is exactly its masked Fourier transform. Fitting acquired noise
+# therefore reduces this error; it cannot demonstrate noise overfitting. Errors
+# at unmeasured frequencies can still increase. In this run, the final image has
+# lower reference error than the intermediate image at 300 updates.
 #
-# The 300-update checkpoint shows an earlier stopping point. We chose the decoder
-# settings and final budget while developing this example on this slice; these
-# are not independently validated reconstruction parameters. For a new scan,
-# choose a stopping criterion without using its reference image, for example
-# using held-out samples or a noise estimate.
+# We chose the decoder settings and final budget while developing this example
+# on this slice; these are not independently validated reconstruction parameters.
+# For a new scan, choose a stopping criterion without using its reference image,
+# for example using held-out samples or a noise estimate. Longer fitting may fit
+# noise, even though this reference-based comparison cannot establish that.
 #
 # All magnitude images share the same intensity scale, set by the 99.5th
 # percentile of the reference magnitude for display only. The image titles show
@@ -201,7 +203,7 @@ axes[0].set(xlabel='Adam updates', ylabel='Mean squared acquired residual')
 axes[1].plot(error_history)
 axes[1].set(xlabel='Adam updates', ylabel='Relative complex image error')
 for axis in axes:
-    axis.axvline(stop_iteration, color='tab:orange', linestyle='--', label='Saved checkpoint')
+    axis.axvline(intermediate_iteration, color='tab:orange', linestyle='--', label='Intermediate iterate')
     axis.legend()
 plt.show()
 
@@ -209,11 +211,11 @@ fig, axes = plt.subplots(2, 2, figsize=(9, 7), constrained_layout=True)
 vmax = float(reference.abs().quantile(0.995))
 for axis, image, title in zip(
     axes.flat,
-    (reference, zero_filled, checkpoints[stop_iteration], checkpoints[iterations]),
+    (reference, zero_filled, checkpoints[intermediate_iteration], checkpoints[iterations]),
     (
         'Measured reference',
         'Zero-filled adjoint',
-        f'Decoder: {stop_iteration} updates',
+        f'Decoder: {intermediate_iteration} updates',
         f'Decoder: {iterations} updates',
     ),
     strict=True,
@@ -227,6 +229,7 @@ plt.show()
 # %% [markdown]
 # For measured `~mr2.data.KData`, `~mr2.algorithms.reconstruction.ConvDecoderReconstruction`
 # provides acquisition setup, intensity scaling and callback-controlled stopping.
+# This example uses a smaller network and fitting budget than that class defaults to.
 # Here, we wrote the fitting loop explicitly to work with tensors and show each
 # optimization step. The decoder uses instance normalization in place of
 # the batch normalization in the original
