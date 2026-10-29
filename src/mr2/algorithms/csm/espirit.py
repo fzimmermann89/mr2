@@ -118,12 +118,15 @@ def espirit(
     # A small column component breaks symmetry in the summed seed, including
     # opposite coils. Fall back to the column if the combined seed nearly cancels.
     v = aha.sum(dim=1) + 0.01 * fallback
-    stable = v.norm(dim=0, keepdim=True) > 1e-3 * fallback.norm(dim=0, keepdim=True)
+    stable = (
+        v.abs().square().sum(dim=0, keepdim=True).sqrt()
+        > 1e-3 * fallback.abs().square().sum(dim=0, keepdim=True).sqrt()
+    )
     v = torch.where(stable, v, fallback)
     for _ in range(n_iterations):
-        v /= v.norm(dim=0).clamp_min(1e-12)
+        v /= v.abs().square().sum(dim=0).sqrt().clamp_min(1e-12)
         v = torch.einsum('abzyx,bzyx->azyx', aha, v)
-    max_eig = v.norm(dim=0)
+    max_eig = v.abs().square().sum(dim=0).sqrt()
     csm = v / max_eig.clamp_min(1e-12)
 
     # Normalize phase with respect to first channel
