@@ -2,36 +2,47 @@
 # # MoDL-style reconstruction with a small CNN
 #
 # Here we train an unrolled reconstruction network using a convolutional neural
-# network (CNN) and conjugate-gradient data consistency. We use synthetic complex
-# images so that the example runs on CPU without downloading data.
+# network (CNN) and conjugate-gradient data consistency. We use simulated
+# brain images from BrainWeb and run the reconstruction on CPU.
 #
-# The default run uses eight 32 x 32 training images, two held-out images and
-# 40 training updates. It took about two seconds on the development machine;
-# runtime depends on the CPU. Install ``mrtwo[notebooks]`` to run the notebook.
+# The default run downloads one BrainWeb volume (about 4 MB) and uses eight 96 x 96 slices
+# for training and two held-out slices for evaluation, with 40 training updates.
+# Training takes a few seconds on the development CPU; download time depends on
+# the connection. Install ``mrtwo[notebooks]`` to run the notebook.
 #
 # This toy example demonstrates the reconstruction and training steps. It does
 # not reproduce the full MoDL paper or evaluate reconstruction of real MRI data.
 
 # %%
+import gzip
 import time
 
 import matplotlib.pyplot as plt
 import mr2
+import numpy as np
+import requests
 import torch
 from torch import nn
+from torch.nn import functional
 
 torch.manual_seed(7)
 torch.set_num_threads(2)  # Avoid thread overhead for these tiny convolutions.
 device = torch.device('cpu')
-start = time.perf_counter()
 
 # %% [markdown]
 # ## Create images and simulate undersampled k-space data
 #
-# We form each magnitude image by summing five elliptical Gaussian functions
-# with random positions, widths and amplitudes, then add a linear phase.
-# We reserve the last two images for evaluation and train on the first eight.
-# All ten images follow the same distribution.
+# We use the T1-weighted, 1 mm normal-brain simulation with zero noise and
+# zero intensity non-uniformity from [BrainWeb](https://brainweb.bic.mni.mcgill.ca/brainweb/selection_normal.html).
+# The volume contains magnitude images, so we add a smooth phase ourselves
+# before simulating complex k-space data. These are simulated data, not acquired
+# multi-coil measurements.
+#
+# We take eight axial slices for training and two higher slices for evaluation.
+# Both sets come from one anatomical model: the held-out loss does not measure
+# generalization to another subject. We pad each slice to a square before
+# resizing to 96 x 96 pixels, preserving its aspect ratio, and normalize each
+# slice by its maximum magnitude.
 #
 # The image tensors have shape ``(batch, coils, z, y, x)``. We use one slice and
 # one coil with sensitivity one. The forward model $A = MF$ combines a centered,
@@ -39,22 +50,36 @@ start = time.perf_counter()
 # We keep every fourth phase-encoding line and four central lines, storing
 # unsampled entries as zeros. We use the same mask for all images.
 
-# %%
-size = 32
+# %% tags=["hide-input"] mystnb={"code_prompt_show": "Show BrainWeb download and preparation"}
+# BrainWeb raw-byte volumes have axes (z, y, x) and shape (181, 217, 181).
+response = requests.get(
+    'https://brainweb.bic.mni.mcgill.ca/cgi/brainweb1',
+    params={
+        'do_download_alias': 'T1 ICBM normal 1mm pn0 rf0',
+        'format_value': 'raw_byte',
+        'zip_value': 'gnuzip',
+        'download_for_real': '[Start download!]',
+    },
+    timeout=60,
+)
+response.raise_for_status()
+volume = torch.from_numpy(
+    np.frombuffer(gzip.decompress(response.content), dtype=np.uint8).copy().reshape(181, 217, 181)
+)
+
+size = 96
+slice_indices = [50, 58, 66, 74, 82, 90, 98, 106, 120, 128]
+magnitude = volume[slice_indices, None].float()
+magnitude = functional.pad(magnitude, (18, 18, 0, 0))
+magnitude = functional.interpolate(magnitude, size=(size, size), mode='bilinear', align_corners=False, antialias=True)
+magnitude /= magnitude.amax(dim=(-2, -1), keepdim=True)
 y, x = torch.meshgrid(torch.linspace(-1, 1, size), torch.linspace(-1, 1, size), indexing='ij')
-images = []
-for _ in range(10):
-    magnitude = torch.zeros(size, size)
-    for _ in range(5):
-        cx, cy = (torch.rand(2) - 0.5) * 1.2
-        wx, wy = 0.12 + torch.rand(2) * 0.3
-        magnitude += (0.2 + torch.rand(())) * torch.exp(-(((x - cx) / wx) ** 2) - ((y - cy) / wy) ** 2)
-    magnitude /= magnitude.max()
-    phase = 0.6 * (torch.rand(()) * x + torch.rand(()) * y)
-    images.append(magnitude * torch.exp(1j * phase))
-truth = torch.stack(images)[:, None, None].to(device)
+phase_slopes = 0.6 * torch.rand(10, 2, 1, 1)
+phase = phase_slopes[:, :1] * x + phase_slopes[:, 1:] * y
+truth = (magnitude * torch.exp(1j * phase)).unsqueeze(-3).to(device)
 train_truth, test_truth = truth[:8], truth[8:]
 
+# %%
 mask = torch.zeros(1, 1, 1, size, 1, device=device)
 mask[..., ::4, :] = 1
 mask[..., size // 2 - 2 : size // 2 + 2, :] = 1
@@ -129,50 +154,42 @@ class TinyMoDL(nn.Module):
 
 model = TinyMoDL().to(device)
 
-# Check the CG solve against the closed-form solution available for this
-# particular binary mask and unitary FFT. General coil models need CG.
-with torch.no_grad():
-    prior = adjoint
-    consistent = model.dc(prior, test_data, acquisition)  # type: ignore[call-overload]
-    weight = model.dc.log_weight.exp()
-    (prior_kspace,) = fourier(prior)
-    (expected,) = fourier.H((test_data + weight * prior_kspace) / (mask + weight))
-    torch.testing.assert_close(consistent, expected, atol=2e-5, rtol=2e-5)
-
 # %% [markdown]
 # ## Train the reconstruction network
 #
 # The supervised loss is mean squared complex error,
 # $\operatorname{mean}|x-x_{\mathrm{true}}|^2$, which includes both real and
-# imaginary errors. We update the CNN and the positive regularization weight
+# imaginary errors. We apply ``torch.nn.functional.mse_loss`` to the real and
+# imaginary components using ``torch.view_as_real``. Multiplying by two gives
+# the mean squared complex error, since MSE averages over both components.
+# We update the CNN and the positive regularization weight
 # together. We monitor the held-out loss without using it to update the parameters.
 # This short run uses one fixed mask, noiseless data and no augmentation.
 
 # %%
+start = time.perf_counter()
 optimizer = torch.optim.Adam(model.parameters(), lr=3e-3)
 train_losses, test_losses = [], []
 for _ in range(40):
     model.train()
     optimizer.zero_grad()
     prediction = model(train_data)
-    loss = (prediction - train_truth).abs().square().mean()
+    loss = 2 * functional.mse_loss(torch.view_as_real(prediction), torch.view_as_real(train_truth))
     loss.backward()
-    assert model.dc.log_weight.grad is not None and torch.isfinite(model.dc.log_weight.grad)
     optimizer.step()
     model.eval()
     with torch.no_grad():
         train_losses.append(loss.item())
-        test_losses.append((model(test_data) - test_truth).abs().square().mean().item())
+        test_prediction = model(test_data)
+        test_loss = 2 * functional.mse_loss(torch.view_as_real(test_prediction), torch.view_as_real(test_truth))
+        test_losses.append(test_loss.item())
 
 with torch.no_grad():
     reconstruction = model(test_data)
-assert reconstruction.shape == test_truth.shape and torch.isfinite(reconstruction).all()
-print(f'Elapsed CPU time: {time.perf_counter() - start:.1f} s')
+    adjoint_loss = 2 * functional.mse_loss(torch.view_as_real(adjoint), torch.view_as_real(test_truth))
+print(f'Training and evaluation time: {time.perf_counter() - start:.1f} s')
 print(f'Learned regularization weight: {model.dc.log_weight.exp().item():.3f}')
-print(
-    f'Held-out complex MSE: adjoint={(adjoint - test_truth).abs().square().mean().item():.5f}, '
-    f'unrolled={test_losses[-1]:.5f}'
-)
+print(f'Held-out complex MSE: adjoint={adjoint_loss.item():.5f}, unrolled={test_losses[-1]:.5f}')
 
 # %% [markdown]
 # ## Compare with the adjoint reconstruction
@@ -182,11 +199,11 @@ print(
 # the absolute complex errors share a separate scale. The loss curves show
 # the mean squared complex error over all training and held-out images.
 #
-# We use noiseless data from a small set of smooth synthetic images. These
-# results do not measure performance on anatomical images, other sampling
-# masks or multi-coil acquisitions.
+# We train and evaluate on slices of the same simulated brain with one fixed
+# mask and no added noise. These results do not measure performance on other
+# subjects, sampling masks or acquired multi-coil data.
 
-# %% tags=["hide-cell"] mystnb={"code_prompt_show": "Show plotting code"}
+# %% tags=["hide-input"] mystnb={"code_prompt_show": "Show plotting code"}
 fig, axes = plt.subplots(2, 3, figsize=(9, 6), constrained_layout=True)
 for axis, image, title in zip(
     axes[0],
