@@ -161,8 +161,8 @@ class KData(Dataclass):
             path or binary file-like object
         trajectory
             Trajectory source for ISMRMRD input. MR2 files contain their own trajectory.
-            A KTrajectory should have shape `(acquisitions 1 1 1 k0)` and match the acquisition order
-            retained after filtering, coil selection and readout-length selection.
+            A KTrajectory should have shape `(acquisitions 1 1 1 k0)` and match the selected acquisitions,
+            with discarded readout samples already removed.
         header_overwrites
             dictionary of key-value pairs to overwrite the header
         dataset_idx
@@ -372,7 +372,6 @@ class KData(Dataclass):
         trajectory
             Trajectory calculator, stored ISMRMRD trajectory reader, or a KTrajectory
             of shape ``(acquisitions 1 1 1 k0)`` matching the retained, cropped acquisitions.
-            Stored ISMRMRD trajectories are currently read without discard cropping.
         header_overwrites
             Header fields to overwrite.
         acquisition_filter_criterion
@@ -423,18 +422,22 @@ class KData(Dataclass):
             raise ValueError('No acquisitions meeting the given filter criteria were found.')
 
         shapes = sorted({acq.number_of_samples - acq.discard_pre - acq.discard_post for acq in acquisitions})
+        n_k0 = shapes[-1]
         if len(shapes) > 1:
-            has_discards = any(acq.discard_pre or acq.discard_post for acq in acquisitions)
             warnings.warn(
                 f'Acquisitions have different shape. Got {shapes}. '
-                f'Keeping only acquisistions with {shapes[-1]} data samples. Note: discard_pre and discard_post '
-                f'{"have been applied. " if has_discards else "were empty. "}'
-                'Please open an issue of you need to handle this kind of data.',
+                f'Keeping only acquisitions with {n_k0} data samples after applying discard_pre and discard_post. '
+                'Please open an issue if you need to handle this kind of data.',
                 stacklevel=1,
             )
-            acquisitions = [
-                acq for acq in acquisitions if acq.number_of_samples - acq.discard_pre - acq.discard_post == shapes[-1]
+            keep = [
+                i
+                for i, acq in enumerate(acquisitions)
+                if acq.number_of_samples - acq.discard_pre - acq.discard_post == n_k0
             ]
+            if isinstance(trajectory, KTrajectory) and trajectory.shape[0] == len(acquisitions):
+                trajectory = trajectory[keep]
+            acquisitions = [acquisitions[i] for i in keep]
 
         if ismrmrd_header.acquisitionSystemInformation is not None and isinstance(
             ismrmrd_header.acquisitionSystemInformation.systemVendor, str
@@ -455,13 +458,11 @@ class KData(Dataclass):
             warnings.warn('No vendor information found. Assuming Siemens time stamp format.', stacklevel=1)
             convert_time_stamp = convert_time_stamp_from_siemens
 
-        acq_info, (k0_center, n_k0_tensor, discard_pre, discard_post) = AcqInfo.from_ismrmrd_acquisitions(
+        acq_info, (k0_center, discard_pre) = AcqInfo.from_ismrmrd_acquisitions(
             acquisitions,
-            additional_fields=('center_sample', 'number_of_samples', 'discard_pre', 'discard_post'),
+            additional_fields=('center_sample', 'discard_pre'),
             convert_time_stamp=convert_time_stamp,
         )
-        discard_pre_1d = rearrange(discard_pre, 'n_readouts 1 1 1 1 -> n_readouts')
-        discard_post_1d = rearrange(discard_post, 'n_readouts 1 1 1 1 -> n_readouts')
 
         if len(torch.unique(acq_info.idx.user5)) > 1:
             warnings.warn(
@@ -481,11 +482,13 @@ class KData(Dataclass):
 
         data = torch.stack(
             [
-                torch.as_tensor(acq.data[..., pre : acq.data.shape[-1] - post], dtype=torch.complex64)
-                for acq, pre, post in zip(acquisitions, discard_pre_1d, discard_post_1d, strict=True)
+                torch.as_tensor(
+                    acq.data[..., acq.discard_pre : acq.number_of_samples - acq.discard_post], dtype=torch.complex64
+                )
+                for acq in acquisitions
             ]
         )
-        n_k0_tensor = n_k0_tensor - discard_pre - discard_post
+        k0_center = k0_center - discard_pre
         data = rearrange(data, 'acquisitions coils k0 -> acquisitions coils 1 1 k0')
 
         # Raises ValueError if required fields are missing in the header
@@ -508,15 +511,9 @@ class KData(Dataclass):
                 trajectory_ = trajectory(acquisitions, encoding_matrix=header.encoding_matrix)
             case KTrajectoryCalculator():
                 reversed_readout_mask = (header.acq_info.flags[..., 0] & AcqFlags.ACQ_IS_REVERSE.value).bool()
-                n_k0_unique = torch.unique(n_k0_tensor)
-                if len(n_k0_unique) > 1:
-                    raise ValueError(
-                        'Trajectory can only be calculated for constant number of readout samples.\n'
-                        f'Got unique values {list(n_k0_unique)}'
-                    )
                 encoding_limits = EncodingLimits.from_ismrmrd_header(ismrmrd_header)
                 trajectory_ = trajectory(
-                    n_k0=int(n_k0_unique[0]),
+                    n_k0=n_k0,
                     k0_center=k0_center,
                     k1_idx=header.acq_info.idx.k1,
                     k1_center=encoding_limits.k1.center,

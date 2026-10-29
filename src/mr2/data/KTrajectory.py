@@ -1,5 +1,6 @@
 """KTrajectory dataclass."""
 
+import warnings
 from collections.abc import Callable
 from typing import Literal
 
@@ -141,6 +142,8 @@ class KTrajectory(Dataclass):
     ) -> Self:
         """Load a trajectory from an MR2 or ISMRMRD HDF5 file.
 
+        For ISMRMRD input, discarded samples are removed and only the longest retained readouts are used.
+
         Parameters
         ----------
         filename
@@ -171,7 +174,17 @@ class KTrajectory(Dataclass):
             ]
             if not acquisitions:
                 raise ValueError('No matching acquisitions found in the ISMRMRD file.')
-            traj = torch.stack([torch.as_tensor(acq.traj, dtype=torch.float32) for acq in acquisitions], dim=0)
+            trajectories = [
+                torch.as_tensor(acq.traj[acq.discard_pre : -acq.discard_post or None]) for acq in acquisitions
+            ]
+            shapes = sorted({len(t) for t in trajectories})
+            if len(shapes) > 1:
+                warnings.warn(
+                    'Acquisitions have different readout lengths after discarding samples. '
+                    f'Keeping only acquisitions with {shapes[-1]} data samples.',
+                    stacklevel=2,
+                )
+            traj = torch.stack([t for t in trajectories if len(t) == shapes[-1]]).float()
             if not normalize:
                 scaling_matrix = None
             elif (

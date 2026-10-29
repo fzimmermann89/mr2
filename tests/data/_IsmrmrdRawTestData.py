@@ -335,12 +335,14 @@ class IsmrmrdRawTestData:
                             ),
                             dim=1,
                         ).numpy()
+                        acq.center_sample = round(n_freq_encoding / 2) + discard_pre
                         acq.discard_pre = discard_pre
                         acq.discard_post = discard_post
                     else:
                         acq.resize(n_freq_encoding, self.n_coils, trajectory_dimensions=2)
                         acq.traj[:] = traj.numpy().astype(float)
                         acq.data[:] = kspace_with_noise[:, :, pe_idx].numpy()
+                        acq.center_sample = round(n_freq_encoding / 2)
                         acq.discard_pre = 0
                         acq.discard_post = 0
                     dataset.append_acquisition(acq)
