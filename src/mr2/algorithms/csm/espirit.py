@@ -76,15 +76,10 @@ def espirit(
     if any(out < min(n, kernel_width) for n, out in zip(coil_k_space.shape[-3:], img_shape.zyx, strict=True)):
         raise ValueError('The output grid must be at least as large as the calibration kernel.')
 
-    # expecting coil_k_space to be of shape (coils, z, y, x)
-    # inspired by https://sigpy.readthedocs.io/en/latest/_modules/sigpy/mri/app.html#EspiritCalib
-
-    # Get calibration matrix.
-    # Shape will be [n_coils] + n_blks + [kernel_width] * img_ndim
+    # Calibration matrix of all kernel-sized patches, shape (patches, coils * kernel size).
     mat = coil_k_space
     for ax in (1, 2, 3):
         mat = mat.unfold(dimension=ax, size=min(coil_k_space.shape[ax], kernel_width), step=1)
-
     n_coils, _, _, _, c, b, a = mat.shape
     mat = rearrange(mat, 'coils z y x c b a -> (z y x) (coils c b a)')
 
@@ -93,53 +88,62 @@ def espirit(
     keep = eigenvalues > singular_value_threshold**2 * eigenvalues[-1]
     vh = eigenvectors[:, keep].H
     kernels = rearrange(vh, 'n (coils c b a) -> n coils c b a', coils=n_coils, c=c, b=b, a=a)
-    correlations = _espirit_correlations(kernels)
+
     # Split along the largest image axis, keeping the other two transforms as FFTs.
     axis = max(range(3), key=lambda i: img_shape.zyx[i])
-    correlations = correlations.movedim(axis + 2, -3)
+    correlations = _espirit_correlations(kernels).movedim(axis + 2, -3)
     shape = list(img_shape.zyx)
     shape.insert(0, shape.pop(axis))
-    support = correlations.shape[-3:]
-    lags = [torch.fft.ifftshift(torch.arange(n, device=kernels.device) - n // 2) for n in support]
+
+    # Signed correlation lags and their flat (modulo) positions on the in-slice output grid.
+    lags = [torch.fft.ifftshift(torch.arange(n, device=kernels.device) - n // 2) for n in correlations.shape[-3:]]
     index = (lags[1][:, None].remainder(shape[1]) * shape[2] + lags[2].remainder(shape[2])).flatten()
+
     # Center and normalize the small correlations instead of copying every image slab.
     centering = sum(
         -(2j * torch.pi / size) * (size // 2) * lag.to(kernels.real.dtype)
         for size, lag in zip(shape[1:], (lags[1][:, None], lags[2]), strict=True)
     )
     correlations = correlations * centering.exp().to(kernels.dtype) / prod(kernels.shape[-3:])
-    maps = kernels.new_empty(n_coils, *shape)
+
+    # Each voxel has an independent covariance and power iteration. Process slices
+    # in batches so the loop only stores one covariance slab at a time.
     BATCHSIZE = 2**18  # noqa: N806
-    # Target 512 MiB per covariance slab; a single plane is the minimum.
-    batchsize = min(BATCHSIZE, (512 * 1024**2) // (n_coils**2 * kernels.element_size()))
-    planes = max(1, batchsize // prod(shape[1:]))
+    slices_per_batch = max(1, BATCHSIZE // prod(shape[1:]))
     offsets = torch.arange(shape[0], device=kernels.device, dtype=kernels.real.dtype) - shape[0] // 2
-    for out, offset in zip(maps.split(planes, dim=1), offsets.split(planes), strict=True):
-        # Evaluate only these centered slices along the split axis. The remaining
-        # signed lags are accumulated modulo the output size before the 2D FFT.
+    maps = kernels.new_empty(n_coils, *shape)
+
+    for out, offset in zip(maps.split(slices_per_batch, dim=1), offsets.split(slices_per_batch), strict=True):
+        # Evaluate the inverse Fourier sum explicitly along the split axis, then
+        # use ifft2 for the other two axes. Together these give the 3D inverse
+        # transform without allocating the full covariance volume. Accumulate
+        # signed lags modulo the output size to preserve overlapping lags.
         fourier_phase = (2j * torch.pi / shape[0]) * offset[:, None] * lags[0]
         values = torch.einsum('pz,cdzyx->cdpyx', fourier_phase.exp().to(kernels.dtype), correlations)
         aha = kernels.new_zeros(n_coils, n_coils, len(offset), prod(shape[1:]))
         aha.scatter_add_(-1, index.expand(n_coils, n_coils, len(offset), -1), values.flatten(start_dim=-2))
         aha = torch.fft.ifft2(aha.unflatten(-1, shape[1:]), norm='forward')
-        # A covariance column with maximal diagonal avoids cancellation of summed coils.
+
+        # Seed with the summed covariance columns plus a small part of the column with
+        # maximal diagonal. This breaks symmetry, including for opposite coils; fall back
+        # to that column alone where the combined seed nearly cancels.
         seed = aha.diagonal(dim1=0, dim2=1).real.argmax(dim=-1)
         fallback = aha.gather(1, seed[None, None].expand(n_coils, 1, *aha.shape[-3:])).squeeze(1)
-        # A small column component breaks symmetry in the summed seed, including
-        # opposite coils. Fall back to the column if the combined seed nearly cancels.
         v = aha.sum(dim=1) + 0.01 * fallback
         stable = (
             v.abs().square().sum(dim=0, keepdim=True).sqrt()
             > 1e-3 * fallback.abs().square().sum(dim=0, keepdim=True).sqrt()
         )
         v = torch.where(stable, v, fallback)
+
+        # Power iterations for the dominant eigenvector in each voxel.
         for _ in range(n_iterations):
             v /= v.abs().square().sum(dim=0).sqrt().clamp_min(1e-12)
             v = torch.einsum('abzyx,bzyx->azyx', aha, v)
         max_eig = v.abs().square().sum(dim=0).sqrt()
         csm = v / max_eig.clamp_min(1e-12)
 
-        # Normalize phase with respect to first channel
+        # Normalize phase to the first coil, or to the strongest coil where the first vanishes.
         reference = csm[0]
         strongest = csm.gather(0, csm.abs().argmax(dim=0, keepdim=True)).squeeze(0)
         reference = torch.where(reference.abs() > 1e-12, reference, strongest)
