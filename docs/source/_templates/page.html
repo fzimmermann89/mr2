@@ -16,7 +16,7 @@
 {% block footer %}
 {{ super() }}
 <div class="mr2-build-info">
-  MRtwo {{ version|e }} · built from
+  MRtwo {{ version|e }} · Built from
   {% if build_info.source_url %}<a href="{{ build_info.source_url }}">{{ build_info.source|e }}</a>{% else %}{{ build_info.source|e }}{% endif %}
   {%- if build_info.sha %} at commit <a href="{{ build_info.sha_url }}"><code>{{ build_info.sha }}</code></a>{% endif %}
 </div>

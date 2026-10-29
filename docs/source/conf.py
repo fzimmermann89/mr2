@@ -107,7 +107,7 @@ def get_build_info() -> dict[str, str | bool]:
             result = subprocess.run(['git', *args], capture_output=True, text=True, cwd=Path(__file__).parent)
             return result.stdout.strip() if result.returncode == 0 else ''
 
-        source, source_url = f'local build of {git("branch", "--show-current") or "detached HEAD"}', ''
+        source, source_url = f'local branch {git("branch", "--show-current") or "(detached HEAD)"}', ''
         sha = git('rev-parse', 'HEAD')
         if git('status', '--porcelain', '--untracked-files=no'):
             source += ' with uncommitted changes'
