@@ -56,24 +56,19 @@ class ImagingTransformerBlock(Sequential):
         p_dropout
             Stochastic-depth probability for each residual branch.
         """
-        super().__init__(
-            Residual(
-                Sequential(
-                    PermutedBlock((-2, -1), LayerNorm((n_channels, image_size, image_size))),
-                    ConvolutionalAttention(n_channels, n_heads, image_size, mode),
-                    DropPath(p_dropout, scale_by_keep=True),
-                )
-            ),
-            Residual(
-                Sequential(
-                    PermutedBlock((-2, -1), LayerNorm((n_channels, image_size, image_size))),
-                    _conv(n_channels, 4 * n_channels),
-                    PReLU(),
-                    _conv(4 * n_channels, n_channels),
-                    DropPath(p_dropout, scale_by_keep=True),
-                )
-            ),
+        block1 = Sequential(
+            PermutedBlock((-2, -1), LayerNorm((n_channels, image_size, image_size))),
+            ConvolutionalAttention(n_channels, n_heads, image_size, mode),
+            DropPath(p_dropout, scale_by_keep=True),
         )
+        block2 = Sequential(
+            PermutedBlock((-2, -1), LayerNorm((n_channels, image_size, image_size))),
+            _conv(n_channels, 4 * n_channels),
+            PReLU(),
+            _conv(4 * n_channels, n_channels),
+            DropPath(p_dropout, scale_by_keep=True),
+        )
+        super().__init__(Residual(block1), Residual(block2))
 
 
 class SNRAware(Module):
