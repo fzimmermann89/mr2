@@ -6,7 +6,6 @@ from einops import einsum, reduce
 from mr2.algorithms.csm.extrapolate import extrapolate_csm
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.utils.filters import uniform_filter
-from mr2.utils.reciprocal_vector_norm import reciprocal_vector_norm
 from mr2.utils.reshape import normalize_index
 from mr2.utils.vector_norm import vector_norm
 
@@ -121,9 +120,9 @@ def walsh(
         energy = reduce(images.abs().square(), '... coils z y x pool -> ... z y x', 'sum')
         csm = extrapolate_csm(csm, energy.sqrt(), smoothing_width)
 
-    inverse_norm = reciprocal_vector_norm(csm, dim=-4, keepdim=True)
+    norm = vector_norm(csm, dim=-4, keepdim=True)
     fallback = torch.zeros_like(csm)
     fallback[..., 0, :, :, :] = 1
-    valid = torch.isfinite(inverse_norm) & (inverse_norm > 0) & (inverse_norm < 1 / eps)
-    csm = csm * inverse_norm.clamp_max(1 / eps)
+    valid = torch.isfinite(norm) & (norm > eps)
+    csm = csm / norm.clamp_min(eps)
     return torch.where(valid.expand_as(csm), csm, fallback)

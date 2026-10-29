@@ -59,7 +59,6 @@ from typing_extensions import Self, Unpack, overload
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.utils import RandomGenerator
 from mr2.utils.indexing import Indexer
-from mr2.utils.reciprocal_vector_norm import reciprocal_vector_norm
 from mr2.utils.reduce_repeat import reduce_repeat
 from mr2.utils.reshape import broadcasted_rearrange, normalize_indices
 from mr2.utils.typing import NestedSequence, TorchIndexerType
@@ -200,7 +199,7 @@ def _quaternion_to_axis_angle(quaternion: torch.Tensor, degrees: bool = False) -
     """
     quaternion = _canonical_quaternion(quaternion)
     angle = 2 * torch.atan2(vector_norm(quaternion[..., :3], dim=-1), quaternion[..., 3])
-    axis = quaternion[..., :3] * reciprocal_vector_norm(quaternion[..., :3], dim=-1, keepdim=True)
+    axis = quaternion[..., :3] / vector_norm(quaternion[..., :3], dim=-1, keepdim=True)
     if degrees:
         angle = torch.rad2deg(angle)
     return axis, angle
@@ -474,11 +473,10 @@ class Rotation(torch.nn.Module, Iterable['Rotation']):
             self._single = False
 
         if normalize:
-            inverse_norms = reciprocal_vector_norm(quaternions_, dim=-1, keepdim=True)
-            norms = inverse_norms.reciprocal()
+            norms = vector_norm(quaternions_, dim=-1, keepdim=True)
             if torch.any(torch.isclose(norms.float(), torch.tensor(0.0))):
                 raise ValueError('Found zero norm quaternion in `quaternions`.')
-            quaternions_ = quaternions_ * inverse_norms
+            quaternions_ = quaternions_ / norms
         elif copy:
             # no need to clone if we are normalizing
             quaternions_ = quaternions_.clone()

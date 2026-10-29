@@ -35,7 +35,6 @@ from mr2.utils.interpolate import interp, interpolate, apply_lowres
 from mr2.utils.RandomGenerator import RandomGenerator
 from mr2.utils.to_tuple import to_tuple
 from mr2.utils.ema import EMADict
-from mr2.utils.reciprocal_vector_norm import reciprocal_vector_norm
 from mr2.utils.vector_norm import vector_norm
 
 __all__ = [
@@ -57,7 +56,6 @@ __all__ = [
     'normalize_indices',
     'pad_or_crop',
     'ravel_multi_index',
-    'reciprocal_vector_norm',
     'reduce_repeat',
     'reduce_view',
     'reshape_broadcasted',
