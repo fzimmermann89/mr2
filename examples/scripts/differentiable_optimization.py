@@ -17,28 +17,23 @@
 # training step must propagate gradients through the estimator back to the CNN.
 # The signal model and the dictionary remain fixed during training.
 #
-# We generate random ellipse phantoms and train each CNN for 60 seconds on the CPU.
-# Validation selects a checkpoint; a separate test set measures the final errors.
-# The notebook takes a few minutes, including validation and plotting.
+# We train on random ellipse phantoms and compare the fitted maps on separate
+# validation phantoms at the end. Training uses a fixed number of epochs; runtime
+# depends on the CPU and the fitting method.
 
 # %%
 from collections.abc import Callable
 from copy import deepcopy
 from functools import partial
-from time import perf_counter
 
 import matplotlib.pyplot as plt
 import mr2
 import torch
 
-# One CPU thread avoids parallelization overhead for these small images.
-previous_threads = torch.get_num_threads()
-torch.set_num_threads(1)
 dtype = torch.float64
 image_size = mr2.data.SpatialDimension(z=1, y=64, x=64)
 echo_times = torch.linspace(0.01, 0.15, 8, dtype=dtype)
 signal_model = mr2.operators.models.MonoExponentialDecay(echo_times)
-training_seconds = 60.0
 batch_size = 1
 
 # %% [markdown]
@@ -54,8 +49,8 @@ batch_size = 1
 # $q_t(M_0,T_2)=M_0\exp(-t/T_2)$. $M_0$ controls the amplitude at zero echo time;
 # $T_2$ controls how quickly it decays. A longer $T_2$ gives a slower decay.
 # Echo times and $T_2$ are in seconds in the code.
-# Training uses 128 phantoms with new Gaussian noise at each update. Validation
-# and test each use 16 other phantoms with fixed noise. The noise standard deviation
+# Training uses 32 phantoms with new Gaussian noise at each update. Validation
+# uses 8 other phantoms with fixed noise. The noise standard deviation
 # varies between 0.015 and 0.045 per phantom. All random generators have fixed seeds.
 # We work with echo images here, without simulating a k-space acquisition.
 
@@ -95,11 +90,9 @@ def add_noise(echoes: torch.Tensor, rng: torch.Generator) -> torch.Tensor:
     return echoes + sigma * torch.randn(echoes.shape, generator=rng, dtype=dtype)
 
 
-train_echoes, train_m0, train_t2 = make_phantoms(128, seed=7)
-validation_echoes, validation_m0, validation_t2 = make_phantoms(16, seed=19)
-test_echoes, test_m0, test_t2 = make_phantoms(16, seed=47)
+train_echoes, train_m0, train_t2 = make_phantoms(32, seed=7)
+validation_echoes, validation_m0, validation_t2 = make_phantoms(8, seed=19)
 validation_data = add_noise(validation_echoes, torch.Generator().manual_seed(20))
-test_data = add_noise(test_echoes, torch.Generator().manual_seed(48))
 
 # %% [markdown]
 # Here are four training phantoms, with $M_0$ in the first row and $T_2$ in the
@@ -277,13 +270,11 @@ def dictionary_parameters(observations: torch.Tensor) -> tuple[torch.Tensor, tor
 
 
 # %% [markdown]
-# ## Check the derivatives
+# ## Define the parameter loss
 #
-# On one voxel, we compare the L-BFGS layer's implicit derivative with a centered
-# finite difference. We also check forward stationarity and Hessian eigenvalues.
-# For dictionary matching, we check recovery of a noise-free dictionary signal and
-# its input derivative. We choose a support point away from a lookup boundary so
-# the numerical perturbations keep the same dictionary entry.
+# We compare the fitted maps with their targets using MSE. Dividing by the widths
+# of the fitting ranges makes both errors dimensionless, so the units of $T_2$
+# do not determine its weight relative to $M_0$.
 
 
 # %%
@@ -296,81 +287,17 @@ def parameter_error(
     return m0_error + t2_error
 
 
-check_fit = mr2.operators.OptimizerOp(
-    objective_factory,
-    initializer,
-    optimize=partial(
-        mr2.algorithms.optimizers.lbfgs,
-        max_iterations=150,
-        max_evaluations=200,
-        tolerance_grad=1e-11,
-        tolerance_change=1e-15,
-    ),
-)
-# Keep the input differentiable, just as the CNN output will be during training.
-voxel = validation_data[:, 0, 32, 32].unsqueeze(1).clone().requires_grad_(True)
-u, v = check_fit(voxel, alpha)
-m0, t2 = constraints(u, v)
-loss = parameter_error(m0, t2, validation_m0[0, 32, 32], validation_t2[0, 32, 32])
-(derivative,) = torch.autograd.grad(loss, voxel)
-# For two variables, we can form the Hessian to check the local CG assumptions.
-point = torch.stack((u, v)).detach().requires_grad_(True)
-objective = objective_factory(voxel.detach(), alpha)
-(stationarity,) = torch.autograd.grad(objective(*point.unbind())[0], point)
-hessian = torch.autograd.functional.hessian(lambda w: objective(*w.unbind())[0], point).reshape(2, 2)
-assert stationarity.abs().max() < 1e-6
-assert torch.linalg.eigvalsh(hessian).min() > 0
-# Perturb only the third echo and refit to approximate dL/dy[2].
-perturbation = torch.zeros_like(voxel)
-perturbation[2] = 1e-4
-plus_m0, plus_t2 = constraints(*check_fit(voxel.detach() + perturbation, alpha))
-minus_m0, minus_t2 = constraints(*check_fit(voxel.detach() - perturbation, alpha))
-finite_difference = (
-    parameter_error(plus_m0, plus_t2, validation_m0[0, 32, 32], validation_t2[0, 32, 32])
-    - parameter_error(minus_m0, minus_t2, validation_m0[0, 32, 32], validation_t2[0, 32, 32])
-) / (2e-4)
-torch.testing.assert_close(derivative[2, 0], finite_difference, rtol=2e-3, atol=1e-6)
-
-reference_m0 = torch.tensor([0.95], dtype=dtype)
-reference_t2 = t2_grid[40:41]
-(reference_signal,) = signal_model(reference_m0, reference_t2)
-matched_m0, matched_t2 = dictionary_parameters(reference_signal)
-torch.testing.assert_close(matched_m0, reference_m0, rtol=1e-8, atol=1e-8)
-torch.testing.assert_close(matched_t2, reference_t2, rtol=1e-8, atol=1e-8)
-# gradcheck compares the refined output Jacobian with numerical derivatives.
-assert torch.autograd.gradcheck(dictionary_parameters, (reference_signal.requires_grad_(True),), fast_mode=True)
-{'L-BFGS echo gradient': derivative[2, 0].item(), 'finite difference': finite_difference.item()}
-
 # %% [markdown]
-# ## Define the CNN and validation loop
+# ## Define the CNN
 #
-# The CNN treats the eight echoes as channels. Its convolutions share weights
-# across spatial positions and use neighboring pixels to predict an additive echo
-# correction. The signal model instead expects the echo axis first, so we move
-# the axes before and after each CNN call.
+# The CNN treats the eight echoes as channels and predicts an additive correction.
+# The final convolution starts at zero, so the initial correction is zero.
+# The signal model expects the echo axis first; we move it to the channel position
+# for the CNN and move it back before fitting.
 #
-# We use the fitted parameters to compute the outer loss
-#
-# $$L=\operatorname{mean}\left[
-# \left(\frac{M_0^*-M_{0,\mathrm{true}}}{1.5\,\mathrm{a.u.}}\right)^2+
-# \left(\frac{T_2^*-T_{2,\mathrm{true}}}{0.215\,\mathrm{s}}\right)^2\right].$$
-#
-# Dividing by the widths of the fitting ranges makes the two squared errors
-# dimensionless; otherwise the numerical scales of $M_0$ and $T_2$ would determine
-# their relative weight. The training targets enter only this outer loss.
-#
-# We train separate copies of the same initialized CNN with Adam. The final
-# convolution starts at zero, so both CNNs initially pass the noisy echoes through.
-# Training shuffles the phantoms each epoch and draws new noise for every batch.
-# At each epoch boundary, we evaluate the full validation set and save the weights
-# if validation error improves. We also validate at the end of the time budget.
-#
-# Each method receives 60 seconds of training updates. Validation time is recorded
-# separately. The number of updates depends on the CPU and the fitting method, so
-# this is a comparison at a fixed training time rather than a fixed update count.
-# The random seeds are fixed, but the time limit makes the final update count vary.
-# Parameter-only supervision can also let the CNN compensate for fitting bias;
-# the corrected echoes need not equal the noise-free signals.
+# We train separate copies of this network for the two estimators. Only the CNN
+# weights change. Parameter-only supervision can compensate for fitting bias,
+# so the corrected echoes need not equal the noise-free signals.
 
 # %%
 Estimator = Callable[[torch.Tensor], tuple[torch.Tensor, torch.Tensor]]
@@ -388,151 +315,80 @@ with torch.no_grad():
         parameter.zero_()
 
 
-def evaluate(
-    cnn: torch.nn.Module,
-    estimate: Estimator,
-    observations: torch.Tensor,
-    target_m0: torch.Tensor,
-    target_t2: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Estimate a complete split in batches, with no gradient through the CNN."""
-    cnn.eval()
-    m0_batches, t2_batches = [], []
-    for start in range(0, observations.shape[1], batch_size):
-        batch = observations[:, start : start + batch_size]
-        # Disable the CNN graph for validation, then let the fitter use autograd.
-        with torch.no_grad():
-            corrected = batch + cnn(batch.movedim(0, 1)).movedim(1, 0)
-        # L-BFGS needs autograd internally even during evaluation.
-        m0, t2 = estimate(corrected)
-        m0_batches.append(m0.detach())
-        t2_batches.append(t2.detach())
-    result_m0, result_t2 = torch.cat(m0_batches), torch.cat(t2_batches)
-    assert torch.isfinite(parameter_error(result_m0, result_t2, target_m0, target_t2))
-    return result_m0, result_t2
+# %% [markdown]
+# ## Train through a parameter estimator
+#
+# Each batch passes through the CNN and then the parameter estimator. The loss
+# compares the fitted maps with the training targets. Calling ``backward`` sends
+# gradients through the estimator to the CNN; Adam then updates the CNN weights.
+# We shuffle the training phantoms and draw fresh noise each epoch.
 
 
-def train(estimate: Estimator) -> tuple[torch.nn.Module, list[tuple[float, float, float]], int, float]:
-    """Train for the CPU time budget and return the best validation checkpoint."""
+# %%
+def train(estimate: Estimator, epochs: int) -> tuple[torch.nn.Module, list[float]]:
+    """Train a copy of the CNN and record mean loss for each epoch."""
     cnn = deepcopy(initial_cnn)
     optimizer = torch.optim.Adam(cnn.parameters(), lr=1e-3)
-    sampling_rng = torch.Generator().manual_seed(100)
-    noise_rng = torch.Generator().manual_seed(101)
-    validation_started = perf_counter()
-    m0, t2 = evaluate(cnn, estimate, validation_data, validation_m0, validation_t2)
-    best_error = parameter_error(m0, t2, validation_m0, validation_t2).item()
-    # Keep a copy so later optimizer updates cannot modify the saved checkpoint.
-    best_state = deepcopy(cnn.state_dict())
-    validation_seconds = perf_counter() - validation_started
-    history = [(0.0, float('nan'), best_error)]
-    elapsed = 0.0
-    updates = 0
-    accumulated_loss = 0.0
-    accumulated_updates = 0
-    order = torch.randperm(len(train_m0), generator=sampling_rng)
-    offset = 0
-    while elapsed < training_seconds:
-        step_started = perf_counter()
-        indices = order[offset : offset + batch_size]
-        # Draw fresh observations from the clean training echoes at every update.
-        observations = add_noise(train_echoes[:, indices], noise_rng)
-        cnn.train()
-        optimizer.zero_grad()
-        # 1. CNN: echo-first images -> channel-first batch -> corrected echoes.
-        corrected = observations + cnn(observations.movedim(0, 1)).movedim(1, 0)
-        # 2. Fit each voxel's decay curve; only the CNN uses spatial neighbors.
-        m0, t2 = estimate(corrected)
-        # 3. Supervise physical parameters, not the corrected echo intensities.
-        loss = parameter_error(m0, t2, train_m0[indices], train_t2[indices])
-        assert torch.isfinite(loss)
-        # This crosses the implicit solve or dictionary refinement to reach the CNN.
-        loss.backward()
-        assert all(p.grad is not None and torch.isfinite(p.grad).all() for p in cnn.parameters())
-        optimizer.step()  # Update CNN weights; the estimator itself stays fixed.
-        accumulated_loss += loss.item()
-        accumulated_updates += 1
-        updates += 1
-        offset += batch_size
-        elapsed += perf_counter() - step_started
-        if offset == len(order) or elapsed >= training_seconds:
-            # Validation never calls backward or changes network weights.
-            validation_started = perf_counter()
-            m0, t2 = evaluate(cnn, estimate, validation_data, validation_m0, validation_t2)
-            validation_error = parameter_error(m0, t2, validation_m0, validation_t2).item()
-            history.append((elapsed, accumulated_loss / accumulated_updates, validation_error))
-            if validation_error < best_error:
-                best_error = validation_error
-                best_state = deepcopy(cnn.state_dict())
-            validation_seconds += perf_counter() - validation_started
-            accumulated_loss = 0.0
-            accumulated_updates = 0
-            order = torch.randperm(len(train_m0), generator=sampling_rng)
-            offset = 0
-    # Test evaluation uses this validation-selected checkpoint, not the last update.
-    cnn.load_state_dict(best_state)
-    return cnn, history, updates, validation_seconds
+    rng = torch.Generator().manual_seed(100)
+    losses = []
+    for epoch in range(epochs):
+        epoch_loss = 0.0
+        for indices in torch.randperm(len(train_m0), generator=rng).split(batch_size):
+            observations = add_noise(train_echoes[:, indices], rng)
+            optimizer.zero_grad()
+            # Correct the echoes, fit each voxel, then supervise the parameter maps.
+            corrected = observations + cnn(observations.movedim(0, 1)).movedim(1, 0)
+            m0, t2 = estimate(corrected)
+            loss = parameter_error(m0, t2, train_m0[indices], train_t2[indices])
+            loss.backward()
+            optimizer.step()
+            epoch_loss += loss.item() * len(indices)
+        losses.append(epoch_loss / len(train_m0))
+        print(f'Epoch {epoch + 1}: loss = {losses[-1]:.5f}')
+    return cnn, losses
 
 
 # %% [markdown]
-# ## Train through L-BFGS
+# ## Train with L-BFGS
 #
-# We first train through the L-BFGS fitting layer. Only the CNN weights change;
-# the signal model, parameter bounds and regularization weight stay fixed.
+# We run two epochs through the nonlinear fitting layer. Its backward pass uses
+# implicit differentiation. The objective, bounds and regularization stay fixed.
 
 # %%
-lbfgs_cnn, lbfgs_history, lbfgs_updates, lbfgs_validation_seconds = train(lbfgs_parameters)
-{
-    'training seconds': lbfgs_history[-1][0],
-    'updates': lbfgs_updates,
-    'validation seconds': lbfgs_validation_seconds,
-    'best validation error': min(row[2] for row in lbfgs_history),
-}
+lbfgs_cnn, lbfgs_losses = train(lbfgs_parameters, epochs=2)
 
 # %% [markdown]
-# ## Train through dictionary matching
+# ## Train with dictionary matching
 #
-# We now train another copy of the initial CNN through dictionary matching. We use
-# the same learning rate, training phantoms and noise generators. The dictionary
-# stays fixed. We run its small search kernel in eager mode to avoid compilation
-# startup time in this CPU example.
+# We train a fresh copy of the same CNN through the dictionary refinement.
+# Matching is cheaper per batch, so we run 20 epochs. The dictionary stays fixed.
+# These different update counts illustrate both approaches rather than a controlled
+# comparison of their training speed.
 
 # %%
-dictionary_cnn, dictionary_history, dictionary_updates, dictionary_validation_seconds = train(dictionary_parameters)
-{
-    'training seconds': dictionary_history[-1][0],
-    'updates': dictionary_updates,
-    'validation seconds': dictionary_validation_seconds,
-    'best validation error': min(row[2] for row in dictionary_history),
-}
+dictionary_cnn, dictionary_losses = train(dictionary_parameters, epochs=20)
 
 # %% [markdown]
-# ## Compare training and validation
+# ## Plot the training loss
 #
-# We plot mean training error over each interval and validation error at its end.
-# Training draws new noise each time; validation always uses the same observations.
-# The best validation checkpoint, including the initial CNN, is retained for each
-# method. Neither run uses the test set to select weights.
+# Each point is the mean parameter loss over one training epoch.
 
-# %% tags=["hide-input"] mystnb={"code_prompt_show": "Show learning curve plotting code"}
+# %% tags=["hide-input"] mystnb={"code_prompt_show": "Show loss plotting code"}
 fig, axes = plt.subplots(1, 2, figsize=(10, 3.5), sharey=True, layout='constrained')
-for axis, history, title in zip(
-    axes, (lbfgs_history, dictionary_history), ('CNN + L-BFGS', 'CNN + dictionary'), strict=True
+for axis, losses, title in zip(
+    axes, (lbfgs_losses, dictionary_losses), ('CNN + L-BFGS', 'CNN + dictionary'), strict=True
 ):
-    times, training_errors, validation_errors = zip(*history, strict=True)
-    axis.semilogy(times, training_errors, label='Training')
-    axis.semilogy(times, validation_errors, '--', label='Validation')
-    axis.set(xlabel='Training time (s)', ylabel='Normalized parameter error', title=title)
-    axis.legend()
+    axis.semilogy(range(1, len(losses) + 1), losses, '.-')
+    axis.set(xlabel='Epoch', ylabel='Normalized parameter error', title=title)
 plt.show()
 
 # %% [markdown]
-# ## Evaluate on the test phantoms
+# ## Compare validation examples
 #
-# We evaluate the selected checkpoints on the 16 test phantoms, using the same
-# noisy observations for both methods. We report the two trained estimators, using
-# `~mr2.operators.functionals.L1Norm` with averaging to compute mean absolute error
-# over all test voxels. The normalized parameter error uses
-# `~mr2.operators.functionals.MSE`, as in training.
+# After training, we apply both CNNs to the same noisy validation images.
+# We use the final weights directly. The validation targets enter only the metrics
+# and plots below. `~mr2.operators.functionals.L1Norm` with averaging gives mean
+# absolute error; `~mr2.operators.functionals.MSE` gives the normalized squared error.
 #
 # The two estimators solve different fitting problems: L-BFGS includes a quadratic
 # regularizer, whereas dictionary matching uses a discrete search and one refinement
@@ -540,18 +396,21 @@ plt.show()
 # than establishing their relative performance on measured MRI data.
 
 # %%
-test_predictions = {}
-test_metrics = {}
+validation_predictions = {}
+validation_metrics = {}
 for name, cnn, estimate in (
     ('L-BFGS', lbfgs_cnn, lbfgs_parameters),
     ('Dictionary', dictionary_cnn, dictionary_parameters),
 ):
-    m0, t2 = evaluate(cnn, estimate, test_data, test_m0, test_t2)
-    test_predictions[name] = (m0, t2)
-    test_metrics[name] = {
-        'M0 MAE (a.u.)': mr2.operators.functionals.L1Norm(test_m0, divide_by_n=True)(m0)[0].item(),
-        'T2 MAE (ms)': 1000 * mr2.operators.functionals.L1Norm(test_t2, divide_by_n=True)(t2)[0].item(),
-        'normalized parameter error': parameter_error(m0, t2, test_m0, test_t2).item(),
+    # Disable the CNN graph; L-BFGS still needs autograd inside its forward fit.
+    with torch.no_grad():
+        corrected = validation_data + cnn(validation_data.movedim(0, 1)).movedim(1, 0)
+    m0, t2 = (value.detach() for value in estimate(corrected))
+    validation_predictions[name] = (m0, t2)
+    validation_metrics[name] = {
+        'M0 MAE (a.u.)': mr2.operators.functionals.L1Norm(validation_m0, divide_by_n=True)(m0)[0].item(),
+        'T2 MAE (ms)': 1000 * mr2.operators.functionals.L1Norm(validation_t2, divide_by_n=True)(t2)[0].item(),
+        'normalized parameter error': parameter_error(m0, t2, validation_m0, validation_t2).item(),
     }
 
 # %% tags=["hide-input"] mystnb={"code_prompt_show": "Show metric table code"}
@@ -564,7 +423,7 @@ metric_rows = [
         f'{metrics["T2 MAE (ms)"]:.2f}',
         f'{metrics["normalized parameter error"]:.5f}',
     ]
-    for name, metrics in test_metrics.items()
+    for name, metrics in validation_metrics.items()
 ]
 table = axis.table(
     cellText=metric_rows,
@@ -579,18 +438,18 @@ table.scale(1, 1.6)
 plt.show()
 
 # %% [markdown]
-# We show three test phantoms with different tissue values. All $T_2$ maps use the
+# We show three validation phantoms with different tissue values. All $T_2$ maps use the
 # same color scale. The last two columns show the error of each trained estimator.
 
-# %% tags=["hide-input"] mystnb={"code_prompt_show": "Show test result plotting code"}
+# %% tags=["hide-input"] mystnb={"code_prompt_show": "Show validation plotting code"}
 fig, axes = plt.subplots(3, 5, figsize=(13, 8), layout='constrained')
-for row, index in enumerate((0, 5, 10)):
+for row, index in enumerate((0, 3, 6)):
     maps = (
-        test_t2[index],
-        test_predictions['L-BFGS'][1][index],
-        test_predictions['Dictionary'][1][index],
-        test_predictions['L-BFGS'][1][index] - test_t2[index],
-        test_predictions['Dictionary'][1][index] - test_t2[index],
+        validation_t2[index],
+        validation_predictions['L-BFGS'][1][index],
+        validation_predictions['Dictionary'][1][index],
+        validation_predictions['L-BFGS'][1][index] - validation_t2[index],
+        validation_predictions['Dictionary'][1][index] - validation_t2[index],
     )
     for column, (axis, image) in enumerate(zip(axes[row], maps, strict=True)):
         if column < 3:
@@ -605,4 +464,3 @@ for axis, title in zip(
 fig.colorbar(t2_image, ax=list(axes[:, :3].flatten()), label='$T_2$ (ms)', shrink=0.6)
 fig.colorbar(error_image, ax=list(axes[:, 3:].flatten()), label='Error (ms)', shrink=0.6)
 plt.show()
-torch.set_num_threads(previous_threads)
