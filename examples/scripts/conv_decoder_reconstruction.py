@@ -136,7 +136,7 @@ assert fidelity_history[-1] < fidelity_history[0]
 # includes phase differences as well as magnitude differences. To explore the
 # effect of stopping, change the iteration budget or noise level and rerun the
 # notebook from initialization.
-# %% tags=["hide-cell"] mystnb={"code_prompt_show": "Show plotting details"}
+# %% tags=["hide-input"] mystnb={"code_prompt_show": "Show plotting details"}
 fig, axes = plt.subplots(1, 2, figsize=(10, 3), constrained_layout=True)
 axes[0].semilogy(fidelity_history)
 axes[0].set(xlabel='Adam updates', ylabel='Mean squared acquired residual')
