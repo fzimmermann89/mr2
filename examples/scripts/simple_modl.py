@@ -41,7 +41,7 @@ device = torch.device('cpu')
 response = requests.get(
     'https://brainweb.bic.mni.mcgill.ca/cgi/brainweb1',
     params={
-        'do_download_alias': 'T1 ICBM normal 1mm pn0 rf0',
+        'do_download_alias': 'T1 ICBM normal 1mm pn0 rf0',  # typos: ignore
         'format_value': 'raw_byte',
         'zip_value': 'gnuzip',
         'download_for_real': '[Start download!]',
