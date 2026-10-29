@@ -79,17 +79,14 @@ class ConvolutionalAttention(Module):
             self.register_parameter('relative_position_bias_table', None)
 
     def _pack(self, x: torch.Tensor) -> torch.Tensor:
-        if self.mode == 'temporal':
-            return rearrange(x, 'b (heads c) t h w -> b heads t (c h w)', heads=self.n_heads)
-        patches_per_window = 2 if self.mode == 'local' else self.image_size // 4
-        x = rearrange(
-            x,
-            'b c t (gh nh ph) (gw nw pw) -> b t (gh gw) (nh nw) (ph pw c)',
-            nh=patches_per_window,
-            nw=patches_per_window,
-            ph=4,
-            pw=4,
-        )
+        match self.mode:
+            case 'temporal':
+                return rearrange(x, 'b (heads c) t h w -> b heads t (c h w)', heads=self.n_heads)
+            case 'local':
+                n = 2
+            case 'global':
+                n = self.image_size // 4
+        x = rearrange(x, 'b c t (gh nh ph) (gw nw pw) -> b t (gh gw) (nh nw) (ph pw c)', nh=n, nw=n, ph=4, pw=4)
         return rearrange(x, 'b t g s (heads d) -> b t g heads s d', heads=self.n_heads)
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
@@ -116,27 +113,20 @@ class ConvolutionalAttention(Module):
             bias = self.relative_position_bias_table[self.relative_position_index].permute(2, 0, 1)
             weights = weights + bias
         y = weights @ v
-        if self.mode == 'temporal':
-            y = rearrange(y, 'b heads t (c h w) -> b (heads c) t h w', h=x.shape[-2], w=x.shape[-1])
-        else:
-            y = rearrange(y, 'b t g heads s d -> b t g s (heads d)')
-            if self.mode == 'local':
+        match self.mode:
+            case 'temporal':
+                y = rearrange(y, 'b heads t (c h w) -> b (heads c) t h w', h=self.image_size, w=self.image_size)
+            case 'local' | 'global':
+                n = 2 if self.mode == 'local' else self.image_size // 4
+                g = self.image_size // (4 * n)
+                y = rearrange(y, 'b t g heads s d -> b t g s (heads d)')
                 y = rearrange(
                     y,
                     'b t (gh gw) (nh nw) (ph pw c) -> b c t (gh nh ph) (gw nw pw)',
-                    gh=x.shape[-2] // 8,
-                    gw=x.shape[-1] // 8,
-                    nh=2,
-                    nw=2,
-                    ph=4,
-                    pw=4,
-                )
-            else:
-                y = rearrange(
-                    y,
-                    'b t 1 (gh gw) (ph pw c) -> b c t (gh ph) (gw pw)',
-                    gh=x.shape[-2] // 4,
-                    gw=x.shape[-1] // 4,
+                    gh=g,
+                    gw=g,
+                    nh=n,
+                    nw=n,
                     ph=4,
                     pw=4,
                 )
