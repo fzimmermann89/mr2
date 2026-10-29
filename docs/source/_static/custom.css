@@ -206,6 +206,17 @@ dt.sig a:hover .linkcode-link {
     color: var(--color-brand-content);
 }
 
+/* The GitHub icon from sphinx_github_style is a black image; make it light in dark mode. */
+body[data-theme="dark"] .linkcode-link::after {
+    filter: invert(1);
+}
+
+@media (prefers-color-scheme: dark) {
+    body:not([data-theme="light"]) .linkcode-link::after {
+        filter: invert(1);
+    }
+}
+
 /* Parameter / returns field lists */
 dl.field-list > dt {
     font-size: 0.8rem;
@@ -322,10 +333,187 @@ mjx-container[display="true"] {
     overflow-y: hidden;
 }
 
+/* ---------- Breadcrumbs and build information ---------- */
+
+.mr2-breadcrumbs {
+    font-size: 0.85rem;
+    color: var(--color-foreground-muted);
+    margin-bottom: 1rem;
+    overflow-wrap: anywhere;
+}
+
+.mr2-breadcrumbs a {
+    color: var(--color-foreground-secondary);
+    text-decoration: none;
+}
+
+.mr2-breadcrumbs a:hover {
+    color: var(--color-brand-content);
+    text-decoration: underline;
+}
+
+.mr2-breadcrumbs-separator {
+    margin: 0 0.4em;
+    color: var(--color-foreground-border);
+}
+
+.mr2-build-info {
+    margin-top: 0.75rem;
+    font-size: var(--font-size--small--2);
+    color: var(--color-foreground-muted);
+}
+
+.mr2-build-info a {
+    color: inherit;
+}
+
+.announcement {
+    height: auto;
+    min-height: var(--header-height);
+}
+
+.announcement-content {
+    white-space: normal;
+    font-size: var(--font-size--small);
+}
+
+/* ---------- Landing page ---------- */
+
+body {
+    --sd-color-primary: #1f5fa8;
+    --sd-color-primary-highlight: #1a4f8b;
+    --sd-color-primary-text: #fff;
+    --sd-color-secondary: var(--color-foreground-secondary);
+    --sd-color-secondary-highlight: var(--color-brand-content);
+    --sd-color-secondary-text: var(--color-background-primary);
+    --sd-color-card-border: var(--mr2-border);
+    --sd-color-card-background: var(--color-background-primary);
+}
+
+.mr2-brand {
+    color: var(--color-brand-primary);
+}
+
+section.mr2-landing > h1 {
+    font-size: 2.8em;
+    font-weight: 800;
+    letter-spacing: -0.025em;
+    line-height: 1.1;
+    max-width: 16em;
+    margin-top: 1.5rem;
+}
+
+.mr2-hero {
+    margin: 1rem 0 2.5rem;
+}
+
+.mr2-eyebrow {
+    display: inline-block;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--color-brand-content);
+    border: 1px solid var(--mr2-border);
+    border-radius: 999px;
+    padding: 0.15rem 0.7rem;
+    margin: 0 0 1rem;
+}
+
+.mr2-lead {
+    font-size: 1.15em;
+    line-height: 1.6;
+    color: var(--color-foreground-secondary);
+}
+
+.mr2-buttons {
+    margin: 1.25rem 0 1.75rem;
+}
+
+.mr2-buttons > p {
+    display: inline-block;
+    margin: 0;
+}
+
+.mr2-buttons .sd-btn {
+    margin: 0.25rem 0.35rem 0.25rem 0;
+    padding: 0.45rem 1rem;
+    border-radius: var(--mr2-radius);
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.mr2-buttons .sd-btn-outline-secondary {
+    border-color: var(--mr2-border);
+    color: var(--color-foreground-primary);
+}
+
+.mr2-buttons .sd-btn-outline-secondary:hover {
+    border-color: var(--color-brand-content);
+    background: var(--mr2-surface);
+    color: var(--color-brand-content);
+}
+
+.sd-card.mr2-code-card {
+    border: 1px solid var(--mr2-border);
+    border-radius: 10px;
+    box-shadow: 0 6px 24px rgba(26, 79, 139, 0.12);
+}
+
+.mr2-code-card .sd-card-title {
+    font-family: var(--font-stack--monospace);
+    font-size: 0.8rem;
+    font-weight: 400;
+    color: var(--color-foreground-muted);
+}
+
+.mr2-code-card div[class*="highlight-"] {
+    border: none;
+    margin: 0;
+}
+
+.mr2-code-card pre {
+    font-size: 0.8rem;
+}
+
+.mr2-code-card .sd-card-footer {
+    border-top: none;
+    background: none;
+    text-align: right;
+    font-size: 0.9rem;
+}
+
+.mr2-cards .sd-card {
+    border: 1px solid var(--mr2-border);
+    border-radius: 8px;
+    box-shadow: none;
+    transition: border-color 0.15s ease-out, transform 0.15s ease-out;
+}
+
+.mr2-cards .sd-card:hover {
+    border-color: var(--color-brand-content);
+    transform: translateY(-1px);
+}
+
+.mr2-cards .sd-card-title {
+    font-size: 1rem;
+    font-weight: 650;
+    color: var(--color-foreground-primary);
+}
+
+.mr2-cards .sd-card-text,
+.mr2-cards .sd-card-body p {
+    font-size: 0.92rem;
+    color: var(--color-foreground-secondary);
+}
+
+.mr2-cards .sd-card-body div[class*="highlight-"] {
+    margin: 0.5rem 0;
+}
+
 /* ---------- Small screens ---------- */
 
 @media (max-width: 40em) {
-    article h1 {
+    article h1,
+    section.mr2-landing > h1 {
         font-size: 1.7em;
     }
 
