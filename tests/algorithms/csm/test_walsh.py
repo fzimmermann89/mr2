@@ -33,6 +33,44 @@ def test_walsh_extrapolates_to_low_signal_regions() -> None:
     assert torch.isfinite(csm).all()
 
 
+@pytest.mark.parametrize('dtype', [torch.complex64, torch.complex128])
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+def test_walsh_zero_signal_and_phase(dtype: torch.dtype, device: str) -> None:
+    """Preserve coil phases, dtype, and finite zero gradients in empty regions."""
+    weights = torch.tensor([1 + 2j, 2 - 1j, -1 + 1j], dtype=dtype, device=device)
+    images = weights[None, :, None, None, None].expand(2, 3, 1, 4, 4).clone()
+    images[0] = 0
+    images[..., -1, :] = 0
+    images.requires_grad_()
+
+    actual = walsh(images, smoothing_width=1)
+
+    expected = (weights / weights.norm())[None, :, None, None, None].expand_as(images).clone()
+    expected[0] = 0
+    expected[0, 0] = 1
+    expected[..., -1, :] = 0
+    expected[:, 0, :, -1, :] = 1
+    torch.testing.assert_close(actual, expected)
+    gradient = torch.autograd.grad(actual.real.sum(), images)[0]
+    assert torch.isfinite(gradient).all()
+    assert torch.count_nonzero(gradient[0]) == 0
+
+
+def test_walsh_normalization_gradient() -> None:
+    """Constant coil maps have the gradient of an analytically normalized vector."""
+    weights = torch.tensor([1 + 2j, 2 - 1j, -1 + 1j], dtype=torch.complex128, requires_grad=True)
+    images = weights[:, None, None, None].expand(3, 1, 4, 4)
+    actual = walsh(images, smoothing_width=1)[:, 0, 0, 0]
+    expected = weights / weights.norm()
+    probe = torch.tensor([2 - 1j, 1 + 3j, -2 + 1j], dtype=weights.dtype)
+
+    actual_gradient = torch.autograd.grad((actual * probe).real.sum(), weights)[0]
+    expected_gradient = torch.autograd.grad((expected * probe).real.sum(), weights)[0]
+
+    torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(actual_gradient, expected_gradient)
+
+
 def test_walsh_pools_echoes_without_phase_cancellation() -> None:
     """Opposite echo phases preserve shared maps and independent slice batches."""
     rng = RandomGenerator(0)

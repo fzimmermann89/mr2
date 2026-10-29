@@ -103,10 +103,11 @@ def walsh(
     # Power iterations for dominant eigenvector
     v = coil_covariance.sum(dim=-4)
     for _ in range(n_power_iterations):
-        v = v / (v.norm(dim=-4, keepdim=True) + eps)
+        # Reduce real magnitudes for a faster CPU norm, retaining zero-safe gradients.
+        v = v / (v.abs().norm(dim=-4, keepdim=True) + eps)
         v = einsum(coil_covariance, v, '... coil_out coil_in z y x, ... coil_in z y x -> ... coil_out z y x')
 
-    csm = v / (v.norm(dim=-4, keepdim=True) + eps)
+    csm = v / (v.abs().norm(dim=-4, keepdim=True) + eps)
 
     if align_phase:
         phase_reference = images[..., 0]
