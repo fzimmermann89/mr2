@@ -90,4 +90,3 @@ The official code was inspected at commit
 repository revision ``2e42c3d3581fabb9b7472f65b04417ae9112a368``. The upstream
 code and weights are provided for research and technical development; see their
 model card and ``LICENSE-SNRAware`` for attribution.
-
