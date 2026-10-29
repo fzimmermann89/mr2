@@ -68,9 +68,11 @@ not resizing the official weights. There is no fixed temporal extent in the
 native operations; official checkpoint parity is checked at one and sixteen frames.
 Call ``eval()`` for inference to disable stochastic depth.
 
-For larger images, use existing ``mr2.operators.PatchOp`` and its overlap-add
-adjoint with explicit padding and nonzero blend weights. This port adds no tiled
-inference API.
+For larger images, use existing ``mr2.operators.PatchOp`` with explicit padding.
+Its adjoint sums overlapping patches: assemble weighted predictions and their
+blend weights separately, reject a zero assembled weight, then divide the
+assembled predictions by the assembled weights before cropping the padding.
+This port adds no tiled inference API.
 
 Validation
 ----------
