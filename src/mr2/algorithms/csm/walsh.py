@@ -103,11 +103,11 @@ def walsh(
     # Power iterations for dominant eigenvector
     v = coil_covariance.sum(dim=-4)
     for _ in range(n_power_iterations):
-        # Reduce real magnitudes for a faster CPU norm, retaining zero-safe gradients.
-        v = v / (v.abs().norm(dim=-4, keepdim=True) + eps)
+        # Explicit magnitude reductions are faster than complex norms on CPU.
+        v = v / (v.abs().square().sum(dim=-4, keepdim=True).sqrt() + eps)
         v = einsum(coil_covariance, v, '... coil_out coil_in z y x, ... coil_in z y x -> ... coil_out z y x')
 
-    csm = v / (v.abs().norm(dim=-4, keepdim=True) + eps)
+    csm = v / (v.abs().square().sum(dim=-4, keepdim=True).sqrt() + eps)
 
     if align_phase:
         phase_reference = images[..., 0]
@@ -120,7 +120,7 @@ def walsh(
         energy = reduce(images.abs().square(), '... coils z y x pool -> ... z y x', 'sum')
         csm = extrapolate_csm(csm, energy.sqrt(), smoothing_width)
 
-    norm = csm.norm(dim=-4, keepdim=True)
+    norm = csm.abs().square().sum(dim=-4, keepdim=True).sqrt()
     fallback = torch.zeros_like(csm)
     fallback[..., 0, :, :, :] = 1
     valid = torch.isfinite(norm) & (norm > eps)

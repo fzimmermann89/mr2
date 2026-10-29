@@ -86,7 +86,8 @@ def inati(
     for _ in range(n_iterations):
         csm = coil_img * combined_img.conj().unsqueeze(-4)
         csm = uniform_filter(csm, width=smoothing_width.zyx, dim=(-3, -2, -1))
-        csm /= csm.norm(dim=-4, keepdim=True) + eps
+        # Explicit magnitude reductions are faster than complex norms on CPU.
+        csm /= csm.abs().square().sum(dim=-4, keepdim=True).sqrt() + eps
 
         combined_img = einsum(coil_img, csm.conj(), '... c z y x, ... c z y x -> ... z y x')
 
@@ -101,7 +102,7 @@ def inati(
         confidence = coil_img.abs().square().sum(dim=-4).sqrt()
         csm = extrapolate_csm(csm, confidence, smoothing_width)
 
-    norm = csm.norm(dim=-4, keepdim=True)
+    norm = csm.abs().square().sum(dim=-4, keepdim=True).sqrt()
     fallback = torch.zeros_like(csm)
     fallback[..., 0, :, :, :] = 1
     valid = torch.isfinite(norm) & (norm > eps)
