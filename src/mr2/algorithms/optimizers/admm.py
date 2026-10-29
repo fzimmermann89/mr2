@@ -365,8 +365,7 @@ def admm_l2(
     Raises
     ------
     ValueError
-        If the penalty or iteration/tolerance controls are invalid, the stopping
-        criterion is unknown, operator or functional dimensions are incompatible,
+        If the penalty is invalid, operator or functional dimensions are incompatible,
         or a callable update or its initial split state violates the tensor contract.
     """
     g_sum = ProximableFunctionalSeparableSum(g) if isinstance(g, ProximableFunctional) else g
@@ -377,8 +376,6 @@ def admm_l2(
         functional = None
         split_update = g_sum
 
-    if not isinstance(initial_values, torch.Tensor) and not len(initial_values):
-        raise ValueError('initial_values must contain at least one tensor')
     x_device = initial_values.device if isinstance(initial_values, torch.Tensor) else initial_values[0].device
     tau_ = torch.as_tensor(tau, device=x_device)
     if tau_.is_complex() or not torch.isfinite(tau_).all() or not (tau_ > 0).all():
@@ -389,12 +386,6 @@ def admm_l2(
         if tau_.numel() != 1:
             raise ValueError('tau must contain a single value for residual stopping')
         tau_ = tau_.reshape(())
-    if max_iterations < 0 or cg_max_iterations <= 0:
-        raise ValueError('max_iterations must be nonnegative and cg_max_iterations positive')
-    if not 0 <= tolerance < float('inf') or not 0 <= cg_tolerance < float('inf'):
-        raise ValueError('tolerance and cg_tolerance must be nonnegative finite')
-    if stopping_criterion not in ('solution', 'residual'):
-        raise ValueError("stopping_criterion must be 'solution' or 'residual'")
     inv_tau = tau_.reciprocal()
 
     op_matrix = LinearOperatorMatrix.from_diagonal(op) if isinstance(op, LinearOperator) else op
@@ -414,33 +405,19 @@ def admm_l2(
 
     x = to_tuple(n_x, initial_values)
     b_tuple = to_tuple(n_data_rows, b)
-    if len(b_tuple) != n_data_rows:
-        raise ValueError('b must have same length as rows of op')
     ax = a_matrix(*x)
     z = ax if initial_z is None else to_tuple(n_reg_rows, initial_z)
     u = tuple(torch.zeros_like(zi) for zi in z) if initial_u is None else to_tuple(n_reg_rows, initial_u)
-    if len(z) != n_reg_rows:
-        raise ValueError('initial_z must have same length as rows of a')
-    if len(u) != n_reg_rows:
-        raise ValueError('initial_u must have same length as rows of a')
-
-    def check_tensors(values: tuple[torch.Tensor, ...], name: str) -> None:
-        if (
-            not isinstance(values, tuple)
-            or len(values) != len(ax)
-            or any(
-                not isinstance(value, torch.Tensor)
-                or value.shape != reference.shape
-                or value.dtype != reference.dtype
-                or value.device != reference.device
-                for value, reference in zip(values, ax, strict=True)
-            )
-        ):
-            raise ValueError(f'{name} must preserve split tensor count, shape, dtype and device')
 
     if functional is None:
-        check_tensors(z, 'initial_z')
-        check_tensors(u, 'initial_u')
+        if any(
+            (zi.shape, zi.dtype, zi.device) != (ai.shape, ai.dtype, ai.device) for zi, ai in zip(z, ax, strict=True)
+        ):
+            raise ValueError('initial_z must match split shape, dtype and device')
+        if any(
+            (ui.shape, ui.dtype, ui.device) != (ai.shape, ai.dtype, ai.device) for ui, ai in zip(u, ax, strict=True)
+        ):
+            raise ValueError('initial_u must match split shape, dtype and device')
 
     def data_fidelity(*values: torch.Tensor) -> torch.Tensor:
         return 0.5 * _norm_squared(
@@ -465,8 +442,14 @@ def admm_l2(
         )
         ax = a_matrix(*x_new)
         z_new = split_update(*tuple(ax_i + ui for ax_i, ui in zip(ax, u, strict=True)), sigma=tau_)
-        if functional is None:
-            check_tensors(z_new, 'split update output')
+        if functional is None and (
+            len(z_new) != len(ax)
+            or any(
+                (zi.shape, zi.dtype, zi.device) != (ai.shape, ai.dtype, ai.device)
+                for zi, ai in zip(z_new, ax, strict=True)
+            )
+        ):
+            raise ValueError('split update output must preserve tensor count, shape, dtype and device')
         primal_residual = tuple(ax_i - zi for ax_i, zi in zip(ax, z_new, strict=True))
         u = tuple(ui + ri for ui, ri in zip(u, primal_residual, strict=True))
         if callback is not None or (stopping_criterion == 'residual' and tolerance > 0):
