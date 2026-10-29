@@ -7,6 +7,7 @@ from mr2.algorithms.csm.extrapolate import extrapolate_csm
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.utils.filters import uniform_filter
 from mr2.utils.reciprocal_vector_norm import reciprocal_vector_norm
+from mr2.utils.vector_norm import vector_norm
 
 
 def inati(
@@ -81,19 +82,19 @@ def inati(
         raise ValueError('kernel_size must be odd')
 
     d_sum = torch.sum(coil_img, dim=(-3, -2, -1))
-    d_sum *= reciprocal_vector_norm(d_sum, dim=-1, keepdim=True, eps=eps)
+    d_sum /= vector_norm(d_sum, dim=-1, keepdim=True) + eps
     combined_img = einsum(d_sum.conj(), coil_img, '... c, ... c z y x -> ... z y x')
 
     for _ in range(n_iterations):
         csm = coil_img * combined_img.conj().unsqueeze(-4)
         csm = uniform_filter(csm, width=smoothing_width.zyx, dim=(-3, -2, -1))
         # Explicit magnitude reductions are faster than complex norms on CPU.
-        csm *= reciprocal_vector_norm(csm, dim=-4, keepdim=True, eps=eps)
+        csm /= vector_norm(csm, dim=-4, keepdim=True) + eps
 
         combined_img = einsum(coil_img, csm.conj(), '... c z y x, ... c z y x -> ... z y x')
 
         d_sum = (csm * combined_img.unsqueeze(-4)).sum(dim=(-3, -2, -1))
-        d_sum *= reciprocal_vector_norm(d_sum, dim=-1, keepdim=True, eps=eps)
+        d_sum /= vector_norm(d_sum, dim=-1, keepdim=True) + eps
 
         phase = einsum(d_sum.conj(), csm, '... c, ... c z y x -> ... z y x').angle()
         combined_img *= torch.exp(1j * phase)
