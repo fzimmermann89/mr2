@@ -1,18 +1,19 @@
 # %% [markdown]
-# # Learning through a nonlinear qMRI fit
+# # Training through qMRI parameter estimation
 #
-# We train a small CNN through an L-BFGS fit of a mono-exponential signal model.
-# A residual CNN corrects the echo images before the fit. We compute the training
-# loss on the fitted $M_0$ and $T_2$ maps, learning the CNN weights and the fit's
-# regularization strength together. The use of a nonlinear fit as a trainable layer
-# follows the example in
-# [ImplicitOptimLayer](https://github.com/fzimmermann89/ImplicitOptimLayer/blob/master/nonlinearlayer.ipynb).
+# Here we train a CNN to correct noisy echo images using a loss on the fitted
+# $M_0$ and $T_2$ maps. We compare two parameter estimation methods:
+# `~mr2.operators.OptimizerOp` with L-BFGS and
+# `~mr2.operators.DifferentiableDictionaryMatchOp`.
+# Both use the same mono-exponential signal model and CNN architecture.
 #
-# We use random 32 x 32 ellipse phantoms and 40 training steps to keep the example
-# small enough for a short CPU run. We simulate noisy echo images and learn an
-# image-space correction; we do not simulate a k-space acquisition.
+# We generate random ellipse phantoms and train each CNN for 60 seconds on the CPU.
+# Validation selects a checkpoint; a separate test set measures the final errors.
+# The notebook takes a few minutes, including validation and plotting.
 
 # %%
+from collections.abc import Callable
+from copy import deepcopy
 from functools import partial
 from time import perf_counter
 
@@ -20,283 +21,492 @@ import matplotlib.pyplot as plt
 import torch
 from mr2.algorithms.optimizers import lbfgs
 from mr2.data import SpatialDimension
-from mr2.operators import ConstraintsOp, FunctionalType, OptimizerOp
+from mr2.operators import ConstraintsOp, DifferentiableDictionaryMatchOp, FunctionalType, OptimizerOp
 from mr2.operators.functionals import L2NormSquared
 from mr2.operators.models import MonoExponentialDecay
 from mr2.phantoms import EllipseParameters, EllipsePhantom
 
-# Small tensors run faster with one CPU thread. Restore the previous setting below.
+# One CPU thread avoids parallelization overhead for these small images.
 previous_threads = torch.get_num_threads()
 torch.set_num_threads(1)
-started = perf_counter()
 dtype = torch.float64
-image_size = SpatialDimension(z=1, y=32, x=32)
-echo_times = torch.linspace(0.01, 0.12, 6, dtype=dtype)
+image_size = SpatialDimension(z=1, y=64, x=64)
+echo_times = torch.linspace(0.01, 0.15, 8, dtype=dtype)
 signal_model = MonoExponentialDecay(echo_times)
+training_seconds = 60.0
+batch_size = 4
 
 # %% [markdown]
-# ## Generate training and validation phantoms
+# ## Generate phantoms
 #
-# Each phantom has three randomly placed ellipses with different amplitudes and
-# relaxation times. The two parameter maps share the ellipse boundaries. We add
-# Gaussian noise with standard deviation 0.025 to the simulated signals
-# $q_t(M_0,T_2)=M_0\exp(-t/T_2)$.
-# We use seconds for echo times and $T_2$, and arbitrary units for signal amplitude.
-# Training and validation use separate random seeds.
+# We vary the number, position and size of the ellipses. Each ellipse replaces the
+# underlying tissue values, so overlapping ellipses can form both bright and dark
+# regions. We draw $M_0$ and $T_2$ independently, including the background values.
+# Each map contains between three and twelve ellipses, with $M_0$ between 0.55 and
+# 1.4 arbitrary units and $T_2$ between 35 and 180 ms.
+#
+# We simulate eight echoes using
+# $q_t(M_0,T_2)=M_0\exp(-t/T_2)$. Echo times and $T_2$ are in seconds in the code.
+# Training uses 128 phantoms with new Gaussian noise at each update. Validation
+# and test each use 16 other phantoms with fixed noise. The noise standard deviation
+# varies between 0.015 and 0.045 per phantom. All random generators have fixed seeds.
+# We work with echo images here, without simulating a k-space acquisition.
 
 
 # %%
-def make_data(count: int, seed: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Simulate noisy echoes and parameter maps for random ellipse phantoms."""
+def make_phantoms(count: int, seed: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Generate clean echoes and parameter maps with overlapping random ellipses."""
     rng = torch.Generator().manual_seed(seed)
     m0_maps, t2_maps = [], []
     for _ in range(count):
-        geometry = torch.rand((3, 4), generator=rng)
-        m0_ellipses, t2_ellipses = [], []
-        for center_x, center_y, radius_x, radius_y in geometry:
-            shape = {
-                'center_x': 0.5 * (center_x.item() - 0.5),
-                'center_y': 0.5 * (center_y.item() - 0.5),
-                'radius_x': 0.08 + 0.13 * radius_x.item(),
-                'radius_y': 0.08 + 0.13 * radius_y.item(),
-            }
-            m0_ellipses.append(EllipseParameters(**shape, intensity=0.08 + 0.12 * torch.rand((), generator=rng).item()))
-            t2_ellipses.append(
-                EllipseParameters(**shape, intensity=0.01 + 0.015 * torch.rand((), generator=rng).item())
+        m0 = torch.full((image_size.y, image_size.x), 0.55 + 0.85 * torch.rand((), generator=rng).item())
+        t2 = torch.full_like(m0, 0.035 + 0.145 * torch.rand((), generator=rng).item())
+        ellipse_count = int(torch.randint(3, 13, (), generator=rng))
+        for center_x, center_y, radius_x, radius_y in torch.rand((ellipse_count, 4), generator=rng):
+            ellipse = EllipseParameters(
+                center_x=0.8 * (center_x.item() - 0.5),
+                center_y=0.8 * (center_y.item() - 0.5),
+                radius_x=0.025 + 0.235 * radius_x.item(),
+                radius_y=0.025 + 0.235 * radius_y.item(),
+                intensity=1,
             )
-        m0_maps.append(0.7 + EllipsePhantom(m0_ellipses).image_space(image_size).real.squeeze())
-        t2_maps.append(0.055 + EllipsePhantom(t2_ellipses).image_space(image_size).real.squeeze())
+            mask = EllipsePhantom([ellipse]).image_space(image_size).real.squeeze() > 0
+            m0[mask] = 0.55 + 0.85 * torch.rand((), generator=rng).item()
+            t2[mask] = 0.035 + 0.145 * torch.rand((), generator=rng).item()
+        m0_maps.append(m0)
+        t2_maps.append(t2)
     m0, t2 = torch.stack(m0_maps).to(dtype), torch.stack(t2_maps).to(dtype)
-    (signal,) = signal_model(m0, t2)  # (echo, phantom, y, x)
-    noisy = signal + 0.025 * torch.randn(signal.shape, generator=rng, dtype=dtype)
-    return noisy, m0, t2
+    (echoes,) = signal_model(m0, t2)  # (echo, phantom, y, x)
+    return echoes, m0, t2
 
 
-train_data, train_m0, train_t2 = make_data(8, seed=7)
-validation_data, validation_m0, validation_t2 = make_data(4, seed=19)
+def add_noise(echoes: torch.Tensor, rng: torch.Generator) -> torch.Tensor:
+    """Add Gaussian noise with a separate standard deviation for each phantom."""
+    sigma = 0.015 + 0.03 * torch.rand((1, echoes.shape[1], 1, 1), generator=rng, dtype=dtype)
+    return echoes + sigma * torch.randn(echoes.shape, generator=rng, dtype=dtype)
+
+
+train_echoes, train_m0, train_t2 = make_phantoms(128, seed=7)
+validation_echoes, validation_m0, validation_t2 = make_phantoms(16, seed=19)
+test_echoes, test_m0, test_t2 = make_phantoms(16, seed=47)
+validation_data = add_noise(validation_echoes, torch.Generator().manual_seed(20))
+test_data = add_noise(test_echoes, torch.Generator().manual_seed(48))
 
 # %% [markdown]
-# ## Set up the nonlinear fitting layer
+# Here are four training phantoms, with $M_0$ in the first row and $T_2$ in the
+# second row. We use the same color scales for all four phantoms.
+
+# %% tags=["hide-input"] mystnb={"code_prompt_show": "Show phantom plotting code"}
+fig, axes = plt.subplots(2, 4, figsize=(10, 5), layout='constrained')
+for index in range(4):
+    m0_image = axes[0, index].imshow(train_m0[index], vmin=0.55, vmax=1.4, cmap='gray')
+    t2_image = axes[1, index].imshow(1000 * train_t2[index], vmin=35, vmax=180, cmap='viridis')
+    axes[0, index].set_title(f'Phantom {index + 1}')
+    axes[0, index].set_axis_off()
+    axes[1, index].set_axis_off()
+fig.colorbar(m0_image, ax=list(axes[0]), label='$M_0$ (a.u.)', shrink=0.8)
+fig.colorbar(t2_image, ax=list(axes[1]), label='$T_2$ (ms)', shrink=0.8)
+plt.show()
+
+# %% [markdown]
+# ## Fit the parameters with L-BFGS
 #
-# `~mr2.operators.ConstraintsOp` maps dimensionless variables $u,v$ to physical
-# parameters using sigmoid transforms: $M_0\in(0.5,1.5)$ and $T_2\in(0.03,0.18)$ s.
-# For CNN-corrected echo images $\widetilde y$, the inner fit minimizes
+# We first use `~mr2.operators.OptimizerOp` to minimize a nonlinear least-squares
+# objective. `~mr2.operators.ConstraintsOp` maps dimensionless variables $u,v$ to
+# $M_0\in(0.3,1.8)$ and $T_2\in(0.015,0.23)$ s using sigmoid transforms.
+# For corrected echo images $\widetilde y$, the fit minimizes
 #
-# $$F(u,v;\widetilde y,\alpha)=\tfrac12\|q(C(u,v))-\widetilde y\|_2^2
-#       +\tfrac\alpha2\big(\|u\|_2^2+\|v\|_2^2\big).$$
+# $$F(u,v;\widetilde y)=\tfrac12\|q(C(u,v))-\widetilde y\|_2^2
+#                  +\tfrac\alpha2\big(\|u\|_2^2+\|v\|_2^2\big).$$
 #
-# The quadratic term pulls the fit towards the midpoints of the parameter ranges.
-#
-# We use `~mr2.operators.OptimizerOp` with an objective factory and an initializer.
-# Both receive the corrected observations and weight. ``@`` composes the squared norm
-# with the nonlinear model. ``|`` adds functionals acting on separate inputs.
-# The objective returns a one-element tuple containing its scalar value;
-# the fit returns a tuple with the two fitted variables.
+# We fix $\alpha=10^{-3}$ for this example. The quadratic term pulls the solution
+# towards the midpoints of the parameter ranges. The factory builds the objective;
+# the initializer supplies two starting tensors. Both receive the fit inputs.
+# ``@`` composes operators, and ``|`` adds scalar functionals acting on separate
+# inputs. We call operators as ``op(x)`` and unpack their tuple outputs.
 
 # %%
-constraints = ConstraintsOp(bounds=((0.5, 1.5), (0.03, 0.18))).double()
+constraints = ConstraintsOp(bounds=((0.3, 1.8), (0.015, 0.23))).double()
 constrained_model = signal_model @ constraints
+alpha = torch.tensor(1e-3, dtype=dtype)
 
 
-def objective_factory(observations: torch.Tensor, alpha: torch.Tensor) -> FunctionalType:
-    """Build the nonlinear least-squares objective for the corrected echoes."""
+def objective_factory(observations: torch.Tensor, weight: torch.Tensor) -> FunctionalType:
+    """Build the nonlinear fitting objective for the corrected echoes."""
     data_term = 0.5 * L2NormSquared(observations) @ constrained_model
-    regularizer = alpha * (0.5 * L2NormSquared() | 0.5 * L2NormSquared())
+    regularizer = weight * (0.5 * L2NormSquared() | 0.5 * L2NormSquared())
     return data_term + regularizer
 
 
-def initializer(observations: torch.Tensor, _alpha: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+def initializer(observations: torch.Tensor, _weight: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     """Start at the midpoints of the physical parameter ranges."""
     return torch.zeros_like(observations[0]), torch.zeros_like(observations[0])
 
 
 fit = OptimizerOp(
-    factory=objective_factory,
-    initializer=initializer,
-    optimize=partial(lbfgs, max_iterations=40, max_evaluations=60, tolerance_grad=1e-7, tolerance_change=1e-10),
+    objective_factory,
+    initializer,
+    optimize=partial(lbfgs, max_iterations=60, max_evaluations=90, tolerance_grad=1e-7, tolerance_change=1e-11),
 )
 
-# %% [markdown]
-# The L-BFGS function detaches its initial values. We pass the corrected echoes and
-# learnable weight as explicit fit inputs. The CNN receives gradients through the
-# data term in the objective. Using its output only as an initializer would not
-# provide this gradient.
-#
-# ## Check the implicit derivative on one voxel
-#
-# At a stationary solution $w^*=(u^*,v^*)$, with objective parameters
-# $p=(\widetilde y,\alpha)$, implicit differentiation solves
-#
-# $$H^T z=\nabla_w L,\qquad
-#   \nabla_p L=-\left(\frac{\partial\nabla_w F}{\partial p}\right)^Tz,
-#   \quad H=\nabla_w^2 F(w^*,p).$$
-#
-# `OptimizerOp` uses Hessian-vector products and CG for this backward solve.
-# Its current backward uses at most 50 iterations and an absolute residual tolerance
-# of $10^{-6}$. The L-BFGS options above control only the forward fit.
-# Both solves must converge, and the Hessian must be positive definite for CG.
-# The nonlinear objective need not be convex everywhere; this derivative follows a
-# local stationary solution and does not describe jumps between different minima.
-#
-# Unrolling would differentiate individual optimizer updates and retain their graph.
-# Here we differentiate the stationarity equation. Calling MRtwo's L-BFGS function
-# directly returns detached results, so it does not provide an unrolled derivative.
-# We check stationarity and Hessian eigenvalues on one voxel, then compare the
-# derivatives with respect to the weight and one echo with centered finite
-# differences using tighter forward settings.
 
+def lbfgs_parameters(observations: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Estimate physical parameters with the differentiable L-BFGS layer."""
+    u, v = fit(observations, alpha)
+    m0, t2 = constraints(u, v)
+    return m0, t2
+
+
+# %% [markdown]
+# The forward pass runs L-BFGS. In the backward pass, `OptimizerOp` differentiates
+# the stationarity equation at the fitted solution $w^*=(u^*,v^*)$:
+#
+# $$H^Tz=\nabla_w L,\qquad
+# \nabla_{\widetilde y}L=-\left(
+# \frac{\partial\nabla_w F}{\partial\widetilde y}\right)^Tz,
+# \qquad H=\nabla_w^2F(w^*,\widetilde y).$$
+#
+# It uses CG and Hessian-vector products for this backward solve. The current
+# implementation uses at most 50 CG iterations with absolute residual tolerance
+# $10^{-6}$, independently of the forward L-BFGS settings. Both solves must converge,
+# and the Hessian must be positive definite for CG. The derivative follows a local
+# stationary solution; it does not describe jumps between different minima.
+#
+# Unrolling would differentiate the optimizer updates and store their graph.
+# Here we differentiate the stationarity equation. MRtwo's L-BFGS function returns
+# detached results, so calling it directly does not give an unrolled derivative.
+# Initial values are also detached. The CNN receives gradients because its corrected
+# echoes enter the objective, rather than only providing an initialization.
+
+# %% [markdown]
+# ## Estimate the parameters with dictionary matching
+#
+# `~mr2.operators.DifferentiableDictionaryMatchOp` first finds the dictionary signal
+# with the largest normalized correlation. It estimates $M_0$ as a signal scaling
+# factor, then takes one Gauss-Newton step using precomputed signal derivatives.
+# We store 96 $T_2$ values covering the phantom range with some margin.
+# ``index_of_scaling_parameter=0`` identifies $M_0$ as the scaling parameter.
+#
+# The dictionary lookup is discrete and has no derivative. Autograd differentiates
+# the refinement with the selected entry held fixed. This gives a local derivative
+# with respect to the corrected echoes, not a smooth derivative across changes in
+# the selected entry. One refinement step also need not reach a nonlinear minimum.
 
 # %%
+dictionary_match = DifferentiableDictionaryMatchOp[torch.Tensor, torch.Tensor](
+    signal_model, index_of_scaling_parameter=0, batch_size=4096
+)
+t2_grid = torch.linspace(0.025, 0.22, 96, dtype=dtype)
+dictionary_match.append(torch.ones_like(t2_grid), t2_grid)
+
+
+def dictionary_parameters(observations: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Match and refine the corrected echoes without compilation startup time."""
+    # The search kernel is normally compiled. Eager execution suits this short CPU run.
+    with torch.compiler.set_stance('force_eager'):
+        m0, t2 = dictionary_match(observations)
+    return m0, t2
+
+
+# %% [markdown]
+# ## Check the derivatives
+#
+# On one voxel, we compare the L-BFGS layer's implicit derivative with a centered
+# finite difference. We also check forward stationarity and Hessian eigenvalues.
+# For dictionary matching, we check recovery of a noise-free dictionary signal and
+# its input derivative. We choose a support point away from a lookup boundary so
+# the numerical perturbations keep the same dictionary entry.
+
+
+# %% tags=["hide-input"] mystnb={"code_prompt_show": "Show numerical checks"}
 def parameter_error(
     m0: torch.Tensor, t2: torch.Tensor, target_m0: torch.Tensor, target_t2: torch.Tensor
 ) -> torch.Tensor:
-    """Normalize parameter errors by the widths of their physical ranges."""
-    return ((m0 - target_m0).square() + ((t2 - target_t2) / 0.15).square()).mean()
+    """Normalize squared errors by the widths of the fitting ranges."""
+    return (((m0 - target_m0) / 1.5).square() + ((t2 - target_t2) / 0.215).square()).mean()
 
 
 check_fit = OptimizerOp(
     objective_factory,
     initializer,
-    optimize=partial(lbfgs, max_iterations=100, max_evaluations=150, tolerance_grad=1e-11, tolerance_change=1e-15),
+    optimize=partial(lbfgs, max_iterations=150, max_evaluations=200, tolerance_grad=1e-11, tolerance_change=1e-15),
 )
-center = image_size.x // 2
-voxel = train_data[:, 0, center, center].unsqueeze(1).clone().requires_grad_(True)
-alpha_check = torch.tensor(0.05, dtype=dtype, requires_grad=True)
-check_u, check_v = check_fit(voxel, alpha_check)
-check_m0, check_t2 = constraints(check_u, check_v)
-target_m0, target_t2 = train_m0[0, center, center], train_t2[0, center, center]
-check_loss = parameter_error(check_m0, check_t2, target_m0, target_t2)
-implicit_gradient, signal_gradient = torch.autograd.grad(check_loss, (alpha_check, voxel))
-point = torch.stack((check_u, check_v)).detach().requires_grad_(True)
-objective = objective_factory(voxel.detach(), alpha_check)
-(value,) = objective(*point.unbind())
-(stationarity,) = torch.autograd.grad(value, point)
+voxel = validation_data[:, 0, 32, 32].unsqueeze(1).clone().requires_grad_(True)
+u, v = check_fit(voxel, alpha)
+m0, t2 = constraints(u, v)
+loss = parameter_error(m0, t2, validation_m0[0, 32, 32], validation_t2[0, 32, 32])
+(derivative,) = torch.autograd.grad(loss, voxel)
+point = torch.stack((u, v)).detach().requires_grad_(True)
+objective = objective_factory(voxel.detach(), alpha)
+(stationarity,) = torch.autograd.grad(objective(*point.unbind())[0], point)
 hessian = torch.autograd.functional.hessian(lambda w: objective(*w.unbind())[0], point).reshape(2, 2)
 assert stationarity.abs().max() < 1e-6
 assert torch.linalg.eigvalsh(hessian).min() > 0
-step = 1e-3
-plus_m0, plus_t2 = constraints(*check_fit(voxel.detach(), alpha_check.detach() + step))
-minus_m0, minus_t2 = constraints(*check_fit(voxel.detach(), alpha_check.detach() - step))
+perturbation = torch.zeros_like(voxel)
+perturbation[2] = 1e-4
+plus_m0, plus_t2 = constraints(*check_fit(voxel.detach() + perturbation, alpha))
+minus_m0, minus_t2 = constraints(*check_fit(voxel.detach() - perturbation, alpha))
 finite_difference = (
-    parameter_error(plus_m0, plus_t2, target_m0, target_t2) - parameter_error(minus_m0, minus_t2, target_m0, target_t2)
-) / (2 * step)
-torch.testing.assert_close(implicit_gradient, finite_difference, rtol=2e-3, atol=1e-6)
-echo_step = torch.zeros_like(voxel)
-echo_step[2] = 1e-4
-plus_m0, plus_t2 = constraints(*check_fit(voxel.detach() + echo_step, alpha_check.detach()))
-minus_m0, minus_t2 = constraints(*check_fit(voxel.detach() - echo_step, alpha_check.detach()))
-echo_difference = (
-    parameter_error(plus_m0, plus_t2, target_m0, target_t2) - parameter_error(minus_m0, minus_t2, target_m0, target_t2)
+    parameter_error(plus_m0, plus_t2, validation_m0[0, 32, 32], validation_t2[0, 32, 32])
+    - parameter_error(minus_m0, minus_t2, validation_m0[0, 32, 32], validation_t2[0, 32, 32])
 ) / (2e-4)
-torch.testing.assert_close(signal_gradient[2, 0], echo_difference, rtol=2e-3, atol=1e-6)
-{
-    'weight gradient': implicit_gradient.item(),
-    'weight finite difference': finite_difference.item(),
-    'echo gradient': signal_gradient[2, 0].item(),
-    'echo finite difference': echo_difference.item(),
-}
+torch.testing.assert_close(derivative[2, 0], finite_difference, rtol=2e-3, atol=1e-6)
+
+reference_m0 = torch.tensor([0.95], dtype=dtype)
+reference_t2 = t2_grid[40:41]
+(reference_signal,) = signal_model(reference_m0, reference_t2)
+matched_m0, matched_t2 = dictionary_parameters(reference_signal)
+torch.testing.assert_close(matched_m0, reference_m0, rtol=1e-8, atol=1e-8)
+torch.testing.assert_close(matched_t2, reference_t2, rtol=1e-8, atol=1e-8)
+assert torch.autograd.gradcheck(dictionary_parameters, (reference_signal.requires_grad_(True),), fast_mode=True)
+{'L-BFGS echo gradient': derivative[2, 0].item(), 'finite difference': finite_difference.item()}
 
 # %% [markdown]
-# ## Train a CNN through the fitted parameter maps
+# ## Define the CNN and validation loop
 #
-# The CNN takes six echo images as channels and predicts an additive correction.
-# We initialize the last convolution to zero, so the initial fit receives the noisy
-# images unchanged. We train with Adam on batches of two phantoms. The outer loss
-# uses fitted parameters, normalized by their range widths:
+# The CNN predicts a residual correction to the eight echo images. We use the
+# fitted parameters to compute the outer loss
 #
-# $$L=\operatorname{mean}\left[(M_0^*-M_{0,\mathrm{true}})^2
-#             +\left(\frac{T_2^*-T_{2,\mathrm{true}}}{0.15\,\mathrm{s}}\right)^2\right].$$
+# $$L=\operatorname{mean}\left[
+# \left(\frac{M_0^*-M_{0,\mathrm{true}}}{1.5\,\mathrm{a.u.}}\right)^2+
+# \left(\frac{T_2^*-T_{2,\mathrm{true}}}{0.215\,\mathrm{s}}\right)^2\right].$$
 #
-# We optimize $\alpha=\exp(\theta)$ to keep the regularization weight positive.
-# The synthetic targets enter only the outer loss. With parameter-only supervision,
-# the CNN can compensate for the fit's regularization; its corrected echoes need
-# not equal the noise-free signals. We evaluate the fixed validation set before and
-# after training. These small phantoms do not establish performance on measured MRI.
+# We train separate copies of the same initialized CNN with Adam. The final
+# convolution starts at zero, so both CNNs initially pass the noisy echoes through.
+# Training shuffles the phantoms each epoch and draws new noise for every batch.
+# At each epoch boundary, we evaluate the full validation set and save the weights
+# if validation error improves. We also validate at the end of the time budget.
+#
+# Each method receives 60 seconds of training updates. Validation time is recorded
+# separately. The number of updates depends on the CPU and the fitting method, so
+# this is a comparison at a fixed training time rather than a fixed update count.
+# The random seeds are fixed, but the time limit makes the final update count vary.
+# Parameter-only supervision can also let the CNN compensate for fitting bias;
+# the corrected echoes need not equal the noise-free signals.
 
 # %%
+Estimator = Callable[[torch.Tensor], tuple[torch.Tensor, torch.Tensor]]
 with torch.random.fork_rng():
-    torch.manual_seed(7)
-    cnn = torch.nn.Sequential(
-        torch.nn.Conv2d(6, 8, 3, padding=1), torch.nn.Tanh(), torch.nn.Conv2d(8, 6, 3, padding=1)
+    torch.manual_seed(42)
+    initial_cnn = torch.nn.Sequential(
+        torch.nn.Conv2d(8, 16, 3, padding=1),
+        torch.nn.ReLU(),
+        torch.nn.Conv2d(16, 16, 3, padding=1),
+        torch.nn.ReLU(),
+        torch.nn.Conv2d(16, 8, 3, padding=1),
     ).double()
 with torch.no_grad():
-    for parameter in cnn[-1].parameters():
+    for parameter in initial_cnn[-1].parameters():
         parameter.zero_()
-log_alpha = torch.nn.Parameter(torch.tensor(-3.0, dtype=dtype))
-outer_optimizer = torch.optim.Adam([*cnn.parameters(), log_alpha], lr=0.003)
 
-# CNN layout: (phantom, echo, y, x). Signal-model layout: (echo, phantom, y, x).
-initial_u, initial_v = fit(validation_data, log_alpha.exp().detach())
-initial_m0, initial_t2 = (x.detach() for x in constraints(initial_u, initial_v))
-initial_error = parameter_error(initial_m0, initial_t2, validation_m0, validation_t2)
 
-training_started = perf_counter()
-loss_history = []
-for iteration in range(40):
-    indices = torch.arange(2) + 2 * (iteration % 4)
-    observations = train_data[:, indices]
-    outer_optimizer.zero_grad()
-    corrected = observations + cnn(observations.movedim(0, 1)).movedim(1, 0)
-    u, v = fit(corrected, log_alpha.exp())
-    m0, t2 = constraints(u, v)
-    loss = parameter_error(m0, t2, train_m0[indices], train_t2[indices])
-    loss_history.append(loss.item())
-    loss.backward()
-    assert all(p.grad is not None and torch.isfinite(p.grad).all() for p in cnn.parameters())
-    assert log_alpha.grad is not None and torch.isfinite(log_alpha.grad)
-    outer_optimizer.step()
-training_seconds = perf_counter() - training_started
+def evaluate(
+    cnn: torch.nn.Module,
+    estimate: Estimator,
+    observations: torch.Tensor,
+    target_m0: torch.Tensor,
+    target_t2: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Estimate a complete split in batches, with no gradient through the CNN."""
+    cnn.eval()
+    m0_batches, t2_batches = [], []
+    for start in range(0, observations.shape[1], batch_size):
+        batch = observations[:, start : start + batch_size]
+        with torch.no_grad():
+            corrected = batch + cnn(batch.movedim(0, 1)).movedim(1, 0)
+        # L-BFGS needs autograd internally even during evaluation.
+        m0, t2 = estimate(corrected)
+        m0_batches.append(m0.detach())
+        t2_batches.append(t2.detach())
+    result_m0, result_t2 = torch.cat(m0_batches), torch.cat(t2_batches)
+    assert torch.isfinite(parameter_error(result_m0, result_t2, target_m0, target_t2))
+    return result_m0, result_t2
 
-# L-BFGS uses autograd internally, so keep it enabled when evaluating the fit.
-corrected_validation = validation_data + cnn(validation_data.movedim(0, 1)).movedim(1, 0).detach()
-learned_u, learned_v = fit(corrected_validation, log_alpha.exp().detach())
-learned_m0, learned_t2 = (x.detach() for x in constraints(learned_u, learned_v))
-learned_error = parameter_error(learned_m0, learned_t2, validation_m0, validation_t2)
-assert learned_error < initial_error
-# Check stationarity of the complete validation fit, not only the one-voxel example.
-validation_point = tuple(x.detach().requires_grad_(True) for x in (learned_u, learned_v))
-validation_objective = objective_factory(corrected_validation, log_alpha.exp().detach())
-validation_gradient = torch.autograd.grad(validation_objective(*validation_point)[0], validation_point)
-max_validation_residual = max(g.abs().max().item() for g in validation_gradient)
-assert max_validation_residual < 1e-4
+
+def train(estimate: Estimator) -> tuple[torch.nn.Module, list[tuple[float, float, float]], int, float]:
+    """Train for the CPU time budget and return the best validation checkpoint."""
+    cnn = deepcopy(initial_cnn)
+    optimizer = torch.optim.Adam(cnn.parameters(), lr=1e-3)
+    sampling_rng = torch.Generator().manual_seed(100)
+    noise_rng = torch.Generator().manual_seed(101)
+    validation_started = perf_counter()
+    m0, t2 = evaluate(cnn, estimate, validation_data, validation_m0, validation_t2)
+    best_error = parameter_error(m0, t2, validation_m0, validation_t2).item()
+    best_state = deepcopy(cnn.state_dict())
+    validation_seconds = perf_counter() - validation_started
+    history = [(0.0, float('nan'), best_error)]
+    elapsed = 0.0
+    updates = 0
+    accumulated_loss = 0.0
+    accumulated_updates = 0
+    order = torch.randperm(len(train_m0), generator=sampling_rng)
+    offset = 0
+    while elapsed < training_seconds:
+        step_started = perf_counter()
+        indices = order[offset : offset + batch_size]
+        observations = add_noise(train_echoes[:, indices], noise_rng)
+        cnn.train()
+        optimizer.zero_grad()
+        corrected = observations + cnn(observations.movedim(0, 1)).movedim(1, 0)
+        m0, t2 = estimate(corrected)
+        loss = parameter_error(m0, t2, train_m0[indices], train_t2[indices])
+        assert torch.isfinite(loss)
+        loss.backward()
+        assert all(p.grad is not None and torch.isfinite(p.grad).all() for p in cnn.parameters())
+        optimizer.step()
+        accumulated_loss += loss.item()
+        accumulated_updates += 1
+        updates += 1
+        offset += batch_size
+        elapsed += perf_counter() - step_started
+        if offset == len(order) or elapsed >= training_seconds:
+            validation_started = perf_counter()
+            m0, t2 = evaluate(cnn, estimate, validation_data, validation_m0, validation_t2)
+            validation_error = parameter_error(m0, t2, validation_m0, validation_t2).item()
+            history.append((elapsed, accumulated_loss / accumulated_updates, validation_error))
+            if validation_error < best_error:
+                best_error = validation_error
+                best_state = deepcopy(cnn.state_dict())
+            validation_seconds += perf_counter() - validation_started
+            accumulated_loss = 0.0
+            accumulated_updates = 0
+            order = torch.randperm(len(train_m0), generator=sampling_rng)
+            offset = 0
+    cnn.load_state_dict(best_state)
+    return cnn, history, updates, validation_seconds
+
+
+# %% [markdown]
+# ## Train through L-BFGS
+#
+# We first train through the L-BFGS fitting layer. Only the CNN weights change;
+# the signal model, parameter bounds and regularization weight stay fixed.
+
+# %%
+lbfgs_cnn, lbfgs_history, lbfgs_updates, lbfgs_validation_seconds = train(lbfgs_parameters)
 {
-    'initial validation error': initial_error.item(),
-    'trained validation error': learned_error.item(),
-    'learned alpha': log_alpha.exp().item(),
-    'training seconds': training_seconds,
-    'max validation stationarity residual': max_validation_residual,
+    'training seconds': lbfgs_history[-1][0],
+    'updates': lbfgs_updates,
+    'validation seconds': lbfgs_validation_seconds,
+    'best validation error': min(row[2] for row in lbfgs_history),
 }
 
 # %% [markdown]
-# ## Compare validation maps
+# ## Train through dictionary matching
 #
-# We show one phantom from the validation set, using the same color scale for all
-# $T_2$ maps. The initial fit uses the noisy echoes. After training, the fit uses
-# the CNN-corrected echoes and learned weight. The loss curve shows the successive
-# training batches, so adjacent points may correspond to different phantoms.
+# We now train another copy of the initial CNN through dictionary matching. We use
+# the same learning rate, training phantoms and noise generators. The dictionary
+# stays fixed. We run its small search kernel in eager mode to avoid compilation
+# startup time in this CPU example.
 
-# %% tags=["hide-input"] mystnb={"code_prompt_show": "Show plotting code"}
-fig, axes = plt.subplots(2, 3, figsize=(10, 6), layout='constrained')
-for axis, image, title in zip(
-    axes[0],
-    (validation_t2[0], initial_t2[0], learned_t2[0]),
-    ('Target $T_2$', 'Initial fit', 'Trained CNN + fit'),
-    strict=True,
+# %%
+dictionary_cnn, dictionary_history, dictionary_updates, dictionary_validation_seconds = train(dictionary_parameters)
+{
+    'training seconds': dictionary_history[-1][0],
+    'updates': dictionary_updates,
+    'validation seconds': dictionary_validation_seconds,
+    'best validation error': min(row[2] for row in dictionary_history),
+}
+
+# %% [markdown]
+# ## Compare training and validation
+#
+# We plot mean training error over each interval and validation error at its end.
+# Training draws new noise each time; validation always uses the same observations.
+# The best validation checkpoint, including the initial CNN, is retained for each
+# method. Neither run uses the test set to select weights.
+
+# %% tags=["hide-input"] mystnb={"code_prompt_show": "Show learning curve plotting code"}
+fig, axes = plt.subplots(1, 2, figsize=(10, 3.5), layout='constrained')
+for axis, history, title in zip(
+    axes, (lbfgs_history, dictionary_history), ('CNN + L-BFGS', 'CNN + dictionary'), strict=True
 ):
-    im = axis.imshow(1000 * image, vmin=45, vmax=130, cmap='viridis')
-    axis.set_title(title)
-    axis.set_axis_off()
-fig.colorbar(im, ax=list(axes[0]), label='$T_2$ (ms)', shrink=0.8)
-axes[1, 0].imshow(validation_m0[0], cmap='gray', vmin=0.7, vmax=1.3)
-axes[1, 0].set_title('Target $M_0$ (a.u.)')
-axes[1, 0].set_axis_off()
-axes[1, 1].semilogy(loss_history)
-axes[1, 1].set(xlabel='Outer step', ylabel='Normalized parameter error', title='Training loss')
-error_image = axes[1, 2].imshow(1000 * (learned_t2[0] - validation_t2[0]), cmap='RdBu_r', vmin=-25, vmax=25)
-axes[1, 2].set_title('Trained $T_2$ error')
-axes[1, 2].set_axis_off()
-fig.colorbar(error_image, ax=axes[1, 2], label='Error (ms)', shrink=0.8)
+    times, training_errors, validation_errors = zip(*history, strict=True)
+    axis.semilogy(times, training_errors, label='Training')
+    axis.semilogy(times, validation_errors, label='Validation')
+    axis.set(xlabel='Training time (s)', ylabel='Normalized parameter error', title=title)
+    axis.legend()
 plt.show()
-total_seconds = perf_counter() - started
+
+# %% [markdown]
+# ## Evaluate on the test phantoms
+#
+# We evaluate the selected checkpoints on the 16 test phantoms, using the same
+# noisy observations for both methods. For comparison, we also fit those observations
+# with the initial CNN, which makes no correction. We report mean absolute error
+# over all test voxels for $M_0$ and $T_2$, and the normalized squared parameter error.
+#
+# The two estimators solve different fitting problems: L-BFGS includes a quadratic
+# regularizer, whereas dictionary matching uses a discrete search and one refinement
+# step. These phantoms therefore illustrate training through each estimator, rather
+# than establishing their relative performance on measured MRI data.
+
+# %%
+test_predictions = {}
+test_metrics = {}
+for name, cnn, estimate in (
+    ('L-BFGS, initial', initial_cnn, lbfgs_parameters),
+    ('L-BFGS, trained', lbfgs_cnn, lbfgs_parameters),
+    ('Dictionary, initial', initial_cnn, dictionary_parameters),
+    ('Dictionary, trained', dictionary_cnn, dictionary_parameters),
+):
+    m0, t2 = evaluate(cnn, estimate, test_data, test_m0, test_t2)
+    test_predictions[name] = (m0, t2)
+    test_metrics[name] = {
+        'M0 MAE (a.u.)': (m0 - test_m0).abs().mean().item(),
+        'T2 MAE (ms)': 1000 * (t2 - test_t2).abs().mean().item(),
+        'normalized parameter error': parameter_error(m0, t2, test_m0, test_t2).item(),
+    }
+
+# %% tags=["hide-input"] mystnb={"code_prompt_show": "Show metric table code"}
+fig, axis = plt.subplots(figsize=(10, 2), layout='constrained')
+axis.set_axis_off()
+metric_rows = [
+    [
+        name,
+        f'{metrics["M0 MAE (a.u.)"]:.4f}',
+        f'{metrics["T2 MAE (ms)"]:.2f}',
+        f'{metrics["normalized parameter error"]:.5f}',
+    ]
+    for name, metrics in test_metrics.items()
+]
+table = axis.table(
+    cellText=metric_rows,
+    colLabels=('Estimator', '$M_0$ MAE (a.u.)', '$T_2$ MAE (ms)', 'Normalized error'),
+    colWidths=(0.32, 0.23, 0.23, 0.22),
+    cellLoc='center',
+    loc='center',
+)
+table.auto_set_font_size(False)
+table.set_fontsize(10)
+table.scale(1, 1.6)
+plt.show()
+
+# %% [markdown]
+# We show three test phantoms with different tissue values. All $T_2$ maps use the
+# same color scale. The last two columns show the error of each trained estimator.
+
+# %% tags=["hide-input"] mystnb={"code_prompt_show": "Show test result plotting code"}
+fig, axes = plt.subplots(3, 5, figsize=(13, 8), layout='constrained')
+for row, index in enumerate((0, 5, 10)):
+    maps = (
+        test_t2[index],
+        test_predictions['L-BFGS, trained'][1][index],
+        test_predictions['Dictionary, trained'][1][index],
+        test_predictions['L-BFGS, trained'][1][index] - test_t2[index],
+        test_predictions['Dictionary, trained'][1][index] - test_t2[index],
+    )
+    for column, (axis, image) in enumerate(zip(axes[row], maps, strict=True)):
+        if column < 3:
+            t2_image = axis.imshow(1000 * image, vmin=35, vmax=180, cmap='viridis')
+        else:
+            error_image = axis.imshow(1000 * image, vmin=-30, vmax=30, cmap='RdBu_r')
+        axis.set_axis_off()
+for axis, title in zip(
+    axes[0], ('Target $T_2$', 'CNN + L-BFGS', 'CNN + dictionary', 'L-BFGS error', 'Dictionary error'), strict=True
+):
+    axis.set_title(title)
+fig.colorbar(t2_image, ax=list(axes[:, :3].flatten()), label='$T_2$ (ms)', shrink=0.6)
+fig.colorbar(error_image, ax=list(axes[:, 3:].flatten()), label='Error (ms)', shrink=0.6)
+plt.show()
 torch.set_num_threads(previous_threads)
-{'total compute and plotting seconds': round(total_seconds, 2)}
