@@ -204,7 +204,7 @@ def test_dcf_voronoi_float64(device: str, ndim: int) -> None:
 def test_dcf_3d_voronoi_near_duplicate(offset: float) -> None:
     """A second point very close to a grid point shares the cell of that grid point.
 
-    The public function merges both pairs before passing the points to Qhull.
+    The public function merges the 1e-12 pair before Qhull; the 1e-6 pair remains separate.
     """
     grid = torch.stack(torch.meshgrid(*[torch.arange(6.0, dtype=torch.float64)] * 3, indexing='ij')).reshape(3, -1)
     index = 3 * 36 + 3 * 6 + 2
