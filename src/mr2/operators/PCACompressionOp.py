@@ -137,3 +137,7 @@ class PCACompressionOp(LinearOperator):
     def compression_matrix(self) -> torch.Tensor:
         """Get the compression matrix."""
         return self._compression_matrix
+
+    def _pinv(self, *, tolerance: float, max_iterations: int) -> LinearOperator:  # noqa: ARG002
+        """Return the exact pseudoinverse on the declared tensor spaces."""
+        return self.H

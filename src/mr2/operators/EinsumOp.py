@@ -101,3 +101,11 @@ class EinsumOp(LinearOperator):
         """
         x = einsum(self.matrix.conj(), y, self._adjoint_pattern)
         return (x,)
+
+    def _pinv(self, *, tolerance: float, max_iterations: int) -> LinearOperator:
+        """Return a pseudoinverse using the verified structure of this operator."""
+        if ''.join(self._forward_pattern.split()) == '...,...->...':
+            from mr2.operators.PseudoInverseOp import _DiagonalPseudoInverse
+
+            return _DiagonalPseudoInverse(self, 'matrix')
+        return super()._pinv(tolerance=tolerance, max_iterations=max_iterations)
