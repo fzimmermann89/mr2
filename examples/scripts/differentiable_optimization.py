@@ -31,7 +31,7 @@ import mr2
 import torch
 
 dtype = torch.float64
-image_size = mr2.data.SpatialDimension(z=1, y=64, x=64)
+image_size = mr2.data.SpatialDimension(z=1, y=32, x=32)
 echo_times = torch.linspace(0.01, 0.15, 8, dtype=dtype)
 signal_model = mr2.operators.models.MonoExponentialDecay(echo_times)
 batch_size = 1
@@ -181,10 +181,10 @@ fit = mr2.operators.OptimizerOp(
     initializer,
     optimize=partial(
         mr2.algorithms.optimizers.lbfgs,
-        max_iterations=60,
-        max_evaluations=90,
+        max_iterations=30,
+        max_evaluations=45,
         tolerance_grad=1e-7,
-        tolerance_change=1e-11,
+        tolerance_change=1e-9,
     ),
 )
 
@@ -306,8 +306,6 @@ with torch.random.fork_rng():
     initial_cnn = torch.nn.Sequential(
         torch.nn.Conv2d(8, 16, 3, padding=1),
         torch.nn.ReLU(),
-        torch.nn.Conv2d(16, 16, 3, padding=1),
-        torch.nn.ReLU(),
         torch.nn.Conv2d(16, 8, 3, padding=1),
     ).double()
 with torch.no_grad():
@@ -351,19 +349,20 @@ def train(estimate: Estimator, epochs: int) -> tuple[torch.nn.Module, list[float
 # %% [markdown]
 # ## Train with L-BFGS
 #
-# We run two epochs through the nonlinear fitting layer. Its backward pass uses
+# We run 20 epochs through the nonlinear fitting layer. The backward pass uses
 # implicit differentiation. The objective, bounds and regularization stay fixed.
+# We use small images and a shallow CNN so the short CPU run includes enough
+# updates to learn spatial corrections to the echoes.
 
 # %%
-lbfgs_cnn, lbfgs_losses = train(lbfgs_parameters, epochs=2)
+lbfgs_cnn, lbfgs_losses = train(lbfgs_parameters, epochs=20)
 
 # %% [markdown]
 # ## Train with dictionary matching
 #
 # We train a fresh copy of the same CNN through the dictionary refinement.
-# Matching is cheaper per batch, so we run 20 epochs. The dictionary stays fixed.
-# These different update counts illustrate both approaches rather than a controlled
-# comparison of their training speed.
+# We run 20 epochs here too. The dictionary stays fixed.
+# The two estimators have different forward and backward costs.
 
 # %%
 dictionary_cnn, dictionary_losses = train(dictionary_parameters, epochs=20)
@@ -371,7 +370,9 @@ dictionary_cnn, dictionary_losses = train(dictionary_parameters, epochs=20)
 # %% [markdown]
 # ## Plot the training loss
 #
-# Each point is the mean parameter loss over one training epoch.
+# Each point is the mean parameter loss over one training epoch. Fresh noise and
+# shuffled batches make individual epochs fluctuate; we look for a decrease over
+# the full run.
 
 # %% tags=["hide-input"] mystnb={"code_prompt_show": "Show loss plotting code"}
 fig, axes = plt.subplots(1, 2, figsize=(10, 3.5), sharey=True, layout='constrained')
