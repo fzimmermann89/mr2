@@ -4,13 +4,14 @@ from collections.abc import Callable, Sequence
 
 import torch
 from torch.optim import Adam, AdamW
+from typing_extensions import Unpack
 
 from mr2.algorithms.optimizers.OptimizerStatus import OptimizerStatus
 from mr2.operators.Operator import OperatorType
 
 
 def adam(
-    f: OperatorType,
+    f: OperatorType | Callable[[Unpack[tuple[torch.Tensor, ...]]], tuple[torch.Tensor]],
     initial_parameters: Sequence[torch.Tensor],
     *,
     max_iterations: int = 100,

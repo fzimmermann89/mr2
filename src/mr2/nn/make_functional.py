@@ -1,30 +1,50 @@
 """Expose network weights as the inputs of an MR2 operator."""
 
-from collections.abc import Sequence
-
 import torch
 from torch import nn
 from torch.func import functional_call
 from typing_extensions import Unpack
 
-from mr2.operators.Operator import Operator
+from mr2.operators.Operator import Operator, OperatorType
 
 
 class _FunctionalModuleOp(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]]):
-    """Evaluate a module using explicit trainable weights and forward inputs."""
+    """Evaluate a module using explicit trainable weights and forward inputs.
 
-    def __init__(self, module: nn.Module, names: Sequence[str]) -> None:
-        """Store the module, parameter order and initial buffers."""
+    Buffers are captured at construction and copied for each call so updates
+    do not accumulate or change the original module.
+    """
+
+    def __init__(self, module: nn.Module, names: tuple[str, ...]) -> None:
+        """Store the module and capture its buffers.
+
+        Parameters
+        ----------
+        module
+            Module to evaluate with replacement weights.
+        names
+            Names of trainable parameters, in operator input order.
+        """
         super().__init__()
         self.module = module
-        self.names = tuple(names)
+        self.names = names
         self._buffer_names = tuple(name for name, _ in module.named_buffers())
         self._buffer_state = nn.Module()
         for index, buffer in enumerate(module.buffers()):
             self._buffer_state.register_buffer(str(index), buffer.clone())
 
     def forward(self, *args: torch.Tensor) -> tuple[torch.Tensor, ...]:
-        """Read weights first, then pass the remaining arguments to the module."""
+        """Evaluate with replacement weights followed by positional inputs.
+
+        Parameters
+        ----------
+        args
+            Trainable parameter tensors in the stored order, then module inputs.
+
+        Returns
+        -------
+            Module outputs as a tuple of tensors.
+        """
         n_params = len(self.names)
         if len(args) < n_params:
             raise ValueError(f'Expected at least {n_params} parameter tensors, got {len(args)} arguments.')
@@ -43,7 +63,7 @@ class _FunctionalModuleOp(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch
 
 def make_functional(
     module: nn.Module,
-) -> tuple[Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]]:
+) -> tuple[OperatorType, tuple[torch.Tensor, ...]]:
     """Expose module weights and forward inputs as explicit operator arguments.
 
     The returned operator represents ``G(*params, *inputs) = module(*inputs)``
@@ -71,35 +91,23 @@ def make_functional(
 
     Notes
     -----
-    Buffers are copied when this adapter is created and cloned for every
-    evaluation. Running-statistic updates therefore affect neither the original
-    module nor subsequent evaluations. The module's training/evaluation mode is
-    retained; random operations such as dropout remain random.
-
-    Inputs are supplied on each evaluation and are not captured by this helper.
-    Passing ``(*params, z)`` as an optimizer's initial values optimizes both the
-    weights and the input. To keep ``z`` fixed, use a closure such as
-    ``lambda *p: objective(*p, z)`` and optimize only ``params``.
-
-    The module is held by reference. Set its device, dtype and mode before
-    creating the adapter, and keep the parameter structure unchanged. Supplied
-    inputs must use compatible devices and dtypes. In-place mutation of weights
-    or inputs in ``forward`` is not supported. This function does not change
-    whether an optimizer differentiates through its iterations.
+    Buffers are captured once and copied per call; updates do not persist.
+    The module is held by reference: prepare its device, dtype and mode first,
+    and keep its parameter structure unchanged. In-place changes to weights
+    or inputs are unsupported. Disable checkpointing inside the module: backward
+    would use the original weights. Checkpoint the returned operator instead.
 
     Examples
     --------
-    Fit a linear generator and its input jointly:
+    Fit weights and input jointly, or keep the input fixed with a closure:
 
     >>> from mr2.algorithms.optimizers import adam
     >>> from mr2.operators.functionals import L2NormSquared
-    >>> net = nn.Linear(2, 1)
+    >>> generator, params = make_functional(nn.Linear(2, 1))
     >>> z = torch.ones(1, 2)
-    >>> target = torch.ones(1, 1)
-    >>> generator, params = make_functional(net)
-    >>> objective = 0.5 * L2NormSquared(target) @ generator
-    >>> fitted = adam(objective, (*params, z))
-    >>> image, = generator(*fitted)
+    >>> objective = L2NormSquared(torch.ones(1, 1)) @ generator
+    >>> fitted = adam(objective, (*params, z))  # fit weights and input
+    >>> fitted_params = adam(lambda *p: objective(*p, z), params)  # fit weights only
     """
     named = [(name, parameter) for name, parameter in module.named_parameters() if parameter.requires_grad]
     names = tuple(name for name, _ in named)

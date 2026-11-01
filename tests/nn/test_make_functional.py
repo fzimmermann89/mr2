@@ -8,6 +8,7 @@ from mr2.operators import Operator
 from mr2.operators.functionals import L2NormSquared
 from torch import nn
 from torch.nn.utils import parametrize
+from torch.utils.checkpoint import checkpoint
 
 
 @pytest.mark.parametrize('dtype', [torch.float32, torch.float64, torch.complex64, torch.complex128])
@@ -146,25 +147,6 @@ def test_buffer_snapshot_in_eval_mode() -> None:
     torch.testing.assert_close(module.running_mean, torch.full((2,), 10.0))
 
 
-def test_adam_composed_objective() -> None:
-    """Optimize the exposed weights through a composed functional, not the input."""
-    module = nn.Linear(2, 1, bias=False)
-    nn.init.zeros_(module.weight)
-    z = torch.tensor([[1.0, 2.0]])
-    operator, params = make_functional(module)
-    objective = 0.5 * L2NormSquared(torch.ones(1, 1)) @ operator
-
-    class FixedInput(Operator):
-        def forward(self, *p: torch.Tensor) -> tuple[torch.Tensor, ...]:
-            return objective(*p, z)
-
-    fitted = adam(FixedInput(), params, learning_rate=0.05, max_iterations=50)
-    (loss,) = objective(*fitted, z)
-    assert loss < 1e-3
-    torch.testing.assert_close(module.weight, torch.zeros_like(module.weight))
-    torch.testing.assert_close(z, torch.tensor([[1.0, 2.0]]))
-
-
 def test_higher_order_derivatives() -> None:
     """Keep gradients through parameter substitution for second derivatives."""
     operator, _ = make_functional(nn.Linear(2, 1, bias=False).double())
@@ -174,28 +156,33 @@ def test_higher_order_derivatives() -> None:
     assert torch.autograd.gradgradcheck(operator, (weight, x))
 
 
-def test_joint_weight_and_input_optimization() -> None:
-    """Fit both weights and the latent input through the composed operator."""
+@pytest.mark.parametrize('fit_input', [False, True])
+def test_optimization(fit_input: bool) -> None:
+    """Fit weights, optionally with the input, without changing initial tensors."""
     module = nn.Linear(1, 1, bias=False)
     nn.init.constant_(module.weight, 0.25)
     z = torch.ones(1, 1)
     operator, params = make_functional(module)
     objective = 0.5 * L2NormSquared(torch.ones(1, 1)) @ operator
-    fitted = adam(objective, (*params, z), learning_rate=0.05, max_iterations=100)
+    if fit_input:
+        fitted = adam(objective, (*params, z), learning_rate=0.05, max_iterations=100)
+        assert not torch.allclose(fitted[-1], z)
+    else:
+        fitted = (*adam(lambda *p: objective(*p, z), params, learning_rate=0.05, max_iterations=100), z)
     (loss,) = objective(*fitted)
     assert loss < 1e-3
     assert not torch.allclose(fitted[0], params[0])
-    assert not torch.allclose(fitted[-1], z)
     torch.testing.assert_close(module.weight, torch.full_like(module.weight, 0.25))
     torch.testing.assert_close(z, torch.ones_like(z))
 
 
-def test_inputs_are_not_bound() -> None:
-    """Reuse the same adapter and weights with different forward inputs."""
+def test_checkpoint_operator() -> None:
+    """Recompute with supplied weights when checkpointing the returned operator."""
     module = nn.Linear(1, 1, bias=False)
     nn.init.ones_(module.weight)
-    operator, params = make_functional(module)
-    (first,) = operator(*params, torch.tensor([[2.0]]))
-    (second,) = operator(*params, torch.tensor([[3.0]]))
-    torch.testing.assert_close(first, torch.tensor([[2.0]]))
-    torch.testing.assert_close(second, torch.tensor([[3.0]]))
+    operator, _ = make_functional(module)
+    weight = torch.tensor([[3.0]], requires_grad=True)
+    x = torch.tensor([[2.0]], requires_grad=True)
+    (output,) = checkpoint(operator, weight, x, use_reentrant=False)
+    torch.testing.assert_close(output, torch.tensor([[6.0]]))
+    torch.testing.assert_close(torch.autograd.grad(output.sum(), (weight, x)), (x, weight))
