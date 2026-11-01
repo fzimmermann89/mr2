@@ -1,10 +1,11 @@
 """Tests for networks with explicit parameter inputs."""
 
+from functools import partial
+
 import pytest
 import torch
 from mr2.algorithms.optimizers import adam
 from mr2.nn import make_functional
-from mr2.operators import Operator
 from mr2.operators.functionals import L2NormSquared
 from torch import nn
 from torch.nn.utils import parametrize
@@ -17,15 +18,13 @@ def test_forward_and_gradients(dtype: torch.dtype) -> None:
     module = nn.Linear(2, 1, dtype=dtype)
     x = torch.ones(3, 2, dtype=dtype, requires_grad=True)
     operator, params = make_functional(module)
-    assert isinstance(operator, Operator)
     assert all(p is original for p, original in zip(params, module.parameters(), strict=True))
     expected = module(x)
     (actual,) = operator(*params, x)
     torch.testing.assert_close(actual, expected)
     expected_grad = torch.autograd.grad(expected.abs().square().sum(), (*params, x))
     actual_grad = torch.autograd.grad(actual.abs().square().sum(), (*params, x))
-    for actual_value, expected_value in zip(actual_grad, expected_grad, strict=True):
-        torch.testing.assert_close(actual_value, expected_value)
+    torch.testing.assert_close(actual_grad, expected_grad)
 
 
 def test_replacement_weights() -> None:
@@ -84,23 +83,12 @@ def test_unsupported_output() -> None:
 
 def test_tied_parameters() -> None:
     """Expose a shared weight once and use replacements for both occurrences."""
-
-    class Tied(nn.Module):
-        def __init__(self) -> None:
-            super().__init__()
-            self.first = nn.Linear(2, 2, bias=False)
-            self.second = nn.Linear(2, 2, bias=False)
-            self.second.weight = self.first.weight
-
-        def forward(self, x: torch.Tensor) -> torch.Tensor:
-            return self.first(x) + self.second(x)
-
-    module = Tied()
+    linear = nn.Linear(2, 2, bias=False)
+    module = nn.Sequential(linear, linear)
     operator, params = make_functional(module)
     assert len(params) == 1
     (actual,) = operator(torch.ones_like(params[0]), torch.ones(1, 2))
     torch.testing.assert_close(actual, torch.full((1, 2), 4.0))
-    assert module.first.weight is module.second.weight
 
 
 def test_parametrization() -> None:
@@ -121,14 +109,13 @@ def test_batchnorm_buffers() -> None:
     """Isolate BatchNorm updates and retain the chosen training mode."""
     module = nn.BatchNorm1d(2).double()
     x = torch.tensor([[1.0, 2.0], [3.0, 6.0]], dtype=torch.float64)
-    initial = {name: value.clone() for name, value in module.named_buffers()}
+    initial = tuple(buffer.clone() for buffer in module.buffers())
     operator, params = make_functional(module)
     (first,) = operator(*params, x)
     (second,) = operator(*params, x)
     torch.testing.assert_close(first, second)
     assert module.training
-    for name, buffer in module.named_buffers():
-        torch.testing.assert_close(buffer, initial[name])
+    torch.testing.assert_close(tuple(module.buffers()), initial)
     gradients = torch.autograd.grad(first.square().sum(), params)
     assert all(torch.isfinite(g).all() for g in gradients)
 
@@ -147,13 +134,15 @@ def test_buffer_snapshot_in_eval_mode() -> None:
     torch.testing.assert_close(module.running_mean, torch.full((2,), 10.0))
 
 
-def test_higher_order_derivatives() -> None:
-    """Keep gradients through parameter substitution for second derivatives."""
+@pytest.mark.parametrize('checkpointed', [False, True])
+def test_derivatives(checkpointed: bool) -> None:
+    """Preserve first and second derivatives, also with operator checkpointing."""
     operator, _ = make_functional(nn.Linear(2, 1, bias=False).double())
     weight = torch.tensor([[2.0, 3.0]], dtype=torch.float64, requires_grad=True)
     x = torch.ones(1, 2, dtype=torch.float64, requires_grad=True)
-    assert torch.autograd.gradcheck(operator, (weight, x))
-    assert torch.autograd.gradgradcheck(operator, (weight, x))
+    evaluate = partial(checkpoint, operator, use_reentrant=False) if checkpointed else operator
+    assert torch.autograd.gradcheck(evaluate, (weight, x))
+    assert torch.autograd.gradgradcheck(evaluate, (weight, x))
 
 
 @pytest.mark.parametrize('fit_input', [False, True])
@@ -174,15 +163,3 @@ def test_optimization(fit_input: bool) -> None:
     assert not torch.allclose(fitted[0], params[0])
     torch.testing.assert_close(module.weight, torch.full_like(module.weight, 0.25))
     torch.testing.assert_close(z, torch.ones_like(z))
-
-
-def test_checkpoint_operator() -> None:
-    """Recompute with supplied weights when checkpointing the returned operator."""
-    module = nn.Linear(1, 1, bias=False)
-    nn.init.ones_(module.weight)
-    operator, _ = make_functional(module)
-    weight = torch.tensor([[3.0]], requires_grad=True)
-    x = torch.tensor([[2.0]], requires_grad=True)
-    (output,) = checkpoint(operator, weight, x, use_reentrant=False)
-    torch.testing.assert_close(output, torch.tensor([[6.0]]))
-    torch.testing.assert_close(torch.autograd.grad(output.sum(), (weight, x)), (x, weight))

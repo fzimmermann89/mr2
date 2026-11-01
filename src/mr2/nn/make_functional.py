@@ -3,17 +3,12 @@
 import torch
 from torch import nn
 from torch.func import functional_call
-from typing_extensions import Unpack
 
-from mr2.operators.Operator import Operator, OperatorType
+from mr2.operators.Operator import OperatorType
 
 
-class _FunctionalModuleOp(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch.Tensor, ...]]):
-    """Evaluate a module using explicit trainable weights and forward inputs.
-
-    Buffers are captured at construction and copied for each call so updates
-    do not accumulate or change the original module.
-    """
+class _FunctionalModuleOp(OperatorType):
+    """Evaluate a module with explicit weights, inputs and fresh buffer copies."""
 
     def __init__(self, module: nn.Module, names: tuple[str, ...]) -> None:
         """Store the module and capture its buffers.
@@ -29,9 +24,8 @@ class _FunctionalModuleOp(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch
         self.module = module
         self.names = names
         self._buffer_names = tuple(name for name, _ in module.named_buffers())
-        self._buffer_state = nn.Module()
         for index, buffer in enumerate(module.buffers()):
-            self._buffer_state.register_buffer(str(index), buffer.clone())
+            self.register_buffer(f'_buffer_{index}', buffer.clone())
 
     def forward(self, *args: torch.Tensor) -> tuple[torch.Tensor, ...]:
         """Evaluate with replacement weights followed by positional inputs.
@@ -50,9 +44,7 @@ class _FunctionalModuleOp(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch
             raise ValueError(f'Expected at least {n_params} parameter tensors, got {len(args)} arguments.')
         params, inputs = args[:n_params], args[n_params:]
         replacements = dict(zip(self.names, params, strict=True))
-        buffers = {
-            name: value.clone() for name, value in zip(self._buffer_names, self._buffer_state.buffers(), strict=True)
-        }
+        buffers = {name: self.get_buffer(f'_buffer_{index}').clone() for index, name in enumerate(self._buffer_names)}
         result = functional_call(self.module, (replacements, buffers), inputs)
         if isinstance(result, torch.Tensor):
             return (result,)
@@ -61,15 +53,12 @@ class _FunctionalModuleOp(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torch
         raise TypeError('The module must return a tensor or a tuple of tensors.')
 
 
-def make_functional(
-    module: nn.Module,
-) -> tuple[OperatorType, tuple[torch.Tensor, ...]]:
+def make_functional(module: nn.Module) -> tuple[OperatorType, tuple[torch.Tensor, ...]]:
     """Expose module weights and forward inputs as explicit operator arguments.
 
     The returned operator represents ``G(*params, *inputs) = module(*inputs)``
-    evaluated with the supplied weights. It composes with MR2 operators and
-    functionals, so an optimizer can fit a network without manually translating
-    between named module parameters and tuples of tensors.
+    evaluated with the supplied weights. Compose it with MR2 operators and
+    functionals to optimize network weights and, optionally, inputs.
 
     Parameters
     ----------
@@ -109,7 +98,5 @@ def make_functional(
     >>> fitted = adam(objective, (*params, z))  # fit weights and input
     >>> fitted_params = adam(lambda *p: objective(*p, z), params)  # fit weights only
     """
-    named = [(name, parameter) for name, parameter in module.named_parameters() if parameter.requires_grad]
-    names = tuple(name for name, _ in named)
-    params = tuple(parameter for _, parameter in named)
-    return _FunctionalModuleOp(module, names), params
+    parameters = {name: parameter for name, parameter in module.named_parameters() if parameter.requires_grad}
+    return _FunctionalModuleOp(module, tuple(parameters)), tuple(parameters.values())
