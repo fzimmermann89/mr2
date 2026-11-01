@@ -7,6 +7,7 @@ from functools import cached_property
 import torch
 from typing_extensions import Self
 
+from mr2.data.Dataclass import Dataclass
 from mr2.data.enums import TrajType
 from mr2.data.KData import KData
 from mr2.data.KTrajectory import KTrajectory
@@ -15,7 +16,6 @@ from mr2.operators.CartesianSamplingOp import CartesianSamplingOp
 from mr2.operators.FastFourierOp import FastFourierOp
 from mr2.operators.LinearOperator import LinearOperator
 from mr2.operators.NonUniformFastFourierOp import NonUniformFastFourierOp
-from mr2.utils.typing import HasTensorData
 
 
 class FourierOp(LinearOperator, adjoint_as_backward=True):
@@ -128,7 +128,7 @@ class FourierOp(LinearOperator, adjoint_as_backward=True):
             traj=kdata.traj,
         )
 
-    def __call__(self, x: torch.Tensor | HasTensorData) -> tuple[torch.Tensor,]:
+    def __call__(self, x: torch.Tensor | Dataclass) -> tuple[torch.Tensor,]:
         """Apply forward Fourier operation (image to k-space).
 
         This operator maps coil image data to coil k-space data.
@@ -270,7 +270,7 @@ class FourierGramOp(LinearOperator):
         else:
             self.nufft_gram = None
 
-    def __call__(self, x: torch.Tensor | HasTensorData) -> tuple[torch.Tensor,]:
+    def __call__(self, x: torch.Tensor | Dataclass) -> tuple[torch.Tensor,]:
         """Apply the Gram operator of the FourierOp (F.H @ F).
 
         This operation applies the composition of the adjoint Fourier operator

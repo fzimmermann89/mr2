@@ -263,8 +263,9 @@ else:
     FileOrPath: TypeAlias = Any
 
 
+@runtime_checkable
 class HasTensorData(Protocol):
-    """An object exposing tensor data, such as KData or IData."""
+    """The tensor-valued data attribute of an mr2 dataclass."""
 
     @property
     def data(self) -> torch.Tensor:
