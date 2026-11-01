@@ -16,6 +16,7 @@ from mr2.nn.ResBlock import ResBlock
 from mr2.nn.Residual import Residual
 from mr2.nn.SeparableResBlock import SeparableResBlock
 from mr2.nn.Sequential import Sequential
+from mr2.nn.make_functional import make_functional
 from mr2.nn import attention
 from mr2.nn import data_consistency
 from mr2.nn import nets
@@ -54,6 +55,7 @@ __all__ = [
     'convTransposeND',
     'data_consistency',
     'instanceNormND',
+    'make_functional',
     'maxPoolND',
     'nets',
 ]
