@@ -12,6 +12,7 @@ from mr2.data.SpatialDimension import SpatialDimension
 from mr2.operators.LinearOperator import LinearOperator
 from mr2.utils.reduce_repeat import reduce_repeat
 from mr2.utils.reshape import unsqueeze_left
+from mr2.utils.typing import HasTensorData
 
 
 class CartesianSamplingOp(LinearOperator):
@@ -141,7 +142,7 @@ class CartesianSamplingOp(LinearOperator):
         self._trajectory_shape = traj.shape
         self._sorted_grid_shape = sorted_grid_shape
 
-    def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor,]:
+    def __call__(self, x: torch.Tensor | HasTensorData) -> tuple[torch.Tensor,]:
         """Forward operator which selects acquired k-space data from k-space.
 
         Parameters
@@ -320,7 +321,7 @@ class CartesianMaskingOp(LinearOperator):
         super().__init__()
         self.mask = None if mask is None else reduce_repeat(mask.float())
 
-    def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor,]:
+    def __call__(self, x: torch.Tensor | HasTensorData) -> tuple[torch.Tensor,]:
         """Apply the Gram operator (Cartesian Masking).
 
         This operator applies a mask to the input tensor, effectively zeroing out

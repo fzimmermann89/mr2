@@ -12,6 +12,7 @@ from pywt._multilevel import _check_level
 
 from mr2.operators.LinearOperator import LinearOperator
 from mr2.utils.reshape import normalize_indices
+from mr2.utils.typing import HasTensorData
 
 # Switch off formatter to avoid having only one wavelet type per line
 # fmt: off
@@ -132,7 +133,7 @@ class WaveletOp(LinearOperator):
                 self.coefficients_shape = self.coefficients_shape[::-1]
                 self.coefficients_shape.insert(0, self.coefficients_shape[0])  # shape of a/aa/aaa term
 
-    def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor,]:
+    def __call__(self, x: torch.Tensor | HasTensorData) -> tuple[torch.Tensor,]:
         """Apply wavelet decomposition to the input tensor.
 
         This method calculates the wavelet coefficients of the input (image) data

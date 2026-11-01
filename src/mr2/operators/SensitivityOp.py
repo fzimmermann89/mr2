@@ -4,6 +4,7 @@ import torch
 
 from mr2.data.CsmData import CsmData
 from mr2.operators.LinearOperator import LinearOperator
+from mr2.utils.typing import HasTensorData
 
 
 class SensitivityOp(LinearOperator):
@@ -27,7 +28,7 @@ class SensitivityOp(LinearOperator):
             csm = csm.data
         self.csm_tensor = csm
 
-    def __call__(self, img: torch.Tensor) -> tuple[torch.Tensor,]:
+    def __call__(self, img: torch.Tensor | HasTensorData) -> tuple[torch.Tensor,]:
         """Apply coil sensitivity maps to expand the coil dimension.
 
         This operator multiplies the input image (assumed to be a single coil image

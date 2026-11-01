@@ -8,6 +8,7 @@ import torch
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.operators.LinearOperator import LinearOperator
 from mr2.operators.ZeroPadOp import ZeroPadOp
+from mr2.utils.typing import HasTensorData
 
 
 class FastFourierOp(LinearOperator):
@@ -110,7 +111,7 @@ class FastFourierOp(LinearOperator):
                 f'{encoding_matrix=} and {recon_matrix=}'
             )
 
-    def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor,]:
+    def __call__(self, x: torch.Tensor | HasTensorData) -> tuple[torch.Tensor,]:
         """Apply Fast Fourier Transform (FFT) from image space to k-space.
 
         Parameters

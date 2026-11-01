@@ -6,6 +6,7 @@ import torch
 
 from mr2.operators.LinearOperator import LinearOperator
 from mr2.utils.pad_or_crop import pad_or_crop
+from mr2.utils.typing import HasTensorData
 
 
 class ZeroPadOp(LinearOperator):
@@ -34,7 +35,7 @@ class ZeroPadOp(LinearOperator):
         self.original_shape = original_shape
         self.padded_shape = padded_shape
 
-    def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor,]:
+    def __call__(self, x: torch.Tensor | HasTensorData) -> tuple[torch.Tensor,]:
         """Apply zero-padding or cropping to the input tensor.
 
         If `padded_shape` (defined at initialization) is larger than `original_shape`
