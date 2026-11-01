@@ -111,9 +111,9 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
             )
         super().__init_subclass__(**kwargs)
 
-    def __call__(self, x: torch.Tensor | HasTensorData) -> tuple[torch.Tensor]:
-        """Apply the operator to a tensor or an object's tensor-valued ``.data`` attribute."""
-        return super().__call__(x if isinstance(x, torch.Tensor) else x.data)
+    def __call__(self, *args: Unpack[tuple[torch.Tensor | HasTensorData]]) -> tuple[torch.Tensor]:
+        """Apply the operator to tensors or objects exposing tensor-valued ``.data`` attributes."""
+        return super().__call__(*(x if isinstance(x, torch.Tensor) else x.data for x in args))
 
     @abstractmethod
     def adjoint(self, x: torch.Tensor) -> tuple[torch.Tensor,]:

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import pytest
 import torch
 from mr2.data import IData, IHeader, KData
-from mr2.operators import FastFourierOp, IdentityOp, LinearOperator
+from mr2.operators import FastFourierOp, IdentityOp, Jacobian, LinearOperator, Operator
 from mr2.utils.typing import HasTensorData
 from typing_extensions import assert_type
 
@@ -74,3 +74,20 @@ def test_linearoperator_data_adjoint_as_backward(adjoint: bool) -> None:
     torch.testing.assert_close(actual, 2 * tensor)
     (gradient,) = torch.autograd.grad(actual.sum(), tensor)
     torch.testing.assert_close(gradient, torch.full_like(tensor, 2))
+
+
+def test_linearoperator_data_multiple_inputs() -> None:
+    """Keep Jacobian's multiple-input calls working with tensors and containers."""
+
+    class Product(Operator[torch.Tensor, torch.Tensor, tuple[torch.Tensor]]):
+        """A two-input operator for checking its Jacobian."""
+
+        def forward(self, x: torch.Tensor, y: torch.Tensor) -> tuple[torch.Tensor]:
+            """Multiply two inputs."""
+            return (x * y,)
+
+    x0, y0 = torch.tensor([2.0]), torch.tensor([3.0])
+    x, y = torch.tensor([5.0]), torch.tensor([7.0])
+    jacobian = Jacobian(Product(), x0, y0)  # type: ignore[arg-type]
+    torch.testing.assert_close(jacobian(x, y), (y0 * x + x0 * y,))
+    torch.testing.assert_close(jacobian(TensorData(x), FrozenTensorData(y)), jacobian(x, y))
