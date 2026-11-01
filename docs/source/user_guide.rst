@@ -97,10 +97,10 @@ between operators.
 Based on the acquisition model either a suitable optimizer from `mr2.algorithms.optimizers` can be selected
 or a new optimizer using pytorch functions can be created.
 
-Fitting a network with fixed inputs
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-`mr2.nn.make_functional` binds a module's inputs and returns an operator whose
-arguments are its trainable weights. This lets a generator use the same
+Fitting network weights and inputs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+`mr2.nn.make_functional` returns an operator whose arguments are the module's
+trainable weights followed by its forward inputs. This lets a generator use the same
 operator composition and optimizers as an image reconstruction::
 
     import torch
@@ -111,19 +111,21 @@ operator composition and optimizers as an image reconstruction::
     net = torch.nn.Linear(32, 16)
     z = torch.ones(1, 32)
     target = torch.zeros(1, 16)
-    generator, params = make_functional(net, z)
+    generator, params = make_functional(net)
     objective = 0.5 * L2NormSquared(target) @ generator
-    fitted = adam(objective, params)
+    fitted = adam(objective, (*params, z))
     image, = generator(*fitted)
 
 For MRI, an acquisition operator can be inserted between the generator and
 the measurement loss: ``objective = 0.5 * L2NormSquared(y) @ A @ generator``.
-The input ``z`` stays fixed; the optimizer returns new weights rather than
-updating the original network. Frozen parameters remain in the module, and
-buffers are copied for each evaluation from their state at adapter creation.
-Set the module's mode and move it and its inputs to the desired device and
-dtype before creating the adapter. This does not change the differentiation
-behavior of the chosen optimizer.
+This example optimizes both the weights and ``z``. The optimizer returns new
+tensors rather than updating the original network or input. To fit weights only,
+use ``adam(lambda *p: objective(*p, z), params)``. The adapter does not capture
+forward inputs, so the same operator can evaluate different inputs. Frozen
+parameters remain in the module, and buffers are copied for each evaluation
+from their state at adapter creation. Prepare the module's mode, device and
+dtype before creating the adapter, and supply compatible input tensors. This
+does not change the differentiation behavior of the chosen optimizer.
 
 See for examples  :doc:`_notebooks/cartesian_reconstruction`, :doc:`_notebooks/direct_reconstruction`, and :doc:`_notebooks/iterative_sense_reconstruction_radial2D`
 
