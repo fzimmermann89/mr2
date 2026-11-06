@@ -5,6 +5,7 @@ from collections.abc import Sequence
 import torch
 from torch.nn import Module, SiLU
 
+from mr2.nn.CondMixin import CondMixin
 from mr2.nn.FiLM import FiLM
 from mr2.nn.GroupNorm import GroupNorm
 from mr2.nn.ndmodules import convND
@@ -12,7 +13,7 @@ from mr2.nn.PermutedBlock import PermutedBlock
 from mr2.nn.Sequential import Sequential
 
 
-class SeparableResBlock(Module):
+class SeparableResBlock(CondMixin, Module):
     """Residual block with separable convolutions."""
 
     def __init__(
