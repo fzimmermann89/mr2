@@ -54,7 +54,9 @@ def test_ditblock_conditioning_batch(spatial_shape: tuple[int, ...], features_la
     torch.manual_seed(0)
     block = DiTBlock(n_channels=8, n_heads=2, cond_dim=4, features_last=features_last).eval()
     # Exercise gates after they have moved away from their zero initialization.
-    torch.nn.init.normal_(block.gate[-1].weight)
+    gate = block.gate[-1]
+    assert isinstance(gate, torch.nn.Linear)
+    torch.nn.init.normal_(gate.weight)
     x = torch.randn(2, *spatial_shape, 8)
     if not features_last:
         x = x.movedim(-1, 1)
