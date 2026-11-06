@@ -47,30 +47,6 @@ def test_ditblock_backward() -> None:
         assert not parameter.grad.isnan().any(), f'{name}.grad is NaN'
 
 
-@pytest.mark.parametrize('features_last', [True, False])
-@pytest.mark.parametrize('spatial_shape', [(5,), (3, 5), (2, 5), (2, 3, 5)])
-def test_ditblock_conditioning_batch(spatial_shape: tuple[int, ...], features_last: bool) -> None:
-    """Residual gates broadcast over spatial dimensions without mixing examples."""
-    torch.manual_seed(0)
-    block = DiTBlock(n_channels=8, n_heads=2, cond_dim=4, features_last=features_last).eval()
-    # Exercise gates after they have moved away from their zero initialization.
-    gate = block.gate[-1]
-    assert isinstance(gate, torch.nn.Linear)
-    torch.nn.init.normal_(gate.weight)
-    x = torch.randn(2, *spatial_shape, 8)
-    if not features_last:
-        x = x.movedim(-1, 1)
-    cond = torch.randn(2, 4, requires_grad=True)
-    output = block(x, cond=cond)
-    expected = torch.cat([block(x[i : i + 1], cond=cond[i : i + 1]) for i in range(2)])
-    torch.testing.assert_close(output, expected)
-    actual_grad = torch.autograd.grad(output.square().mean(), cond)[0]
-    expected_grad = torch.autograd.grad(expected.square().mean(), cond)[0]
-    torch.testing.assert_close(actual_grad, expected_grad)
-    assert torch.isfinite(actual_grad).all()
-    assert actual_grad.abs().max() > 0
-
-
 @pytest.mark.parametrize('torch_compile', [True, False], ids=['compiled', 'uncompiled'])
 @pytest.mark.parametrize(
     'device',

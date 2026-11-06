@@ -18,7 +18,7 @@ from mr2.nn.Sequential import Sequential
 from mr2.nn.Upsample import Upsample
 
 
-class UNetEncoder(CondMixin, Module):
+class UNetEncoder(Module):
     """Encoder."""
 
     def __init__(
@@ -79,7 +79,7 @@ class UNetEncoder(CondMixin, Module):
         return super().__call__(x, cond=cond)
 
 
-class UNetDecoder(CondMixin, Module):
+class UNetDecoder(Module):
     """Decoder."""
 
     def __init__(

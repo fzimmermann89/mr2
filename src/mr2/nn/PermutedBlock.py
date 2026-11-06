@@ -41,8 +41,7 @@ class PermutedBlock(CondMixin, nn.Module):
         x
             Input tensor
         cond
-            Conditioning tensor with one row, one row per input example, or one row per folded slice.
-            Passed to the module if it supports conditioning
+            Conditioning tensor, passed to the module if it supports conditioning
             (that is, if it is a subclass of `~mr2.nn.CondMixin`)
 
         Returns
@@ -69,8 +68,8 @@ class PermutedBlock(CondMixin, nn.Module):
         h = x.permute(permute)
         batch_shape = h.shape[: 1 + len(batch_dim)]
         h = h.flatten(0, len(batch_dim))
-        if cond is not None and batch_dim and isinstance(self.module, CondMixin) and cond.shape[0] != h.shape[0]:
-            cond = cond.expand(batch_shape[0], -1).repeat_interleave(prod(batch_shape[1:]), dim=0)
+        if cond is not None and isinstance(self.module, CondMixin) and cond.shape[0] not in (1, h.shape[0]):
+            cond = cond.repeat_interleave(prod(batch_shape[1:]), dim=0)
         h = call_with_cond(self.module, h, cond=cond)
         h = h.unflatten(0, batch_shape)
         permute_back = [0] * x.ndim

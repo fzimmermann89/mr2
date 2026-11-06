@@ -15,5 +15,8 @@ class CondMixin(Module):
     """Mixin for modules using a conditioning.
 
     Used to determine if a module uses a conditioning within a Sequential container.
-    Calling uses the standard Module implementation to support multiple inputs and tuple outputs.
     """
+
+    def __call__(self, x: torch.Tensor, *, cond: torch.Tensor | None = None) -> torch.Tensor:
+        """Apply the module to the input."""
+        return super().__call__(x, cond=cond)
