@@ -5,6 +5,7 @@ import re
 import torch
 from einops import einsum
 
+from mr2.data.Dataclass import Dataclass
 from mr2.operators.LinearOperator import LinearOperator
 
 
@@ -61,7 +62,7 @@ class EinsumOp(LinearOperator):
         self._forward_pattern = einsum_rule
         self.matrix = matrix
 
-    def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor]:
+    def __call__(self, x: torch.Tensor | Dataclass) -> tuple[torch.Tensor]:
         """Apply sum-product of input `x` with the operator's matrix `A`.
 
         :math:`A` and the rule used to perform the sum-product is set at initialization.

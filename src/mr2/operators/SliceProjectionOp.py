@@ -10,6 +10,7 @@ import numpy as np
 import torch
 from torch import Tensor
 
+from mr2.data.Dataclass import Dataclass
 from mr2.data.Rotation import Rotation
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.operators.LinearOperator import LinearOperator
@@ -250,7 +251,7 @@ class SliceProjectionOp(LinearOperator):
         self._range_shape: tuple[int] = (*batch_shape, 1, output_shape.y, output_shape.x)
         self._domain_shape = input_shape.zyx
 
-    def __call__(self, x: Tensor) -> tuple[Tensor]:
+    def __call__(self, x: Tensor | Dataclass) -> tuple[Tensor]:
         """Transform a 3D volume to a 2D slice.
 
         This operation uses a sparse matrix multiplication, where the matrix

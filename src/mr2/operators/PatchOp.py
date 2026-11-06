@@ -4,6 +4,7 @@ from collections.abc import Sequence
 
 import torch
 
+from mr2.data.Dataclass import Dataclass
 from mr2.operators.LinearOperator import LinearOperator
 from mr2.utils.sliding_window import sliding_window
 
@@ -66,7 +67,7 @@ class PatchOp(LinearOperator):
         self.domain_size = check(domain_size, 'domain_size') if domain_size is not None else None
         self.flatten_patches = flatten_patches
 
-    def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor,]:
+    def __call__(self, x: torch.Tensor | Dataclass) -> tuple[torch.Tensor,]:
         """Extract N-dimensional patches from an input tensor using a sliding window.
 
         Parameters

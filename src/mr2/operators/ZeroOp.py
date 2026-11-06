@@ -2,6 +2,7 @@
 
 import torch
 
+from mr2.data.Dataclass import Dataclass
 from mr2.operators.LinearOperator import LinearOperator
 
 
@@ -29,7 +30,7 @@ class ZeroOp(LinearOperator):
         self.keep_shape = keep_shape
         super().__init__()
 
-    def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor,]:
+    def __call__(self, x: torch.Tensor | Dataclass) -> tuple[torch.Tensor,]:
         """Apply the zero operator to the input tensor.
 
         This operator returns a tensor of zeros. Depending on the `keep_shape`

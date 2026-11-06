@@ -3,6 +3,7 @@
 import torch
 from typing_extensions import Self
 
+from mr2.data.Dataclass import Dataclass
 from mr2.data.DcfData import DcfData
 from mr2.operators.EinsumOp import EinsumOp
 
@@ -27,7 +28,7 @@ class DensityCompensationOp(EinsumOp):
             dcf_tensor = dcf
         super().__init__(dcf_tensor, '...,... -> ...')
 
-    def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor,]:
+    def __call__(self, x: torch.Tensor | Dataclass) -> tuple[torch.Tensor,]:
         """Apply density compensation to k-space data.
 
         This operator performs an element-wise multiplication of the input k-space data

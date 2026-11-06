@@ -5,6 +5,7 @@ import torch
 from einops import repeat
 
 from mr2.algorithms.varimax import varimax
+from mr2.data.Dataclass import Dataclass
 from mr2.operators.LinearOperator import LinearOperator
 
 
@@ -56,7 +57,7 @@ class PCACompressionOp(LinearOperator):
             v = varimax(v)
         self._compression_matrix = v
 
-    def __call__(self, data: torch.Tensor) -> tuple[torch.Tensor,]:
+    def __call__(self, data: torch.Tensor | Dataclass) -> tuple[torch.Tensor,]:
         """Apply PCA-based compression to the input data.
 
         The data is projected onto the principal components determined during

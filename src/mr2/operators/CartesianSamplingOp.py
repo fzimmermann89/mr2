@@ -6,6 +6,7 @@ import torch
 from einops import rearrange, repeat
 from typing_extensions import Self
 
+from mr2.data.Dataclass import Dataclass
 from mr2.data.enums import TrajType
 from mr2.data.KTrajectory import KTrajectory
 from mr2.data.SpatialDimension import SpatialDimension
@@ -141,7 +142,7 @@ class CartesianSamplingOp(LinearOperator):
         self._trajectory_shape = traj.shape
         self._sorted_grid_shape = sorted_grid_shape
 
-    def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor,]:
+    def __call__(self, x: torch.Tensor | Dataclass) -> tuple[torch.Tensor,]:
         """Forward operator which selects acquired k-space data from k-space.
 
         Parameters
@@ -320,7 +321,7 @@ class CartesianMaskingOp(LinearOperator):
         super().__init__()
         self.mask = None if mask is None else reduce_repeat(mask.float())
 
-    def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor,]:
+    def __call__(self, x: torch.Tensor | Dataclass) -> tuple[torch.Tensor,]:
         """Apply the Gram operator (Cartesian Masking).
 
         This operator applies a mask to the input tensor, effectively zeroing out

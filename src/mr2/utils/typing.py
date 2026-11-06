@@ -1,5 +1,7 @@
 """Some type hints that are used in multiple places in the codebase but not part of mr2's public API."""
 
+from __future__ import annotations
+
 from collections.abc import Callable
 from typing import TYPE_CHECKING, TypeAlias
 
@@ -261,4 +263,22 @@ else:
     FileOrPath: TypeAlias = Any
 
 
-__all__ = ['DataclassInstance', 'FileOrPath', 'NestedSequence', 'NumpyIndexerType', 'TorchIndexerType', 'endomorph']
+@runtime_checkable
+class HasTensorData(Protocol):
+    """The tensor-valued data attribute of an mr2 dataclass."""
+
+    @property
+    def data(self) -> torch.Tensor:
+        """Tensor on which an operator acts."""
+        ...
+
+
+__all__ = [
+    'DataclassInstance',
+    'FileOrPath',
+    'HasTensorData',
+    'NestedSequence',
+    'NumpyIndexerType',
+    'TorchIndexerType',
+    'endomorph',
+]

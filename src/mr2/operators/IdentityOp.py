@@ -2,6 +2,7 @@
 
 import torch
 
+from mr2.data.Dataclass import Dataclass
 from mr2.operators.LinearOperator import LinearOperator
 
 
@@ -15,7 +16,7 @@ class IdentityOp(LinearOperator):
         """Initialize Identity Operator."""
         super().__init__()
 
-    def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor]:
+    def __call__(self, x: torch.Tensor | Dataclass) -> tuple[torch.Tensor]:
         """Apply the identity operation.
 
         This operator returns the input tensor unchanged.

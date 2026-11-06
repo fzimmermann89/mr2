@@ -9,6 +9,7 @@ from typing import Literal, overload
 import torch
 from typing_extensions import Self, Unpack
 
+from mr2.data.Dataclass import Dataclass
 from mr2.data.SpatialDimension import SpatialDimension
 from mr2.operators.LinearOperator import LinearOperator
 from mr2.operators.Operator import Operator, Tin2
@@ -786,7 +787,7 @@ class GridSamplingOp(LinearOperator):
             dim=-3,
         )
 
-    def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor]:
+    def __call__(self, x: torch.Tensor | Dataclass) -> tuple[torch.Tensor]:
         """Apply the GridSampling operator.
 
         This operator samples an input tensor `x` at locations specified by a grid.
