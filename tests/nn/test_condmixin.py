@@ -4,7 +4,7 @@ import pytest
 import torch
 from mr2.nn import ComplexAsChannel, CondMixin, FiLM, PermutedBlock, Residual, SeparableResBlock, Sequential
 from mr2.nn.CondMixin import call_with_cond
-from mr2.nn.join import Add
+from mr2.nn.join import Add, Concat
 from mr2.nn.nets import DiT, SwinIR, UNet
 from mr2.nn.nets.UNet import UNetDecoder, UNetEncoder
 from torch.nn import Module
@@ -122,6 +122,20 @@ def test_unet_encoder_decoder_dispatch() -> None:
     output = call_with_cond(decoder, (encoded,), cond=cond)  # type: ignore[arg-type]
     torch.testing.assert_close(output, decoder((encoded,), cond=cond))
     assert not torch.allclose(output, decoder((encoded,), cond=cond + 1))
+    output.square().mean().backward()
+    assert cond.grad is not None
+    assert cond.grad.abs().max() > 0
+
+
+def test_unet_decoder_merge_conditioning() -> None:
+    """Custom decoder merge blocks receive conditioning along with skip tensors."""
+    merge = Sequential(Concat(), FiLM(4, 8))
+    decoder = UNetDecoder([torch.nn.Identity()], [torch.nn.Identity()], [merge], torch.nn.Identity())
+    hs = (torch.randn(2, 2, 4, 4), torch.randn(2, 2, 4, 4))
+    cond = torch.randn(2, 8, requires_grad=True)
+    output = decoder(hs, cond=cond)
+    torch.testing.assert_close(output, merge(*hs, cond=cond))
+    assert not torch.allclose(output, decoder(hs, cond=cond + 1))
     output.square().mean().backward()
     assert cond.grad is not None
     assert cond.grad.abs().max() > 0

@@ -12,6 +12,7 @@ from mr2.nn.LayerNorm import LayerNorm
 from mr2.nn.nets.MLP import MLP
 from mr2.nn.Sequential import Sequential
 from mr2.operators.PatchOp import PatchOp
+from mr2.utils.reshape import unsqueeze_at
 from mr2.utils.to_tuple import to_tuple
 
 
@@ -98,7 +99,9 @@ class DiTBlock(CondMixin, Module):
         if not self.features_last:
             x = x.moveaxis(1, -1)
 
-        gate_msa, gate_mlp = self.gate(cond).unsqueeze(-2).chunk(2, dim=-1) if cond is not None else (1.0, 1.0)
+        gate_msa, gate_mlp = (
+            unsqueeze_at(self.gate(cond), 1, x.ndim - 2).chunk(2, dim=-1) if cond is not None else (1.0, 1.0)
+        )
         x = x + gate_msa * self.attn(self.norm1(x, cond=cond))
         x = x + gate_mlp * self.mlp(self.norm2(x, cond=cond))
 

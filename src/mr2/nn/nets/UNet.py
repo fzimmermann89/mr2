@@ -114,7 +114,7 @@ class UNetDecoder(CondMixin, Module):
         x = hs[-1]  # lowest resolution, from middle block
         for block, up, concat, h in zip(self.blocks, self.up_blocks, self.concat_blocks, hs[-2::-1], strict=True):
             x = call(up, x)
-            x = concat(h, x)
+            x = call(concat, h, x)
             x = call(block, x)
         x = call(self.last_block, x)
         return x
