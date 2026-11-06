@@ -8,9 +8,9 @@ from mr2.nn.attention.SpatialTransformerBlock import BasicTransformerBlock
 
 @pytest.mark.parametrize('transformer', [True, False])
 @pytest.mark.parametrize('features_last', [True, False])
-@pytest.mark.parametrize('cond_batch', [1, 2])
+@pytest.mark.parametrize('cond_batch', [1, 2, 6])
 def test_permutedblock_conditioning(features_last: bool, cond_batch: int, transformer: bool) -> None:
-    """Each folded spatial slice receives its original example's conditioning."""
+    """Folded spatial slices receive the corresponding conditioning rows."""
     torch.manual_seed(0)
     x = torch.randn(2, 4, 3, 5, 6)
     cond = torch.randn(cond_batch, 8, requires_grad=True)
@@ -27,13 +27,11 @@ def test_permutedblock_conditioning(features_last: bool, cond_batch: int, transf
     wrapped = Sequential(PermutedBlock(dims, module, features_last=features_last))
     output = wrapped(x, cond=cond)
     slice_dim = 1 if features_last else 2
+    expected_cond = cond.reshape(2, 3, 8) if cond_batch == 6 else cond[:, None].expand(2, 3, 8)
     expected = torch.cat(
         [
             torch.stack(
-                [
-                    module(x[i : i + 1].select(slice_dim, j), cond=cond[i : i + 1] if cond_batch > 1 else cond)
-                    for j in range(3)
-                ],
+                [module(x[i : i + 1].select(slice_dim, j), cond=expected_cond[i : i + 1, j]) for j in range(3)],
                 dim=slice_dim,
             )
             for i in range(2)
