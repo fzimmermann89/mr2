@@ -6,6 +6,7 @@ from mr2.nn import FiLM, PermutedBlock
 from mr2.utils import RandomGenerator
 
 
+@pytest.mark.parametrize('cond_batch', [1, 2])
 @pytest.mark.parametrize(
     'device',
     [
@@ -21,12 +22,12 @@ from mr2.utils import RandomGenerator
     ],
 )
 def test_permutedblock_conditioning(
-    features_last: bool, input_shape: tuple[int, ...], apply_along_dim: tuple[int, ...], device: str
+    features_last: bool, input_shape: tuple[int, ...], apply_along_dim: tuple[int, ...], device: str, cond_batch: int
 ) -> None:
-    """Folding spatial slices into the batch preserves per-example conditioning and gradients."""
+    """Folding spatial slices into the batch preserves conditioning and gradients."""
     rng = RandomGenerator(seed=42)
     x = rng.float32_tensor(input_shape).to(device)
-    cond = rng.float32_tensor((2, 8)).to(device).requires_grad_(True)
+    cond = rng.float32_tensor((cond_batch, 8)).to(device).requires_grad_(True)
     film = FiLM(channels=4, cond_dim=8, features_last=features_last).to(device)
     block = PermutedBlock(apply_along_dim, film, features_last=features_last)
 
