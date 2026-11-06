@@ -9,7 +9,7 @@ from torch.nn import Identity, Module, ModuleList, ReLU, SiLU
 
 from mr2.nn.attention.AttentionGate import AttentionGate
 from mr2.nn.attention.SpatialTransformerBlock import SpatialTransformerBlock
-from mr2.nn.CondMixin import call_with_cond
+from mr2.nn.CondMixin import CondMixin, call_with_cond
 from mr2.nn.FiLM import FiLM
 from mr2.nn.join import Concat
 from mr2.nn.ndmodules import convND, maxPoolND
@@ -136,7 +136,7 @@ class UNetDecoder(Module):
         return super().__call__(hs, cond=cond)
 
 
-class UNetBase(Module):
+class UNetBase(CondMixin, Module):
     """Base class for U-shaped networks."""
 
     def __init__(self, encoder: UNetEncoder, decoder: UNetDecoder, skip_blocks: Sequence[Module] | None = None) -> None:
