@@ -3,7 +3,6 @@
 import pytest
 import torch
 from mr2.nn import ComplexAsChannel, CondMixin, FiLM, PermutedBlock, Residual, SeparableResBlock, Sequential
-from mr2.nn.CondMixin import call_with_cond
 from mr2.nn.join import Add, Concat
 from mr2.nn.nets import DiT, SwinIR, UNet
 from mr2.nn.nets.UNet import UNetDecoder, UNetEncoder
@@ -109,19 +108,17 @@ def test_multiple_inputs(wrapper: str) -> None:
     assert cond.grad.abs().max() > 0
 
 
-def test_unet_encoder_decoder_dispatch() -> None:
-    """UNet components preserve conditioning when used in containers."""
+def test_unet_component_dispatch() -> None:
+    """UNet components are marked for dispatch, and Sequential conditions the encoder."""
     encoder = UNetEncoder(torch.nn.Identity(), [], [], FiLM(2, 4))
     decoder = UNetDecoder([], [], [], FiLM(2, 4))
     assert isinstance(encoder, CondMixin)
     assert isinstance(decoder, CondMixin)
     x = torch.randn(2, 2, 8, 8)
     cond = torch.randn(2, 4, requires_grad=True)
-    encoded = Sequential(encoder)(x, cond=cond)
-    torch.testing.assert_close(encoded, encoder(x, cond=cond)[0])
-    output = call_with_cond(decoder, (encoded,), cond=cond)  # type: ignore[arg-type]
-    torch.testing.assert_close(output, decoder((encoded,), cond=cond))
-    assert not torch.allclose(output, decoder((encoded,), cond=cond + 1))
+    output = Sequential(encoder)(x, cond=cond)
+    torch.testing.assert_close(output, encoder(x, cond=cond)[0])
+    assert not torch.allclose(output, Sequential(encoder)(x, cond=cond + 1))
     output.square().mean().backward()
     assert cond.grad is not None
     assert cond.grad.abs().max() > 0

@@ -68,7 +68,7 @@ class PermutedBlock(CondMixin, nn.Module):
         h = x.permute(permute)
         batch_shape = h.shape[: 1 + len(batch_dim)]
         h = h.flatten(0, len(batch_dim))
-        if cond is not None and batch_dim:
+        if cond is not None and batch_dim and isinstance(self.module, CondMixin):
             cond = cond.expand(batch_shape[0], -1).repeat_interleave(prod(batch_shape[1:]), dim=0)
         h = call_with_cond(self.module, h, cond=cond)
         h = h.unflatten(0, batch_shape)
