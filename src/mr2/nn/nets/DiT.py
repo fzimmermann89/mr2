@@ -108,7 +108,7 @@ class DiTBlock(CondMixin, Module):
         return x
 
 
-class DiT(Module):
+class DiT(CondMixin, Module):
     """DiT model.
 
     DiT is a vision transformer popularized by [DiT]_.

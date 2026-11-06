@@ -1,6 +1,7 @@
 """Block that applies a submodule along selected spatial dimensions."""
 
 from collections.abc import Sequence
+from math import prod
 
 import torch
 from torch import nn
@@ -67,6 +68,8 @@ class PermutedBlock(CondMixin, nn.Module):
         h = x.permute(permute)
         batch_shape = h.shape[: 1 + len(batch_dim)]
         h = h.flatten(0, len(batch_dim))
+        if cond is not None and batch_dim:
+            cond = cond.expand(batch_shape[0], -1).repeat_interleave(prod(batch_shape[1:]), dim=0)
         h = call_with_cond(self.module, h, cond=cond)
         h = h.unflatten(0, batch_shape)
         permute_back = [0] * x.ndim
