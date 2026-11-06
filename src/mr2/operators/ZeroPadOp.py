@@ -85,3 +85,9 @@ class ZeroPadOp(LinearOperator):
             will match `original_shape` (from initialization).
         """
         return (pad_or_crop(x, self.original_shape, self.dim),)
+
+    def _pinv(self, *, tolerance: float, max_iterations: int) -> LinearOperator:  # noqa: ARG002
+        """Return the exact pseudoinverse on the declared tensor spaces."""
+        from mr2.operators.PseudoInverseOp import _PartialIsometryPseudoInverse
+
+        return _PartialIsometryPseudoInverse(self, self.dim, self.original_shape, self.padded_shape)

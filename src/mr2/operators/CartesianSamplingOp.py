@@ -271,6 +271,12 @@ class CartesianSamplingOp(LinearOperator):
 
         return data_scattered
 
+    def _pinv(self, *, tolerance: float, max_iterations: int) -> LinearOperator:  # noqa: ARG002
+        """Average repeated samples and zero unsampled encoding entries."""
+        from mr2.operators.PseudoInverseOp import _GatherPseudoInverse
+
+        return _GatherPseudoInverse(self)
+
     @property
     def gram(self) -> 'CartesianMaskingOp':
         """Return the Gram operator for this Cartesian Sampling Operator.
@@ -409,3 +415,9 @@ class CartesianMaskingOp(LinearOperator):
             the same operator, as the masking operator is self-adjoint.
         """
         return self
+
+    def _pinv(self, *, tolerance: float, max_iterations: int) -> LinearOperator:  # noqa: ARG002
+        """Reciprocate the live diagonal, with zero at missing entries."""
+        from mr2.operators.PseudoInverseOp import _DiagonalPseudoInverse
+
+        return _DiagonalPseudoInverse(self, 'mask')

@@ -190,3 +190,11 @@ class PatchOp(LinearOperator):
             return (self._adjoint_fast(patches),)
         else:
             return (self._adjoint_scatter(patches),)
+
+    def _pinv(self, *, tolerance: float, max_iterations: int) -> LinearOperator:  # noqa: ARG002
+        """Return a pseudoinverse using the verified structure of this operator."""
+        if self.domain_size is None:
+            raise ValueError('Patch pseudoinverse requires domain_size or a preceding forward call.')
+        from mr2.operators.PseudoInverseOp import _GatherPseudoInverse
+
+        return _GatherPseudoInverse(self)

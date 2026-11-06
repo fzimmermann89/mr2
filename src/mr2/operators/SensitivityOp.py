@@ -71,3 +71,9 @@ class SensitivityOp(LinearOperator):
             Combined image data, with shape `(... 1 z y x)`.
         """
         return ((self.csm_tensor.conj() * img).sum(-4, keepdim=True),)
+
+    def _pinv(self, *, tolerance: float, max_iterations: int) -> LinearOperator:  # noqa: ARG002
+        """Return a pseudoinverse using the verified structure of this operator."""
+        from mr2.operators.PseudoInverseOp import _SensitivityPseudoInverse
+
+        return _SensitivityPseudoInverse(self)
