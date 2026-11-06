@@ -13,36 +13,37 @@ MR image reconstruction and processing for PyTorch
 | **Try it out:** |colab-badge|
 | **See our examples:** :doc:`examples`
 
-Main Features
--------------
-- **Standard file formats**
-  MRtwo supports the ISMRMRD format for MR raw data and DICOM for image data
+Start here
+----------
+Follow :doc:`user_guide` to install MRtwo and reconstruct a downloaded
+acquisition. MRtwo continues development of
+`MRpro <https://github.com/PTB-MR/mrpro/>`_. Install the ``mrtwo`` distribution
+and import ``mr2`` in Python. This website documents git/main, so some APIs
+may differ from the latest PyPI release.
 
-- **PyTorch integration**
-  All data containers utilize PyTorch tensors to ensure easy integration with PyTorch-based network schemes.
+* :doc:`data` explains tensor axes and units, with examples of indexing and
+  file storage.
+* :doc:`operators` covers acquisition models, operator algebra and solver
+  selection.
+* :doc:`examples` groups complete notebooks by application.
+* :doc:`api` lists public classes and functions with their call signatures.
+* :doc:`contributor_guide` describes the code and documentation conventions.
 
-- **Cartesian and non-Cartesian trajectories**
-  MRtwo can reconstruct data obtained with Cartesian and non-Cartesian sampling schemes (e.g., radial, spiral). It automatically detects whether FFT or nuFFT is required to reconstruct the k-space data.
+MRtwo stores MR metadata alongside PyTorch tensors. Its reconstruction tools
+include Cartesian and non-Cartesian Fourier operators, coil sensitivity
+estimation and regularized solvers; signal models support quantitative
+parameter fitting. Use a high-level reconstruction first, then replace its
+components when you need a different model or solver.
 
-- **Pulseq support**
-  If the data acquisition was carried out using a pulseq-based sequence, the seq-file can be provided to MRtwo, which will automatically calculate the used trajectory.
-
-- **Signal models**
-  A range of MR signal models is implemented (e.g., T1 recovery, WASABI).
-
-- **Regularized image reconstruction**
-  Regularized image reconstruction algorithms, including wavelet-based compressed sensing and total variation regularized image reconstruction, are available.
-
-
-Content
-=======
+Contents
+--------
 .. toctree::
    :maxdepth: 2
 
    user_guide
    data
+   operators
    examples
    contributor_guide
    api
    faq
-
