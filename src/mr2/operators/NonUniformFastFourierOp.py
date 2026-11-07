@@ -47,7 +47,9 @@ class _NUFFT(torch.autograd.Function):
         ctx.set_materialize_grads(False)
 
     @staticmethod
-    def backward(ctx: Any, gradient: torch.Tensor) -> tuple:  # noqa: ANN401
+    def backward(ctx: Any, gradient: torch.Tensor | None) -> tuple:  # noqa: ANN401
+        if gradient is None:
+            return None, None, None, None, None
         points, data = ctx.saved_tensors
         operator, kind, shape = ctx.operator, ctx.kind, ctx.shape
         grad_points = grad_data = None
@@ -121,7 +123,12 @@ class _NUFFT(torch.autograd.Function):
 
 
 class NonUniformFastFourierOp(LinearOperator):
-    """Non-Uniform Fast Fourier Operator class."""
+    """Non-Uniform Fast Fourier Operator class.
+
+    Forward and adjoint each retain one native plan, shared across coordinate
+    groups and repeated calls. Device/dtype conversion discards both plans.
+    Data, trajectory coordinates, and higher-order derivatives are supported.
+    """
 
     def __init__(
         self,
@@ -154,6 +161,8 @@ class NonUniformFastFourierOp(LinearOperator):
             be used. Otherwise, it should be a `Sequence` of the same length as direction.
         traj
             The k-space trajectories where the frequencies are sampled.
+            Coordinates may require gradients. Their values can change between calls,
+            while their shapes and the selected transform directions remain fixed.
         oversampling
             Oversampling used for interpolation in non-uniform FFTs.
             On GPU, 2.0 uses an optimized kernel, any value > 1.0 will work.
@@ -250,12 +259,36 @@ class NonUniformFastFourierOp(LinearOperator):
         self._im_size = im_size
         self._k_size = k_size
         self._omega_permutation = permute_210
-        self._trajectory_names = tuple(f'_k{d}' for d in self._direction_zyx)
+        self._trajectory_names = tuple(f'_k{"zyx"[d]}' for d in self._direction_zyx)
         for name, coordinate in zip(self._trajectory_names, trajectory, strict=True):
             if isinstance(coordinate, torch.nn.Parameter):
                 self.register_parameter(name, coordinate)
             else:
                 self.register_buffer(name, coordinate)
+
+    def _load_from_state_dict(
+        self,
+        state_dict: dict[str, torch.Tensor],
+        prefix: str,
+        local_metadata: dict,
+        strict: bool,
+        missing_keys: list[str],
+        unexpected_keys: list[str],
+        error_msgs: list[str],
+    ) -> None:
+        """Read checkpoints that stored only flattened, normalized coordinates."""
+        if (omega := state_dict.pop(prefix + '_omega', None)) is not None:
+            permuted_shape = [self._traj_broadcast_shape[i] for i in self._omega_permutation]
+            unpermute = torch.tensor(self._omega_permutation).argsort().tolist()
+            coordinates = omega.reshape(permuted_shape).permute(unpermute).chunk(len(self._direction_zyx), dim=-4)
+            for name, coordinate, size in zip(self._trajectory_names, coordinates, self._k_size, strict=True):
+                # Old normalized coordinates were broadcast across all transformed directions.
+                target = getattr(self, name)
+                index = tuple(slice(None) if n > 1 else slice(0, 1) for n in target.shape)
+                state_dict[prefix + name] = coordinate[index] * (size / (2 * torch.pi))
+        super()._load_from_state_dict(
+            state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
+        )
 
     @property
     def _omega(self) -> torch.Tensor:
