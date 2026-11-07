@@ -404,7 +404,7 @@ class NonUniformFastFourierOp(LinearOperator, adjoint_as_backward=True):
                 x = x.to(x.dtype.to_complex())
             # We rearrange x into (sep_dims, joint_dims, nufft_directions)
             sep_dims_zyx, permute_zyx, _, permute_210 = self._separate_joint_dimensions(x.ndim)
-            unpermute_210 = torch.tensor(permute_210).argsort().tolist()
+            unpermute_210 = np.argsort(permute_210).tolist()
 
             x = x.permute(*permute_zyx)
             unflatten_shape = x.shape[: -len(self._direction_zyx)]
@@ -446,7 +446,7 @@ class NonUniformFastFourierOp(LinearOperator, adjoint_as_backward=True):
                 x = x.to(x.dtype.to_complex())
             # We rearrange x into (sep_dims, joint_dims, nufft_directions)
             _, permute_zyx, sep_dims_210, permute_210 = self._separate_joint_dimensions(x.ndim)
-            unpermute_zyx = torch.tensor(permute_zyx).argsort().tolist()
+            unpermute_zyx = np.argsort(permute_zyx).tolist()
 
             x = x.permute(*permute_210)
             unflatten_other_shape = x.shape[: -len(self._dimension_210) - 1]  # -1 for coil
