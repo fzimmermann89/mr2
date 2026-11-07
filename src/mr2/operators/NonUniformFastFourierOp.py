@@ -86,7 +86,8 @@ class NonUniformFastFourierOp(LinearOperator, adjoint_as_backward=True):
     """Non-Uniform Fast Fourier Operator class.
 
     Forward and adjoint each retain one native plan, shared across coordinate
-    groups and repeated calls. Device/dtype conversion discards both plans.
+    groups and repeated calls. Each plan retains its native workspace, including
+    GPU memory, until device/dtype conversion or deletion of the operator.
     Calls on the same instance must not overlap across threads.
     """
 
