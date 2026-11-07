@@ -1,15 +1,20 @@
 """Non-Uniform Fast Fourier Operator."""
 
+from __future__ import annotations
+
 from collections.abc import Sequence
-from functools import partial
+from contextlib import nullcontext
+from functools import cached_property, partial
 from itertools import product
+from threading import Lock
 from types import EllipsisType
-from typing import Literal
+from typing import Any, Literal
 
 import einops
+import finufft
 import numpy as np
 import torch
-from pytorch_finufft.functional import finufft_type1, finufft_type2
+from pytorch_finufft.functional import finufft_type1
 from typing_extensions import Self
 
 from mr2.data.DcfData import DcfData
@@ -20,7 +25,102 @@ from mr2.operators.PCACompressionOp import PCACompressionOp
 from mr2.utils import normalize_index, unsqueeze_right
 
 
-class NonUniformFastFourierOp(LinearOperator, adjoint_as_backward=True):
+class _NUFFT(torch.autograd.Function):
+    """Native NUFFT with differentiable data and nonuniform coordinates."""
+
+    @staticmethod
+    def forward(
+        points: torch.Tensor,
+        data: torch.Tensor,
+        operator: NonUniformFastFourierOp,
+        kind: int,
+        shape: tuple[int, ...],
+    ) -> torch.Tensor:
+        return operator._execute(points, data, kind, shape)
+
+    @staticmethod
+    def setup_context(ctx: Any, inputs: tuple, output: torch.Tensor) -> None:  # noqa: ANN401, ARG004
+        points, data, ctx.operator, ctx.kind, ctx.shape = inputs
+        # Data values are needed only for coordinate gradients, not the linear adjoint.
+        ctx.save_for_backward(points, data if ctx.needs_input_grad[0] else None)
+        ctx.save_for_forward(points, data)
+        ctx.set_materialize_grads(False)
+
+    @staticmethod
+    def backward(ctx: Any, gradient: torch.Tensor) -> tuple:  # noqa: ANN401
+        points, data = ctx.saved_tensors
+        operator, kind, shape = ctx.operator, ctx.kind, ctx.shape
+        grad_points = grad_data = None
+        if ctx.needs_input_grad[1]:
+            grad_data = _NUFFT.apply(points, gradient, operator, 3 - kind, shape)
+        if ctx.needs_input_grad[0]:
+            derivatives = []
+            for dim, size in enumerate(shape):
+                ramp_shape = [1] * len(shape)
+                ramp_shape[dim] = size
+                ramp = torch.arange(-(size // 2), size - size // 2, device=points.device, dtype=points.dtype)
+                ramp = ramp.reshape(ramp_shape)
+                if kind == 2:
+                    ramped = _NUFFT.apply(points, data * ramp, operator, 2, shape)
+                    derivative = (gradient.conj() * (-1j * ramped)).real.sum(1)
+                else:
+                    ramped = _NUFFT.apply(points, gradient * ramp, operator, 2, shape)
+                    derivative = (ramped.conj() * (1j * data)).real.sum(1)
+                derivatives.append(derivative)
+            grad_points = torch.stack(derivatives, dim=1)
+        return grad_points, grad_data, None, None, None
+
+    @staticmethod
+    def jvp(
+        ctx: Any,  # noqa: ANN401
+        points_tangent: torch.Tensor | None,
+        data_tangent: torch.Tensor | None,
+        _operator: None,
+        _kind: None,
+        _shape: None,
+    ) -> torch.Tensor | None:
+        points, data = ctx.saved_tensors
+        operator, kind, shape = ctx.operator, ctx.kind, ctx.shape
+        result = _NUFFT.apply(points, data_tangent, operator, kind, shape) if data_tangent is not None else None
+        if points_tangent is not None:
+            for dim, size in enumerate(shape):
+                ramp_shape = [1] * len(shape)
+                ramp_shape[dim] = size
+                ramp = torch.arange(-(size // 2), size - size // 2, device=points.device, dtype=points.dtype)
+                ramp = ramp.reshape(ramp_shape)
+                if kind == 2:
+                    term = -1j * _NUFFT.apply(points, data * ramp, operator, 2, shape) * points_tangent[:, dim, None]
+                else:
+                    ramped = _NUFFT.apply(points, data * points_tangent[:, dim, None], operator, 1, shape)
+                    term = 1j * ramp * ramped
+                result = term if result is None else result + term
+        return result
+
+    @staticmethod
+    def vmap(
+        info: Any,  # noqa: ANN401
+        in_dims: tuple,
+        points: torch.Tensor,
+        data: torch.Tensor,
+        operator: NonUniformFastFourierOp,
+        kind: int,
+        shape: tuple[int, ...],
+    ) -> tuple[torch.Tensor, int]:
+        point_dim, data_dim, *_ = in_dims
+        outputs = [
+            _NUFFT.apply(
+                points if point_dim is None else points.select(point_dim, i),
+                data if data_dim is None else data.select(data_dim, i),
+                operator,
+                kind,
+                shape,
+            )
+            for i in range(info.batch_size)
+        ]
+        return torch.stack(outputs), 0
+
+
+class NonUniformFastFourierOp(LinearOperator):
     """Non-Uniform Fast Fourier Operator class."""
 
     def __init__(
@@ -60,6 +160,7 @@ class NonUniformFastFourierOp(LinearOperator, adjoint_as_backward=True):
             On CPU, there are kernels for 2.0 and 1.25. The latter saves memory. Set to 0.0 for automatic selection.
         """
         super().__init__()
+        self._plan_lock = Lock()
 
         # Convert to negative indexing
         direction_dict = {'z': -3, 'y': -2, 'x': -1, -3: -3, -2: -2, -1: -1}
@@ -118,23 +219,11 @@ class NonUniformFastFourierOp(LinearOperator, adjoint_as_backward=True):
                 raise ValueError(f'encoding_matrix should have {n_nufft_dir} entries but has {n_enc_matrix}')
             k_size = tuple(encoding_matrix[i] for i in direction_index)
 
-        omega_list = [
-            k * 2 * torch.pi / ks
-            for k, ks in zip(
-                trajectory,
-                k_size,
-                strict=True,
-            )
-        ]
-        # Broadcast shapes not always needed but also does not hurt
-        omega_list = list(torch.broadcast_tensors(*omega_list))
-        omega = torch.concatenate(omega_list, dim=-4)  # use the 'coil' dim for the direction
-        self._traj_broadcast_shape = omega.shape
+        trajectory_shape = list(torch.broadcast_shapes(*(k.shape for k in trajectory)))
+        trajectory_shape[-4] *= len(trajectory)  # use the 'coil' dim for the direction
+        self._traj_broadcast_shape = torch.Size(trajectory_shape)
         keep_dims_210 = [-4, *dimension_210]  # -4 is always coil
-        permute_210 = [i for i in range(-omega.ndim, 0) if i not in keep_dims_210] + keep_dims_210
-        # omega should be (sep_dims, 1, 2 or 3, nufft_dimensions)
-        omega = omega.permute(*permute_210)
-        omega = omega.flatten(end_dim=-len(keep_dims_210) - 1).flatten(start_dim=-len(keep_dims_210) + 1)
+        permute_210 = [i for i in range(-len(trajectory_shape), 0) if i not in keep_dims_210] + keep_dims_210
         # scaling independent of nufft oversampling, matches FFT scaling for cartesian trajectories
         self.scale = torch.tensor(k_size).prod().sqrt().reciprocal()
         self.oversampling = oversampling
@@ -159,7 +248,145 @@ class NonUniformFastFourierOp(LinearOperator, adjoint_as_backward=True):
         self._joint_dims_zyx.append(-4)  # -4 is always coil and always a joint dimension
 
         self._im_size = im_size
-        self._omega = omega.contiguous()
+        self._k_size = k_size
+        self._omega_permutation = permute_210
+        self._trajectory_names = tuple(f'_k{d}' for d in self._direction_zyx)
+        for name, coordinate in zip(self._trajectory_names, trajectory, strict=True):
+            if isinstance(coordinate, torch.nn.Parameter):
+                self.register_parameter(name, coordinate)
+            else:
+                self.register_buffer(name, coordinate)
+
+    @property
+    def _omega(self) -> torch.Tensor:
+        """Normalize coordinates without retaining a differentiable graph across calls."""
+        omega = torch.cat(
+            torch.broadcast_tensors(
+                *[
+                    getattr(self, name) * 2 * torch.pi / size
+                    for name, size in zip(self._trajectory_names, self._k_size, strict=True)
+                ]
+            ),
+            dim=-4,
+        )
+        keep_dims = 1 + len(self._dimension_210)
+        return (
+            omega.permute(*self._omega_permutation)
+            .flatten(end_dim=-keep_dims - 1)
+            .flatten(start_dim=-keep_dims + 1)
+            .contiguous()
+        )
+
+    @cached_property
+    def _plan_fwd(self) -> Any:  # noqa: ANN401
+        shape, n_trans, dtype, device, oversampling, stream = self._plan_config
+        if device.type == 'cuda':
+            import cufinufft
+
+            assert stream is not None
+            return cufinufft.Plan(
+                2,
+                shape,
+                n_trans,
+                eps=1e-6,
+                isign=-1,
+                dtype=str(dtype).removeprefix('torch.'),
+                upsampfac=oversampling,
+                modeord=0,
+                gpu_method=0,
+                gpu_device_id=device.index,
+                gpu_stream=stream.cuda_stream,
+            )
+        return finufft.Plan(
+            2,
+            shape,
+            n_trans,
+            eps=1e-6,
+            isign=-1,
+            dtype=str(dtype).removeprefix('torch.'),
+            upsampfac=oversampling,
+            modeord=0,
+        )
+
+    @cached_property
+    def _plan_adj(self) -> Any:  # noqa: ANN401
+        shape, n_trans, dtype, device, oversampling, stream = self._plan_config
+        if device.type == 'cuda':
+            import cufinufft
+
+            assert stream is not None
+            return cufinufft.Plan(
+                1,
+                shape,
+                n_trans,
+                eps=1e-6,
+                isign=1,
+                dtype=str(dtype).removeprefix('torch.'),
+                upsampfac=oversampling,
+                modeord=0,
+                gpu_method=0,
+                gpu_device_id=device.index,
+                gpu_stream=stream.cuda_stream,
+            )
+        return finufft.Plan(
+            1,
+            shape,
+            n_trans,
+            eps=1e-6,
+            isign=1,
+            dtype=str(dtype).removeprefix('torch.'),
+            upsampfac=oversampling,
+            modeord=0,
+        )
+
+    def _execute(self, points: torch.Tensor, data: torch.Tensor, kind: int, shape: tuple[int, ...]) -> torch.Tensor:
+        """Reuse one native workspace across the separate coordinate groups."""
+        if data.device != points.device:
+            raise ValueError('Data and trajectory must be on the same device')
+        if data.dtype not in (torch.complex64, torch.complex128) or points.dtype != data.real.dtype:
+            raise TypeError('Data must be complex64/complex128 and trajectory must have matching real precision')
+        stream = torch.cuda.current_stream(data.device) if data.is_cuda else None
+        config = (shape, data.shape[1], data.dtype, data.device, self.oversampling, stream)
+        points = points.detach().contiguous()
+        data = data.detach().resolve_conj().resolve_neg().contiguous()
+        output_shape = (data.shape[0], data.shape[1], points.shape[-1]) if kind == 2 else (*data.shape[:2], *shape)
+        result = torch.empty(output_shape, dtype=data.dtype, device=data.device)
+        with self._plan_lock:
+            previous = getattr(self, '_plan_config', None)
+            if previous != config:
+                # A new stream/device must not destroy a workspace still used by the old stream.
+                old_stream = previous[-1] if previous is not None else None
+                with torch.cuda.device(old_stream.device) if old_stream is not None else nullcontext():
+                    if old_stream is not None:
+                        old_stream.synchronize()
+                    self.__dict__.pop('_plan_fwd', None)
+                    self.__dict__.pop('_plan_adj', None)
+                self._plan_config = config
+            with torch.cuda.device(data.device) if data.is_cuda else nullcontext():
+                plan = self._plan_fwd if kind == 2 else self._plan_adj
+                if data.is_cuda:
+                    coordinates = zip(*(axis.unbind(0) for axis in points.unbind(1)), strict=True)
+                    for coordinate, values, target in zip(coordinates, data.unbind(0), result.unbind(0), strict=True):
+                        plan.setpts(*coordinate)
+                        plan.execute(values, out=target)
+                else:
+                    pts, numpy_values, numpy_target = points.numpy(), data.numpy(), result.numpy()
+                    for coordinate, value, out in zip(pts, numpy_values, numpy_target, strict=True):
+                        plan.setpts(*coordinate)
+                        plan.execute(value, out=out)
+        return result
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Copy tensor state without native plans, streams or the execution lock."""
+        state = super().__getstate__()
+        for name in ('_plan_fwd', '_plan_adj', '_plan_config', '_plan_lock'):
+            state.pop(name, None)
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore an operator with independent, lazily constructed plans."""
+        super().__setstate__(state)
+        self._plan_lock = Lock()
 
     def _separate_joint_dimensions(
         self, data_ndim: int
@@ -240,8 +467,8 @@ class NonUniformFastFourierOp(LinearOperator, adjoint_as_backward=True):
             x = x.flatten(start_dim=1, end_dim=-len(self._direction_zyx) - 1)
             # cufinufft needs c contiguous, otherwise it warns.
             x = x.contiguous()
-            x = torch.vmap(partial(finufft_type2, upsampfac=self.oversampling, modeord=0, isign=-1))(self._omega, x)
-            x = x * self.scale
+            x = _NUFFT.apply(self._omega, x, self, 2, tuple(x.shape[-len(self._direction_zyx) :]))
+            x = x.mul_(self.scale)
             shape_210 = [self._traj_broadcast_shape[i] for i in self._dimension_210]
             x = x.reshape(*unflatten_shape, *shape_210)
             x = x.permute(*unpermute_210)
@@ -282,10 +509,8 @@ class NonUniformFastFourierOp(LinearOperator, adjoint_as_backward=True):
             x = x.flatten(start_dim=1, end_dim=-len(self._dimension_210) - 1).flatten(start_dim=2)
             # cufinufft needs c contiguous, otherwise it warns.
             x = x.contiguous()
-            x = torch.vmap(
-                partial(finufft_type1, upsampfac=self.oversampling, modeord=0, isign=1, output_shape=self._im_size)
-            )(self._omega, x)
-            x = x * self.scale
+            x = _NUFFT.apply(self._omega, x, self, 1, self._im_size)
+            x = x.mul_(self.scale)
 
             x = x.reshape(*unflatten_other_shape, -1, *x.shape[-len(self._direction_zyx) :])
             x = x.permute(*unpermute_zyx)
