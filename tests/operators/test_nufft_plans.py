@@ -1,301 +1,111 @@
-"""Native NUFFT plan reuse and differentiable execution."""
+"""Tests for reusable native NUFFT plans."""
 
 import copy
 import pickle
-import weakref
-from concurrent.futures import ThreadPoolExecutor
-from typing import Literal, overload
 
 import pytest
 import torch
-from mr2.data import KTrajectory, SpatialDimension
-from mr2.operators import FourierOp, NonUniformFastFourierOp
-from mr2.operators.NonUniformFastFourierOp import _NUFFT
+from mr2.utils import RandomGenerator
 from pytorch_finufft.functional import finufft_type1, finufft_type2
+
+from tests.helper import autodiff_test, gradient_of_linear_operator_test
+from tests.operators.test_non_uniform_fast_fourier_op import create_time_varying_2d_nufft_op
 
 DEVICES = ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)]
 
 
-@overload
-def make_operator(
-    points: torch.Tensor, shape: tuple[int, ...], fourier: Literal[False] = False
-) -> NonUniformFastFourierOp: ...
-
-
-@overload
-def make_operator(points: torch.Tensor, shape: tuple[int, ...], fourier: Literal[True]) -> FourierOp: ...
-
-
-@overload
-def make_operator(
-    points: torch.Tensor, shape: tuple[int, ...], fourier: bool
-) -> NonUniformFastFourierOp | FourierOp: ...
-
-
-def make_operator(
-    points: torch.Tensor, shape: tuple[int, ...], fourier: bool = False
-) -> NonUniformFastFourierOp | FourierOp:
-    """Build an MR2 operator from explicit coordinates in encoding-grid units."""
-    coordinates = [points[:, dim].reshape(points.shape[0], 1, 1, 1, -1) for dim in range(len(shape))]
-    coordinates = [torch.zeros_like(coordinates[0])] * (3 - len(shape)) + coordinates
-    trajectory = KTrajectory(coordinates[0], coordinates[1], coordinates[2], repeat_detection_tolerance=None)
-    if fourier:
-        matrix = SpatialDimension(*([1] * (3 - len(shape)) + list(shape)))
-        return FourierOp(matrix, matrix, trajectory)
-    directions: tuple[Literal[-3, -2, -1], ...] = (-3, -2, -1)
-    return NonUniformFastFourierOp(directions[-len(shape) :], shape, shape, trajectory)
-
-
-def direct(points: torch.Tensor, data: torch.Tensor, kind: int, shape: tuple[int, ...]) -> torch.Tensor:
-    """Small exact centered Fourier matrix, independent of the NUFFT backend."""
-    modes = torch.stack(
-        torch.meshgrid(
-            *[torch.arange(-(n // 2), n - n // 2, device=points.device, dtype=points.dtype) for n in shape],
-            indexing='ij',
-        )
-    ).flatten(1)
-    matrix = torch.exp(-1j * torch.einsum('bdp,dm->bpm', points, modes))
-    if kind == 2:
-        return torch.einsum('bpm,bcm->bcp', matrix, data.flatten(2))
-    return torch.einsum('bpm,bcp->bcm', matrix.conj(), data).reshape(*data.shape[:2], *shape)
-
-
 @pytest.mark.parametrize('device', DEVICES)
-@pytest.mark.parametrize('shape', [(7,), (5, 6), (3, 4, 5)])
 @pytest.mark.parametrize('dtype', [torch.complex64, torch.complex128])
-def test_native_plans_match_functional(device: str, shape: tuple[int, ...], dtype: torch.dtype) -> None:
-    """Both directions retain existing precision, ordering, scaling and batching."""
-    torch.manual_seed(12)
-    points = torch.rand(3, len(shape), 13, device=device, dtype=dtype.to_real()) * 5 - 2.5
-    operator = make_operator(points, shape)
-    omega = operator._omega
-    images = torch.randn(3, 2, *shape, device=device, dtype=dtype)
-    samples = torch.randn(3, 2, 13, device=device, dtype=dtype)
-    for kind, values in ((2, images), (1, samples)):
-        actual = _NUFFT.apply(omega, values, operator, kind, shape)
-        if kind == 2:
-            expected = torch.vmap(lambda p, x: finufft_type2(p, x, isign=-1, modeord=0, upsampfac=2.0))(omega, values)
-        else:
-            expected = torch.vmap(lambda p, x: finufft_type1(p, x, shape, isign=1, modeord=0, upsampfac=2.0))(  # type: ignore[arg-type]
-                omega, values
-            )
-        torch.testing.assert_close(actual, expected, atol=2e-5, rtol=2e-5)
-        torch.testing.assert_close(actual, direct(omega, values, kind, shape), atol=4e-5, rtol=4e-5)
-
-
-@pytest.mark.parametrize('device', DEVICES)
-@pytest.mark.parametrize('kind', [1, 2])
-def test_native_plan_derivatives(device: str, kind: int) -> None:
-    """Check coordinate/data gradients, mixed second derivatives, vmap and JVP."""
-    torch.manual_seed(31)
-    shape = (5, 6)
-    points = (torch.rand(2, 2, 9, device=device, dtype=torch.float64) * 5 - 2.5).requires_grad_()
-    operator = make_operator(points, shape)
-    size = (2, 2, *shape) if kind == 2 else (2, 2, 9)
-    data = torch.randn(size, device=device, dtype=torch.complex128, requires_grad=True)
-    expected = direct(points, data, kind, shape)
-    actual = _NUFFT.apply(points, data, operator, kind, shape)
-    cotangent = torch.randn_like(expected).conj()
-    gradients = torch.autograd.grad(actual, (points, data), cotangent, create_graph=True)
-    reference_gradients = torch.autograd.grad(expected, (points, data), cotangent, create_graph=True)
-    for result, reference in zip(gradients, reference_gradients, strict=True):
-        torch.testing.assert_close(result, reference, atol=8e-5, rtol=8e-5)
-    second = torch.autograd.grad(torch.stack([g.abs().square().sum() for g in gradients]).sum(), (points, data))
-    reference_second = torch.autograd.grad(
-        torch.stack([g.abs().square().sum() for g in reference_gradients]).sum(), (points, data)
+def test_plan_results(device: str, dtype: torch.dtype) -> None:
+    """Native plans match the functional backend for both directions."""
+    rng = RandomGenerator(seed=0, device=device)
+    operator = create_time_varying_2d_nufft_op(image_shape=(5, 6)).to(device=device, dtype=dtype.to_real())
+    image = rng.complex128_tensor((4, 2, 1, 5, 6)).to(dtype)
+    samples = rng.complex128_tensor((4, 2, 1, 5, 6)).to(dtype)
+    expected_forward = torch.vmap(lambda p, x: finufft_type2(p, x, isign=-1, modeord=0, upsampfac=2.0))(
+        operator._omega, image[:, :, 0]
     )
-    for result, reference in zip(second, reference_second, strict=True):
-        torch.testing.assert_close(result, reference, atol=3e-3, rtol=2e-4)
-
-    def function(p: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
-        return _NUFFT.apply(p, x, operator, kind, shape)
-
-    def reference_function(p: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
-        return direct(p, x, kind, shape)
-
-    tangent = (torch.randn_like(points), torch.randn_like(data))
-    actual_jvp = torch.func.jvp(function, (points, data), tangent)[1]
-    expected_jvp = torch.func.jvp(reference_function, (points, data), tangent)[1]
-    torch.testing.assert_close(actual_jvp, expected_jvp, atol=1e-4, rtol=1e-4)
-    for tangents in ((tangent[0], torch.zeros_like(data)), (torch.zeros_like(points), tangent[1])):
-        actual_jvp = torch.func.jvp(function, (points, data), tangents)[1]
-        expected_jvp = torch.func.jvp(reference_function, (points, data), tangents)[1]
-        torch.testing.assert_close(actual_jvp, expected_jvp, atol=1e-4, rtol=1e-4)
-
-    batched_points = torch.stack((points.detach(), points.detach() + 0.01))
-    batched_data = torch.stack((data.detach(), data.detach() * 0.7))
-    for in_dims, p, x in (
-        (0, batched_points, batched_data),
-        ((None, 0), points.detach(), batched_data),
-        ((0, None), batched_points, data.detach()),
-    ):
-        actual_mapped = torch.vmap(function, in_dims=in_dims)(p, x)
-        expected_mapped = torch.vmap(reference_function, in_dims=in_dims)(p, x)
-        torch.testing.assert_close(actual_mapped, expected_mapped, atol=8e-5, rtol=8e-5)
-    actual_mapped_grad = torch.vmap(torch.func.grad(lambda p, x: function(p, x).abs().square().sum(), argnums=(0, 1)))(
-        batched_points, batched_data
+    expected_adjoint = torch.vmap(lambda p, x: finufft_type1(p, x, (5, 6), isign=1, modeord=0, upsampfac=2.0))(
+        operator._omega, samples.flatten(2)
     )
-    expected_mapped_grad = torch.vmap(
-        torch.func.grad(lambda p, x: reference_function(p, x).abs().square().sum(), argnums=(0, 1))
-    )(batched_points, batched_data)
-    for result, reference in zip(actual_mapped_grad, expected_mapped_grad, strict=True):
-        torch.testing.assert_close(result, reference, atol=3e-3, rtol=1e-4)
+    torch.testing.assert_close(operator(image)[0], expected_forward.reshape_as(samples) * operator.scale)
+    torch.testing.assert_close(operator.adjoint(samples)[0], expected_adjoint.reshape_as(image) * operator.scale)
 
 
 @pytest.mark.parametrize('device', DEVICES)
-@pytest.mark.parametrize('fourier', [False, True])
-@pytest.mark.parametrize('kind', [1, 2])
-def test_public_trajectory_gradients(device: str, fourier: bool, kind: int) -> None:
-    """Gradients reach original trajectory tensors through both public operators."""
-    torch.manual_seed(27)
-    shape = (5, 6)
-    points = (torch.rand(2, 2, 11, device=device, dtype=torch.float64) * 4 - 2).requires_grad_()
-    operator = make_operator(points, shape, fourier)
-    size = (2, 2, 1, *shape) if kind == 2 else (2, 2, 1, 1, 11)
-    data = torch.randn(size, device=device, dtype=torch.complex128, requires_grad=True)
-    for _ in range(2):
-        output = (operator(data) if kind == 2 else operator.adjoint(data))[0]
-        flat = data[:, :, 0] if kind == 2 else data.flatten(2)
-        scale = torch.tensor(shape).prod().sqrt().reciprocal().to(device)
-        omega = points * 2 * torch.pi / torch.tensor(shape, device=device)[:, None]
-        reference = (direct(omega, flat, kind, shape) * scale).reshape_as(output)
-        cotangent = torch.randn_like(output).conj()
-        gradients = torch.autograd.grad(output, (points, data), cotangent)
-        reference_gradients = torch.autograd.grad(reference, (points, data), cotangent)
-        torch.testing.assert_close(output, reference, atol=2e-5, rtol=2e-5)
-        for result, expected in zip(gradients, reference_gradients, strict=True):
-            torch.testing.assert_close(result, expected, atol=3e-5, rtol=3e-5)
-        with torch.no_grad():
-            points.add_(0.02)
-
-
-@pytest.mark.parametrize('device', DEVICES)
-def test_plan_cache_lifetime(device: str) -> None:
-    """Reuse across points/calls, replace for batching, and invalidate on conversion."""
-    points = torch.rand(3, 2, 13, device=device)
-    operator = make_operator(points, (8, 8))
-    images = torch.randn(3, 2, 1, 8, 8, device=device, dtype=torch.complex64)
-    first = operator(images)[0]
+def test_plan_cache(device: str) -> None:
+    """Reuse plans across frames and calls; invalidate on batching or conversion."""
+    rng = RandomGenerator(seed=0, device=device)
+    operator = create_time_varying_2d_nufft_op().to(device)
+    image = rng.complex64_tensor((4, 2, 1, 12, 10))
+    expected = operator(image)[0]
     forward = operator._plan_fwd
-    operator.adjoint(first)
+    operator.adjoint(expected)
     adjoint = operator._plan_adj
-    second = operator(images * 2)[0]
+    torch.testing.assert_close(operator(image * 2)[0], expected * 2)
     assert operator._plan_fwd is forward
     assert operator._plan_adj is adjoint
-    if device == 'cuda':
-        assert len(forward._references) == 2
-        assert len(adjoint._references) == 2
-    torch.testing.assert_close(second, first * 2)
-    operator(images[:, :1])
+    operator(image[:, :1])
     assert operator._plan_fwd is not forward
-    assert '_plan_adj' not in operator.__dict__
+    assert '_plan_adj' not in vars(operator)
     operator.double()
-    assert '_plan_fwd' not in operator.__dict__
-    operator(images.to(torch.complex128))
-    assert operator._plan_fwd.dtype.name == 'complex128'
-    restored = pickle.loads(pickle.dumps(operator))  # noqa: S301
-    for duplicate in (copy.copy(operator), copy.deepcopy(operator), restored):
-        assert '_plan_fwd' not in duplicate.__dict__
-        assert '_plan_adj' not in duplicate.__dict__
-        torch.testing.assert_close(duplicate(images.to(torch.complex128))[0], operator(images.to(torch.complex128))[0])
+    assert '_plan_fwd' not in vars(operator)
+    torch.testing.assert_close(
+        operator(image.to(torch.complex128))[0], expected.to(torch.complex128), atol=2e-6, rtol=2e-5
+    )
+
+
+@pytest.mark.parametrize('device', DEVICES)
+def test_plan_copy(device: str) -> None:
+    """Copies and checkpoints exclude native plans."""
+    rng = RandomGenerator(seed=0, device=device)
+    operator = create_time_varying_2d_nufft_op().to(device)
+    image = rng.complex64_tensor((4, 2, 1, 12, 10))
+    expected = operator(image)[0]
+    operator.adjoint(expected)
+    for duplicate in (copy.copy(operator), copy.deepcopy(operator), pickle.loads(pickle.dumps(operator))):  # noqa: S301
+        assert '_plan_fwd' not in vars(duplicate)
+        assert '_plan_adj' not in vars(duplicate)
+        torch.testing.assert_close(duplicate(image)[0], expected)
     assert not any('plan' in key for key in operator.state_dict())
-    assert not any('lock' in key for key in operator.state_dict())
-    reference = weakref.ref(operator)
-    del operator
-    assert reference() is None
+
+
+@pytest.mark.parametrize('device', DEVICES)
+@pytest.mark.parametrize('adjoint', [False, True])
+def test_plan_vmap(device: str, adjoint: bool) -> None:
+    """Mapped calls match individual calls in both directions."""
+    rng = RandomGenerator(seed=0, device=device)
+    operator = create_time_varying_2d_nufft_op().to(device)
+    function = operator.adjoint if adjoint else operator
+    data = rng.complex64_tensor((3, 4, 2, 1, 12, 10))
+    expected = torch.stack([function(x)[0] for x in data])
+    torch.testing.assert_close(torch.vmap(function)(data)[0], expected)
+
+
+@pytest.mark.parametrize('device', DEVICES)
+def test_plan_autograd(device: str) -> None:
+    """Forward and reverse data derivatives work with native plans."""
+    rng = RandomGenerator(seed=0, device=device)
+    operator = create_time_varying_2d_nufft_op().to(device)
+    image = rng.complex64_tensor((4, 2, 1, 12, 10))
+    samples = rng.complex64_tensor((4, 2, 1, 12, 10))
+    gradient_of_linear_operator_test(operator, image, samples)
+    autodiff_test(operator, image)
+    autodiff_test(operator.H, samples)
 
 
 @pytest.mark.cuda
 def test_plan_cuda_streams() -> None:
-    """Switch streams safely and use the tensor's device even if it is not current."""
-    points = torch.rand(3, 2, 13, device='cuda')
-    operator = make_operator(points, (8, 8))
-    images = torch.randn(3, 2, 1, 8, 8, device='cuda', dtype=torch.complex64)
-    expected = operator(images)[0]
+    """Changing the CUDA stream rebuilds the plan on the new stream."""
+    rng = RandomGenerator(seed=0, device='cuda')
+    operator = create_time_varying_2d_nufft_op().cuda()
+    image = rng.complex64_tensor((4, 2, 1, 12, 10))
+    expected = operator(image)[0]
     plan = operator._plan_fwd
     stream = torch.cuda.Stream()
     stream.wait_stream(torch.cuda.current_stream())
     with torch.cuda.stream(stream):
-        actual = operator(images)[0]
+        actual = operator(image)[0]
         assert operator._plan_fwd is not plan
     torch.cuda.current_stream().wait_stream(stream)
     torch.testing.assert_close(actual, expected)
-    assert operator._plan_config[-1] == stream
-    del plan
-    if torch.cuda.device_count() > 1:
-        with torch.cuda.device(1):
-            torch.testing.assert_close(operator(images)[0], expected)
-    stream.wait_stream(torch.cuda.current_stream())
-    with torch.cuda.stream(stream):
-        pending = operator(images)[0]
-    operator.cpu()
-    assert '_plan_fwd' not in operator.__dict__
-    torch.cuda.current_stream().wait_stream(stream)
-    torch.testing.assert_close(pending, expected)
-
-
-@pytest.mark.parametrize('device', DEVICES)
-def test_plan_concurrent_calls(device: str) -> None:
-    """A shared operator serializes native workspace access across threads."""
-    points = torch.rand(3, 2, 13, device=device)
-    operator = make_operator(points, (8, 8))
-    images = torch.randn(3, 2, 1, 8, 8, device=device, dtype=torch.complex64)
-    expected = operator(images)[0]
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = [executor.submit(lambda: operator(images)[0]) for _ in range(4)]
-        for future in futures:
-            torch.testing.assert_close(future.result(), expected)
-
-
-def test_legacy_nufft_checkpoint() -> None:
-    """Old normalized-coordinate checkpoints load into the reusable-plan operator."""
-    points = torch.rand(3, 2, 13)
-    source = make_operator(points, (8, 8))
-    target = make_operator(points * 0.7, (8, 8))
-    legacy = {'scale': source.scale, '_omega': source._omega.detach()}
-    target.load_state_dict(legacy)
-    images = torch.randn(3, 2, 1, 8, 8, dtype=torch.complex64)
-    torch.testing.assert_close(target(images)[0], source(images)[0], atol=3e-6, rtol=3e-6)
-
-
-@pytest.mark.parametrize('device', DEVICES)
-def test_trainable_trajectory_parameters(device: str) -> None:
-    """Leaf trajectory parameters survive conversion and repeated optimizer steps."""
-    ky = torch.nn.Parameter(torch.rand(2, 1, 1, 1, 11, device=device, dtype=torch.float64))
-    kx = torch.nn.Parameter(torch.rand_like(ky))
-    trajectory = KTrajectory(torch.zeros_like(ky), ky, kx, repeat_detection_tolerance=None)
-    operator = NonUniformFastFourierOp((-2, -1), (5, 6), (5, 6), trajectory).to(device=device, dtype=torch.float64)
-    optimizer = torch.optim.SGD([ky, kx], lr=1e-3)
-    images = torch.randn(2, 2, 1, 5, 6, device=device, dtype=torch.complex128)
-    for _ in range(2):
-        optimizer.zero_grad()
-        operator(images)[0].abs().square().sum().backward()
-        assert ky.grad is not None
-        assert kx.grad is not None
-        assert ky.grad.isfinite().all()
-        assert kx.grad.isfinite().all()
-        optimizer.step()
-
-
-@pytest.mark.parametrize('device', DEVICES)
-@pytest.mark.parametrize('fourier', [False, True])
-@pytest.mark.parametrize('kind', [1, 2])
-def test_public_data_transforms(device: str, fourier: bool, kind: int) -> None:
-    """The public forward/adjoint support mapped data and forward-mode autodiff."""
-    torch.manual_seed(51)
-    shape = (5, 6)
-    points = torch.rand(2, 2, 11, device=device, dtype=torch.float64)
-    operator = make_operator(points, shape, fourier)
-    function = operator if kind == 2 else operator.adjoint
-    size = (2, 2, 1, *shape) if kind == 2 else (2, 2, 1, 1, 11)
-    data = torch.randn(size, device=device, dtype=torch.complex128)
-    tangent = torch.randn_like(data)
-    transformed = torch.func.jvp(function, (data,), (tangent,))
-    result, jvp = transformed[0], transformed[1]
-    omega = points * 2 * torch.pi / torch.tensor(shape, device=device)[:, None]
-    scale = torch.tensor(shape).prod().sqrt().reciprocal().to(device)
-    flat_tangent = tangent[:, :, 0] if kind == 2 else tangent.flatten(2)
-    reference_jvp = direct(omega, flat_tangent, kind, shape) * scale
-    torch.testing.assert_close(jvp[0], reference_jvp.reshape_as(result[0]), atol=3e-5, rtol=3e-5)
-    mapped = torch.vmap(function)(torch.stack((data, data * 0.7)))[0]
-    torch.testing.assert_close(mapped, torch.stack((result[0], result[0] * 0.7)), atol=3e-5, rtol=3e-5)
