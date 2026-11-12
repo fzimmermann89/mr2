@@ -34,6 +34,10 @@ def test_dot(device: str, dtype: torch.dtype, dot_path: None) -> None:
     expected_jvp = torch.func.jvp(lambda x, y: torch.vdot(x.flatten(), y.flatten()), (a, b), (b, a))
     for value, reference in zip(actual_jvp, expected_jvp, strict=True):
         torch.testing.assert_close(value, reference)
+    with torch.autograd.forward_ad.dual_level():
+        dual_a = torch.autograd.forward_ad.make_dual(a, b)
+        actual_tangent = torch.autograd.forward_ad.unpack_dual(dot(dual_a, b)).tangent
+        torch.testing.assert_close(actual_tangent, torch.vdot(b.flatten(), b.flatten()))
 
 
 def test_dot_derivatives(dot_path: None) -> None:

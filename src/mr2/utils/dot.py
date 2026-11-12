@@ -23,11 +23,14 @@ class _ChunkedDot(torch.autograd.Function):
 
     @staticmethod
     def setup_context(ctx: Any, inputs: tuple[torch.Tensor, torch.Tensor], _output: torch.Tensor) -> None:  # noqa: ANN401
+        ctx.set_materialize_grads(False)
         ctx.save_for_backward(*inputs)
         ctx.save_for_forward(*inputs)
 
     @staticmethod
-    def backward(ctx: Any, grad_output: torch.Tensor) -> tuple[torch.Tensor | None, torch.Tensor | None]:  # noqa: ANN401
+    def backward(ctx: Any, grad_output: torch.Tensor | None) -> tuple[torch.Tensor | None, torch.Tensor | None]:  # noqa: ANN401
+        if grad_output is None:
+            return None, None
         a, b = ctx.saved_tensors
         return (
             grad_output.conj() * b if ctx.needs_input_grad[0] else None,
@@ -35,9 +38,14 @@ class _ChunkedDot(torch.autograd.Function):
         )
 
     @staticmethod
-    def jvp(ctx: Any, grad_a: torch.Tensor, grad_b: torch.Tensor) -> torch.Tensor:  # noqa: ANN401
+    def jvp(ctx: Any, grad_a: torch.Tensor | None, grad_b: torch.Tensor | None) -> torch.Tensor:  # noqa: ANN401
         a, b = ctx.saved_tensors
-        return dot(grad_a, b) + dot(a, grad_b)
+        result = a.new_zeros(())
+        if grad_a is not None:
+            result = result + dot(grad_a, b)
+        if grad_b is not None:
+            result = result + dot(a, grad_b)
+        return result
 
 
 def dot(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
