@@ -140,7 +140,7 @@ def pgd(
             quadratic_approx = (
                 f_y
                 + 1 / (2 * stepsize) * sum(di.abs().square().sum() for di in difference)
-                + sum(dot(gi, di).real for gi, di in zip(gradient, difference, strict=True))
+                + dot(gradient, difference).real
             )
 
             (f_x,) = f(*x)

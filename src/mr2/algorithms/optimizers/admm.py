@@ -16,7 +16,7 @@ from typing import Literal
 import torch
 from typing_extensions import NotRequired
 
-from mr2.algorithms.optimizers.cg import cg, vdot
+from mr2.algorithms.optimizers.cg import cg
 from mr2.algorithms.optimizers.OptimizerStatus import OptimizerStatus
 from mr2.operators import (
     IdentityOp,
@@ -25,6 +25,7 @@ from mr2.operators import (
     ProximableFunctional,
     ProximableFunctionalSeparableSum,
 )
+from mr2.utils.dot import dot
 from mr2.utils.to_tuple import to_tuple
 
 _ADMMSplitUpdate = Callable[..., tuple[torch.Tensor, ...]]
@@ -33,7 +34,7 @@ _ADMMSplitUpdate = Callable[..., tuple[torch.Tensor, ...]]
 
 def _norm_squared(values: Sequence[torch.Tensor]) -> torch.Tensor:
     """Squared L2 norm of a sequence of tensors."""
-    return vdot(values, values).real
+    return dot(values, values).real
 
 
 @dataclass

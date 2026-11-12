@@ -1,5 +1,6 @@
 """Inner products with bounded temporary memory for large tensors."""
 
+from collections.abc import Sequence
 from typing import Any
 
 import torch
@@ -48,11 +49,13 @@ class _ChunkedDot(torch.autograd.Function):
         return result
 
 
-def dot(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-    r"""Compute the inner product of two flattened tensors.
+def dot(a: torch.Tensor | Sequence[torch.Tensor], b: torch.Tensor | Sequence[torch.Tensor]) -> torch.Tensor:
+    r"""Compute the inner product of tensors or sequences of tensors.
 
     Computes :math:`\sum_i \overline{a_i} b_i`, conjugating the first input.
-    Inputs must have the same number of elements, dtype and device.
+    Corresponding tensors must have the same number of elements, dtype and device.
+    Sequences are treated as concatenated vectors without allocating the concatenation.
+    They must have the same length; empty sequences return a scalar zero on CPU.
     Uses `torch.vdot` for at most 2**31 - 1 elements. Larger inputs are reduced
     in chunks to avoid inaccurate CPU reductions and CUDA size limits.
     Computation and output use the input dtype. Derivatives are computed
@@ -61,15 +64,19 @@ def dot(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     Parameters
     ----------
     a
-        First input tensor.
+        First input tensor or sequence of tensors.
     b
-        Second input tensor.
+        Second input tensor or sequence of tensors.
 
     Returns
     -------
     torch.Tensor
         Scalar inner product.
     """
+    if not isinstance(a, torch.Tensor) or not isinstance(b, torch.Tensor):
+        a = (a,) if isinstance(a, torch.Tensor) else a
+        b = (b,) if isinstance(b, torch.Tensor) else b
+        return sum((dot(x, y) for x, y in zip(a, b, strict=True)), start=torch.tensor(0.0))
     a, b = a.flatten(), b.flatten()
     if a.numel() <= _MAX_DOT_SIZE:
         return torch.vdot(a, b)

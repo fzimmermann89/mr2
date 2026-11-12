@@ -47,3 +47,25 @@ def test_dot_derivatives(dot_path: None) -> None:
     assert torch.autograd.gradcheck(dot, (a, b), check_forward_ad=True)
     assert torch.autograd.gradgradcheck(dot, (a, b))
     torch.testing.assert_close(torch.vmap(dot)(a[None], b[None]), torch.linalg.vecdot(a[None], b[None]))
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.cuda)])
+def test_dot_sequence(device: str, dot_path: None) -> None:
+    """Match concatenated vectors and their derivatives without concatenating inputs."""
+    a = torch.tensor([1 + 2j, 3 - 1j, 2 + 0.5j], dtype=torch.complex128, device=device, requires_grad=True)
+    b = torch.tensor([2 - 1j, 1 + 3j, 4 - 2j], dtype=torch.complex128, device=device, requires_grad=True)
+
+    def sequence_dot(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        return dot((x[:1], x[1:]), [y[:1], y[1:]])
+
+    actual = sequence_dot(a, b)
+    expected = torch.vdot(a, b)
+    torch.testing.assert_close(actual, expected)
+    assert actual.dtype == a.dtype
+    assert actual.device == a.device
+    assert torch.autograd.gradcheck(sequence_dot, (a, b), check_forward_ad=True)
+    assert torch.autograd.gradgradcheck(sequence_dot, (a, b))
+    torch.testing.assert_close(dot(a, (b,)), expected)
+    torch.testing.assert_close(dot((), ()), torch.tensor(0.0))
+    with pytest.raises(ValueError):
+        dot((a,), (b, b))

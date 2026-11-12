@@ -34,7 +34,7 @@ class PDHGStatus(OptimizerStatus):
 
 def _norm_squared(*values: torch.Tensor) -> torch.Tensor:
     """Calculate the squared L2 norm of the stack of tensors."""
-    return sum([dot(value, value).real for value in values], start=torch.tensor(0.0))
+    return dot(values, values).real
 
 
 def pdhg(
