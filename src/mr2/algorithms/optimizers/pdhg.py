@@ -17,6 +17,7 @@ from mr2.operators import (
     ProximableFunctionalSeparableSum,
 )
 from mr2.operators.functionals import ZeroFunctional
+from mr2.utils.dot import dot
 
 
 @dataclass
@@ -33,7 +34,7 @@ class PDHGStatus(OptimizerStatus):
 
 def _norm_squared(*values: torch.Tensor) -> torch.Tensor:
     """Calculate the squared L2 norm of the stack of tensors."""
-    return sum([torch.vdot(value.flatten(), value.flatten()).real for value in values], start=torch.tensor(0.0))
+    return dot(values, values).real
 
 
 def pdhg(

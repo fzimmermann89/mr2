@@ -11,6 +11,7 @@ from mr2.algorithms.optimizers.OptimizerStatus import OptimizerStatus
 from mr2.operators import ProximableFunctionalSeparableSum
 from mr2.operators.Functional import ProximableFunctional
 from mr2.operators.Operator import Operator
+from mr2.utils.dot import dot
 
 
 @dataclass
@@ -139,7 +140,7 @@ def pgd(
             quadratic_approx = (
                 f_y
                 + 1 / (2 * stepsize) * sum(di.abs().square().sum() for di in difference)
-                + sum(torch.vdot(gi.flatten(), di.flatten()).real for gi, di in zip(gradient, difference, strict=True))
+                + dot(gradient, difference).real
             )
 
             (f_x,) = f(*x)

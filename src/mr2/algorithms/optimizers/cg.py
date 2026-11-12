@@ -8,13 +8,7 @@ from typing_extensions import Unpack, overload
 from mr2.algorithms.optimizers.OptimizerStatus import OptimizerStatus
 from mr2.operators.LinearOperator import LinearOperator
 from mr2.operators.LinearOperatorMatrix import LinearOperatorMatrix
-
-
-def vdot(a: Sequence[torch.Tensor], b: Sequence[torch.Tensor]) -> torch.Tensor:
-    """Vector dot product."""
-    return sum(
-        (torch.vdot(a_i.flatten(), b_i.flatten()) for a_i, b_i in zip(a, b, strict=True)), start=torch.tensor(0.0)
-    )
+from mr2.utils.dot import dot
 
 
 class CGStatus(OptimizerStatus):
@@ -150,14 +144,14 @@ def cg(
     direction_dot_residual_old: torch.Tensor | None = None
 
     for iteration in range(max_iterations):
-        residual_dot_residual = vdot(residual, residual).real
+        residual_dot_residual = dot(residual, residual).real
 
         if residual_dot_residual <= tolerance**2:  # are we done?
             break
 
         if preconditioner_inverse is not None:
             direction = preconditioner_inverse(*residual)
-            direction_dot_residual = vdot(residual, direction).real
+            direction_dot_residual = dot(residual, direction).real
         else:
             direction = residual
             direction_dot_residual = residual_dot_residual
@@ -166,7 +160,7 @@ def cg(
             beta = direction_dot_residual / direction_dot_residual_old
             conjugate = tuple(d + beta * con for d, con in zip(direction, conjugate, strict=True))
         operator_conjugate = operator(*conjugate)
-        alpha = direction_dot_residual / vdot(conjugate, operator_conjugate).real
+        alpha = direction_dot_residual / dot(conjugate, operator_conjugate).real
         solution = tuple(sol + alpha * con for sol, con in zip(solution, conjugate, strict=True))
         residual = tuple(res - alpha * op_con for res, op_con in zip(residual, operator_conjugate, strict=True))
         direction_dot_residual_old = direction_dot_residual
