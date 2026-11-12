@@ -55,8 +55,8 @@ def dot(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     Inputs must have the same number of elements, dtype and device.
     Uses `torch.vdot` for at most 2**31 - 1 elements. Larger inputs are reduced
     in chunks to avoid inaccurate CPU reductions and CUDA size limits.
-    Computation and output use the input dtype. Analytic reverse- and
-    forward-mode derivatives save only the original inputs.
+    Computation and output use the input dtype. Derivatives are computed
+    analytically to bound memory.
 
     Parameters
     ----------
@@ -73,6 +73,4 @@ def dot(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     a, b = a.flatten(), b.flatten()
     if a.numel() <= _MAX_DOT_SIZE:
         return torch.vdot(a, b)
-    if a.shape != b.shape or a.dtype != b.dtype or a.device != b.device:
-        raise RuntimeError('Inputs must have the same number of elements, dtype and device.')
     return _ChunkedDot.apply(a, b)
