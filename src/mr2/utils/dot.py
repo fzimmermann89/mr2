@@ -8,22 +8,23 @@ _MAX_DOT_SIZE = 2**31 - 1
 _DOT_CHUNK_SIZE = 2**22
 
 
+@torch.compiler.allow_in_graph
 class _ChunkedDot(torch.autograd.Function):
-    """Accumulate wide-precision chunks without saving converted inputs."""
+    """Reduce chunks with analytic derivatives and bounded temporary memory."""
 
     generate_vmap_rule = True
 
     @staticmethod
     def forward(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-        dtype = torch.complex128 if a.is_complex() else torch.float64
-        result = torch.zeros((), dtype=dtype, device=a.device)
+        result = a.new_zeros(())
         for x, y in zip(a.split(_DOT_CHUNK_SIZE), b.split(_DOT_CHUNK_SIZE), strict=True):
-            result = result + torch.vdot(x.to(dtype), y.to(dtype))
-        return result.to(a.dtype)
+            result = result + torch.vdot(x, y)
+        return result
 
     @staticmethod
     def setup_context(ctx: Any, inputs: tuple[torch.Tensor, torch.Tensor], _output: torch.Tensor) -> None:  # noqa: ANN401
         ctx.save_for_backward(*inputs)
+        ctx.save_for_forward(*inputs)
 
     @staticmethod
     def backward(ctx: Any, grad_output: torch.Tensor) -> tuple[torch.Tensor | None, torch.Tensor | None]:  # noqa: ANN401
@@ -33,6 +34,11 @@ class _ChunkedDot(torch.autograd.Function):
             grad_output * a if ctx.needs_input_grad[1] else None,
         )
 
+    @staticmethod
+    def jvp(ctx: Any, grad_a: torch.Tensor, grad_b: torch.Tensor) -> torch.Tensor:  # noqa: ANN401
+        a, b = ctx.saved_tensors
+        return dot(grad_a, b) + dot(a, grad_b)
+
 
 def dot(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     r"""Compute the inner product of two flattened tensors.
@@ -40,10 +46,9 @@ def dot(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     Computes :math:`\sum_i \overline{a_i} b_i`, conjugating the first input.
     Inputs must have the same number of elements, dtype and device.
     Uses `torch.vdot` for at most 2**31 - 1 elements. Larger inputs are reduced
-    in float64 or complex128 chunks to avoid inaccurate CPU reductions and
-    CUDA size limits. The result retains the input dtype. The backward saves
-    only the original inputs, keeping temporary conversion memory bounded.
-    Forward-mode differentiation is only supported on the native path.
+    in chunks to avoid inaccurate CPU reductions and CUDA size limits.
+    Computation and output use the input dtype. Analytic reverse- and
+    forward-mode derivatives save only the original inputs.
 
     Parameters
     ----------

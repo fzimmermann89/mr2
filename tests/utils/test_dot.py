@@ -30,12 +30,16 @@ def test_dot(device: str, dtype: torch.dtype, dot_path: None) -> None:
     expected_gradient = torch.autograd.grad(expected, (a, b), grad_output)
     for actual_grad, expected_grad in zip(actual_gradient, expected_gradient, strict=True):
         torch.testing.assert_close(actual_grad, expected_grad)
+    actual_jvp = torch.func.jvp(dot, (a, b), (b, a))
+    expected_jvp = torch.func.jvp(lambda x, y: torch.vdot(x.flatten(), y.flatten()), (a, b), (b, a))
+    for value, reference in zip(actual_jvp, expected_jvp, strict=True):
+        torch.testing.assert_close(value, reference)
 
 
 def test_dot_derivatives(dot_path: None) -> None:
     """Preserve complex derivatives, curvature and batching."""
     a = torch.tensor([1 + 2j, 3 - 1j, 2 + 0.5j], dtype=torch.complex128, requires_grad=True)
     b = torch.tensor([2 - 1j, 1 + 3j, 4 - 2j], dtype=torch.complex128, requires_grad=True)
-    assert torch.autograd.gradcheck(dot, (a, b))
+    assert torch.autograd.gradcheck(dot, (a, b), check_forward_ad=True)
     assert torch.autograd.gradgradcheck(dot, (a, b))
     torch.testing.assert_close(torch.vmap(dot)(a[None], b[None]), torch.linalg.vecdot(a[None], b[None]))
