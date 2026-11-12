@@ -36,6 +36,7 @@ from mr2.utils.RandomGenerator import RandomGenerator
 from mr2.utils.to_tuple import to_tuple
 from mr2.utils.ema import EMADict
 from mr2.utils.vector_norm import vector_norm
+from mr2.utils.dot import dot
 
 __all__ = [
     'EMADict',
@@ -48,6 +49,7 @@ __all__ = [
     'broadcast_shapes_except',
     'broadcasted_concatenate',
     'broadcasted_rearrange',
+    'dot',
     'fill_range_',
     'filters',
     'interp',

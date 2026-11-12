@@ -8,13 +8,12 @@ from typing_extensions import Unpack, overload
 from mr2.algorithms.optimizers.OptimizerStatus import OptimizerStatus
 from mr2.operators.LinearOperator import LinearOperator
 from mr2.operators.LinearOperatorMatrix import LinearOperatorMatrix
+from mr2.utils.dot import dot
 
 
 def vdot(a: Sequence[torch.Tensor], b: Sequence[torch.Tensor]) -> torch.Tensor:
     """Vector dot product."""
-    return sum(
-        (torch.vdot(a_i.flatten(), b_i.flatten()) for a_i, b_i in zip(a, b, strict=True)), start=torch.tensor(0.0)
-    )
+    return sum((dot(a_i, b_i) for a_i, b_i in zip(a, b, strict=True)), start=torch.tensor(0.0))
 
 
 class CGStatus(OptimizerStatus):

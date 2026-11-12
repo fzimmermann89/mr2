@@ -9,6 +9,7 @@ from typing_extensions import TypedDict, Unpack
 from mr2.operators import MultiIdentityOp
 from mr2.operators.LinearOperator import LinearOperator
 from mr2.operators.LinearOperatorMatrix import LinearOperatorMatrix
+from mr2.utils.dot import dot
 
 
 def vdot(a: Sequence[torch.Tensor], b: Sequence[torch.Tensor], force_real: bool = False) -> torch.Tensor:
@@ -16,9 +17,7 @@ def vdot(a: Sequence[torch.Tensor], b: Sequence[torch.Tensor], force_real: bool 
     if force_real:
         a = tuple(torch.view_as_real(a_i) if a_i.is_complex() else a_i for a_i in a)
         b = tuple(torch.view_as_real(b_i) if b_i.is_complex() else b_i for b_i in b)
-    return sum(
-        (torch.vdot(a_i.flatten(), b_i.flatten()) for a_i, b_i in zip(a, b, strict=True)), start=torch.tensor(0.0)
-    )
+    return sum((dot(a_i, b_i) for a_i, b_i in zip(a, b, strict=True)), start=torch.tensor(0.0))
 
 
 OperatorMatrixLikeCallable = Callable[[Unpack[tuple[torch.Tensor, ...]]], tuple[torch.Tensor, ...]]
