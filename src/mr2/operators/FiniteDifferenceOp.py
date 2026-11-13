@@ -5,9 +5,9 @@ from typing import Literal
 
 import torch
 
-from mr2.data.Dataclass import Dataclass
 from mr2.operators.LinearOperator import LinearOperator
 from mr2.utils.filters import filter_separable
+from mr2.utils.typing import HasTensorData
 
 
 class FiniteDifferenceOp(LinearOperator):
@@ -93,7 +93,7 @@ class FiniteDifferenceOp(LinearOperator):
         self.pad_mode: Literal['constant', 'circular'] = 'constant' if pad_mode == 'zeros' else pad_mode
         self.kernel = self.finite_difference_kernel(mode)
 
-    def __call__(self, x: torch.Tensor | Dataclass) -> tuple[torch.Tensor,]:
+    def __call__(self, x: torch.Tensor | HasTensorData) -> tuple[torch.Tensor,]:
         """Apply directional finite differences.
 
         Computes one directional derivative per axis in `dim` and stacks the

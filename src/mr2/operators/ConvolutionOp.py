@@ -6,9 +6,9 @@ from typing import Literal
 import torch
 from torchnd import ConvNd, adjoint_pad_nd, pad_nd
 
-from mr2.data.Dataclass import Dataclass
 from mr2.operators.LinearOperator import LinearOperator
 from mr2.utils import normalize_index, normalize_indices
+from mr2.utils.typing import HasTensorData
 
 
 class ConvolutionOp(LinearOperator):
@@ -139,7 +139,7 @@ class ConvolutionOp(LinearOperator):
         """Convolution kernel in output-channel, input-channel, spatial order."""
         return self._convolution.weight
 
-    def __call__(self, x: torch.Tensor | Dataclass) -> tuple[torch.Tensor]:
+    def __call__(self, x: torch.Tensor | HasTensorData) -> tuple[torch.Tensor]:
         """Apply the filter bank.
 
         Parameters

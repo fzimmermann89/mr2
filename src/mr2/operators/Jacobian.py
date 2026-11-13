@@ -4,10 +4,10 @@ from collections.abc import Callable
 
 import torch
 
-from mr2.data.Dataclass import Dataclass
 from mr2.operators.LinearOperator import LinearOperator
 from mr2.operators.Operator import Operator
 from mr2.utils.TensorList import TensorList
+from mr2.utils.typing import HasTensorData
 
 
 class Jacobian(LinearOperator):
@@ -59,7 +59,7 @@ class Jacobian(LinearOperator):
         assert self._vjp is not None
         return (self._vjp(x)[0],)
 
-    def __call__(self, *x: torch.Tensor | Dataclass) -> tuple[torch.Tensor, ...]:  # type:ignore[override]
+    def __call__(self, *x: torch.Tensor | HasTensorData) -> tuple[torch.Tensor, ...]:  # type:ignore[override]
         """Apply the operator.
 
         Parameters

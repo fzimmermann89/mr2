@@ -1,5 +1,6 @@
 """Tests for the operators module."""
 
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -41,11 +42,11 @@ class DummyLinearOperator(LinearOperator):
 
 
 def test_linearoperator_data(consistently_shaped_kdata: KData) -> None:
-    """Linear operators apply to mr2 dataclass data and return tensors."""
+    """Linear operators apply to tensor data in containers and return tensors."""
     kdata = consistently_shaped_kdata
     idata = IData(data=kdata.data, header=IHeader.from_kheader(kdata.header))
     operator = IdentityOp() * 2
-    for data in (kdata, idata):
+    for data in (kdata, idata, SimpleNamespace(data=kdata.data)):
         (actual,) = assert_type(operator(data), tuple[torch.Tensor])
         torch.testing.assert_close(actual, 2 * data.data)
         torch.testing.assert_close(operator.H(data), operator.H(data.data))

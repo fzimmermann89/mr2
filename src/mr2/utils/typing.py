@@ -265,7 +265,7 @@ else:
 
 @runtime_checkable
 class HasTensorData(Protocol):
-    """The tensor-valued data attribute of an mr2 dataclass."""
+    """An object exposing a tensor-valued data attribute."""
 
     @property
     def data(self) -> torch.Tensor:

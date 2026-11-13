@@ -5,10 +5,10 @@ from typing import Literal
 
 import torch
 
-from mr2.data.Dataclass import Dataclass
 from mr2.operators.FiniteDifferenceOp import FiniteDifferenceOp
 from mr2.operators.LinearOperator import LinearOperator
 from mr2.operators.RearrangeOp import RearrangeOp
+from mr2.utils.typing import HasTensorData
 
 
 class SymmetrizedGradientOp(LinearOperator):
@@ -63,7 +63,7 @@ class SymmetrizedGradientOp(LinearOperator):
         transpose_op = RearrangeOp('sym_grad_dim grad_dim ... -> grad_dim sym_grad_dim ...')
         self._operator = 0.5 * (1 + transpose_op) @ finite_difference_op
 
-    def __call__(self, v: torch.Tensor | Dataclass) -> tuple[torch.Tensor,]:
+    def __call__(self, v: torch.Tensor | HasTensorData) -> tuple[torch.Tensor,]:
         """Apply the symmetrized gradient.
 
         Parameters

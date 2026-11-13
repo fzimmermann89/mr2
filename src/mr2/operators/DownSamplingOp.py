@@ -5,9 +5,9 @@ from collections.abc import Sequence
 import torch
 from torchnd import adjoint_linear_interpolation_nd, linear_interpolation_nd
 
-from mr2.data.Dataclass import Dataclass
 from mr2.operators.LinearOperator import LinearOperator
 from mr2.utils.reshape import normalize_indices
+from mr2.utils.typing import HasTensorData
 
 
 class DownSamplingOp(LinearOperator, adjoint_as_backward=True):
@@ -49,7 +49,7 @@ class DownSamplingOp(LinearOperator, adjoint_as_backward=True):
         if any(size <= 0 for size in (*self.domain_shape, *self.range_shape)):
             raise ValueError('domain_shape and range_shape entries must be positive.')
 
-    def __call__(self, x: torch.Tensor | Dataclass) -> tuple[torch.Tensor]:
+    def __call__(self, x: torch.Tensor | HasTensorData) -> tuple[torch.Tensor]:
         """Downsample ``x`` from ``domain_shape`` to ``range_shape`` along ``dim``.
 
         Parameters
