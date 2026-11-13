@@ -6,6 +6,7 @@ import torch
 from einops import rearrange
 
 from mr2.operators.LinearOperator import LinearOperator
+from mr2.utils.typing import HasTensorData
 
 
 class RearrangeOp(LinearOperator):
@@ -38,7 +39,7 @@ class RearrangeOp(LinearOperator):
         self._forward_pattern = pattern
         self.additional_info = {} if additional_info is None else additional_info
 
-    def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor]:
+    def __call__(self, x: torch.Tensor | HasTensorData) -> tuple[torch.Tensor]:
         """Rearrange input tensor.
 
         The rule used to perform the rearranging is set at initialization.

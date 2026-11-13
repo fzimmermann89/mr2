@@ -6,6 +6,7 @@ import einops
 import torch
 
 from mr2.operators.LinearOperator import LinearOperator
+from mr2.utils.typing import HasTensorData
 
 
 class B0InformedFourierOp(LinearOperator, ABC):
@@ -46,7 +47,7 @@ class B0InformedFourierOp(LinearOperator, ABC):
         """Compute the spatial and temporal bases."""
         ...
 
-    def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor,]:
+    def __call__(self, x: torch.Tensor | HasTensorData) -> tuple[torch.Tensor,]:
         """Apply B0-informed Fourier transform to input tensor.
 
         This transforms image data to k-space data, accounting for off-resonance effects.

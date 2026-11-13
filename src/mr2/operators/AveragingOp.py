@@ -7,6 +7,7 @@ import torch
 
 from mr2.operators.LinearOperator import LinearOperator
 from mr2.utils.reshape import normalize_index
+from mr2.utils.typing import HasTensorData
 
 
 class AveragingOp(LinearOperator):
@@ -48,7 +49,7 @@ class AveragingOp(LinearOperator):
         self.idx = idx
         self.dim = dim
 
-    def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor]:
+    def __call__(self, x: torch.Tensor | HasTensorData) -> tuple[torch.Tensor]:
         """Apply the averaging operator to the input tensor.
 
         Parameters

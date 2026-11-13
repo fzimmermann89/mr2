@@ -18,6 +18,7 @@ from mr2.data.SpatialDimension import SpatialDimension
 from mr2.operators.LinearOperator import LinearOperator
 from mr2.operators.PCACompressionOp import PCACompressionOp
 from mr2.utils import normalize_index, unsqueeze_right
+from mr2.utils.typing import HasTensorData
 
 
 class NonUniformFastFourierOp(LinearOperator, adjoint_as_backward=True):
@@ -195,7 +196,7 @@ class NonUniformFastFourierOp(LinearOperator, adjoint_as_backward=True):
         permute_210 = [*sep_dims_210, *joint_dims_other, *self._joint_dims_210, *self._dimension_210]
         return sep_dims_zyx, permute_zyx, sep_dims_210, permute_210
 
-    def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor,]:
+    def __call__(self, x: torch.Tensor | HasTensorData) -> tuple[torch.Tensor,]:
         """Apply Non-Uniform Fast Fourier Transform (NUFFT) from image to k-space (Type 2).
 
         Transforms data from image space to non-uniform k-space locations.
@@ -497,7 +498,7 @@ class NonUniformFastFourierOpGramOp(LinearOperator, adjoint_as_backward=True):
 
         return (out,)
 
-    def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor,]:
+    def __call__(self, x: torch.Tensor | HasTensorData) -> tuple[torch.Tensor,]:
         """Apply the Gram operator of the NonUniformFastFourierOp (NUFFT.H @ NUFFT).
 
         This operation applies the composition of the adjoint NUFFT operator
@@ -684,7 +685,7 @@ class SubspaceNonUniformFastFourierOpGramOp(LinearOperator, adjoint_as_backward=
         out = x.clone().movedim(0, subspace_dim)
         return (out,)
 
-    def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor,]:
+    def __call__(self, x: torch.Tensor | HasTensorData) -> tuple[torch.Tensor,]:
         """Apply the compressed Toeplitz Gram operator.
 
         Parameters

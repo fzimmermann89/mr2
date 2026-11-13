@@ -1,9 +1,11 @@
 """Tests for the operators module."""
 
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
 import torch
+from mr2.data import IData, IHeader, KData
 from mr2.operators import IdentityOp, LinearOperator, LinearOperatorMatrix, Operator
 from mr2.utils import RandomGenerator
 from typing_extensions import Any, assert_type
@@ -37,6 +39,17 @@ class DummyLinearOperator(LinearOperator):
     def adjoint(self, x: torch.Tensor):
         """Dummy adjoint linear operator."""
         return (self._value.mH @ x,)
+
+
+def test_linearoperator_data(consistently_shaped_kdata: KData) -> None:
+    """Linear operators apply to tensor data in containers and return tensors."""
+    kdata = consistently_shaped_kdata
+    idata = IData(data=kdata.data, header=IHeader.from_kheader(kdata.header))
+    operator = IdentityOp() * 2
+    for data in (kdata, idata, SimpleNamespace(data=kdata.data)):
+        (actual,) = assert_type(operator(data), tuple[torch.Tensor])
+        torch.testing.assert_close(actual, 2 * data.data)
+        torch.testing.assert_close(operator.H(data), operator.H(data.data))
 
 
 def test_operator_double_invalidates_cached_properties() -> None:

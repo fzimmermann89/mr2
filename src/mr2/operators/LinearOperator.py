@@ -13,6 +13,7 @@ from typing_extensions import Any, Unpack, overload
 
 import mr2.operators
 from mr2.operators.Operator import Operator, OperatorComposition, OperatorSum, Tin2
+from mr2.utils.typing import HasTensorData
 from mr2.utils.vector_norm import vector_norm
 
 
@@ -62,6 +63,9 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
     with :math:`a`, :math:`b` scalars and :math:`x`, :math:`y` tensors.
 
     LinearOperators can be composed, added, multiplied, applied to tensors.
+    Calling an operator with an object exposing a tensor-valued ``.data`` attribute,
+    such as `~mr2.data.KData` or `~mr2.data.IData`, applies it to that tensor.
+    The result is always a tuple containing a tensor.
     LinearOperators have an `~LinearOperator.H` property that returns the adjoint operator,
     and a `~LinearOperator.gram` property that returns the Gram operator.
 
@@ -106,6 +110,17 @@ class LinearOperator(Operator[torch.Tensor, tuple[torch.Tensor]]):
                 cls.adjoint,
             )
         super().__init_subclass__(**kwargs)
+
+    def __call__(self, *args: Unpack[tuple[torch.Tensor | HasTensorData]]) -> tuple[torch.Tensor]:
+        """Apply the operator to tensors or objects with tensor-valued ``.data`` attributes."""
+        tensors = []
+        for x in args:
+            if not isinstance(x, torch.Tensor) and isinstance(x, HasTensorData):
+                if not isinstance(x.data, torch.Tensor):
+                    raise TypeError('Input data containers must have tensor-valued data.')
+                x = x.data
+            tensors.append(x)
+        return super().__call__(*tensors)
 
     @abstractmethod
     def adjoint(self, x: torch.Tensor) -> tuple[torch.Tensor,]:
@@ -429,7 +444,7 @@ class LinearOperatorComposition(LinearOperator):
         self._operator1 = operator1
         self._operator2 = operator2
 
-    def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor]:
+    def __call__(self, x: torch.Tensor | HasTensorData) -> tuple[torch.Tensor]:
         """Linear operator composition.
 
         Performs operator1(operator2(x)).
@@ -494,7 +509,7 @@ class LinearOperatorSum(LinearOperator):
                 ops.append(op)
         self._operators = cast(list[LinearOperator], torch.nn.ModuleList(ops))
 
-    def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor]:
+    def __call__(self, x: torch.Tensor | HasTensorData) -> tuple[torch.Tensor]:
         """Linear operator addition.
 
         Parameters
@@ -547,7 +562,7 @@ class LinearOperatorElementwiseProductRight(LinearOperator):
         self._operator = operator
         self._scalar = scalar
 
-    def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor,]:
+    def __call__(self, x: torch.Tensor | HasTensorData) -> tuple[torch.Tensor,]:
         """Linear operator elementwise right multiplication.
 
         Performs ``scalar * Operator(x)``.
@@ -615,7 +630,7 @@ class LinearOperatorElementwiseProductLeft(LinearOperator):
         self._operator = operator
         self._scalar = scalar
 
-    def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor,]:
+    def __call__(self, x: torch.Tensor | HasTensorData) -> tuple[torch.Tensor,]:
         """Operator elementwise left multiplication with a tensor.
 
         Performs ``Operator(scalar * x)``.
@@ -672,7 +687,7 @@ class AdjointLinearOperator(LinearOperator):
         super().__init__()
         self._operator = operator
 
-    def __call__(self, x: torch.Tensor) -> tuple[torch.Tensor,]:
+    def __call__(self, x: torch.Tensor | HasTensorData) -> tuple[torch.Tensor,]:
         """Apply the adjoint of the original LinearOperator.
 
         Parameters

@@ -15,7 +15,7 @@ from mr2.data.SpatialDimension import SpatialDimension
 from mr2.operators.LinearOperator import LinearOperator
 from mr2.utils.reshape import ravel_multi_index
 from mr2.utils.slice_profiles import SliceSmoothedRectangular
-from mr2.utils.typing import NestedSequence
+from mr2.utils.typing import HasTensorData, NestedSequence
 
 
 class _MatrixMultiplicationCtx(torch.autograd.function.FunctionCtx):
@@ -250,7 +250,7 @@ class SliceProjectionOp(LinearOperator):
         self._range_shape: tuple[int] = (*batch_shape, 1, output_shape.y, output_shape.x)
         self._domain_shape = input_shape.zyx
 
-    def __call__(self, x: Tensor) -> tuple[Tensor]:
+    def __call__(self, x: Tensor | HasTensorData) -> tuple[Tensor]:
         """Transform a 3D volume to a 2D slice.
 
         This operation uses a sparse matrix multiplication, where the matrix
