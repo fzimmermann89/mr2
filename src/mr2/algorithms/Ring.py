@@ -83,10 +83,11 @@ class Ring:
         if not torch.allclose(positions, nominal, atol=1e-2 * float(spacing.min())):
             raise ValueError('RING requires readouts that are straight, equidistantly sampled lines.')
 
-        # Fine grid around the sample of each spoke closest to the nominal k-space center, in units of samples
+        # Fine grid along each spoke around the nominal k-space center
         n_fine = 2 * round(search_radius / resolution) + 1
-        fine_idx = torch.linspace(-1, 1, n_fine).to(spacing) * search_radius / spacing.mean()
-        if (center_idx + fine_idx[0] < 0).any() or (center_idx + fine_idx[-1] > n_k0 - 1).any():
+        fine_k = torch.linspace(-search_radius, search_radius, n_fine).to(spacing)
+        fine_idx = fine_k / spacing[:, None]
+        if (center_idx + fine_idx[:, 0] < 0).any() or (center_idx + fine_idx[:, -1] > n_k0 - 1).any():
             raise ValueError('The search region around the k-space center is not covered by all readouts.')
 
         # Low-pass filter by cropping the 1D projections and interpolate the spokes to the fine grid
@@ -95,15 +96,16 @@ class Ring:
         projection = torch.fft.ifft(data, dim=-1)[..., x % n_k0]
         phase = 2 * torch.pi / n_k0 * x
         projection = projection * torch.exp(-1j * center_idx[:, None, None] * phase)
-        fine = einsum(
-            projection, torch.exp(-1j * phase[:, None] * fine_idx), 'spokes coils x, x fine -> spokes coils fine'
-        )
+        kernel = torch.exp(-1j * phase[:, None] * fine_idx[:, None, :])
+        fine = einsum(projection, kernel, 'spokes coils x, spokes x fine -> spokes coils fine')
         fine = fine.to(torch.complex128)  # differences between neighboring fine samples are small
 
         # The intersection of each spoke with its most orthogonal partners is at the most similar fine samples
         sine = (direction[:, None, 0] * direction[:, 1] - direction[:, None, 1] * direction[:, 0]).abs()
         spoke_j = sine.topk(min(n_intersections, n_spokes), dim=-1).indices.flatten()
         spoke_i = torch.arange(n_spokes, device=data.device).repeat_interleave(len(spoke_j) // n_spokes)
+        not_parallel = sine[spoke_i, spoke_j] > 1e-3
+        spoke_i, spoke_j = spoke_i[not_parallel], spoke_j[not_parallel]
         energy = einsum(fine.abs().square(), 'spokes coils fine -> spokes fine')
         cross = einsum(
             fine[spoke_i], fine[spoke_j].conj(), 'pairs coils fine_i, pairs coils fine_j -> pairs fine_i fine_j'
@@ -116,8 +118,8 @@ class Ring:
             )
 
         # At the intersection: position_i + S direction_i = position_j + S direction_j. Solve for (Syy, Sxx, Sxy).
-        position_i = offset[spoke_i] + (spacing[spoke_i] * fine_idx[fine_i])[:, None] * direction[spoke_i]
-        position_j = offset[spoke_j] + (spacing[spoke_j] * fine_idx[fine_j])[:, None] * direction[spoke_j]
+        position_i = offset[spoke_i] + fine_k[fine_i, None] * direction[spoke_i]
+        position_j = offset[spoke_j] + fine_k[fine_j, None] * direction[spoke_j]
         lhs_y, lhs_x = (direction[spoke_i] - direction[spoke_j]).unbind(-1)
         zero = torch.zeros_like(lhs_y)
         matrix = torch.cat((torch.stack((lhs_y, zero, lhs_x), dim=-1), torch.stack((zero, lhs_x, lhs_y), dim=-1)))
@@ -150,7 +152,7 @@ class Ring:
         direction = torch.nn.functional.normalize(direction, dim=0)
         shift_y, shift_x = einsum(self.delay.to(direction), direction, 'shift yx, yx ... -> shift ...')
         return KTrajectory(
-            kdata_or_traj.kz,
+            kdata_or_traj.kz.clone(),
             ky + shift_y,
             kx + shift_x,
             grid_detection_tolerance=kdata_or_traj.grid_detection_tolerance,
