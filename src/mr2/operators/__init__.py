@@ -32,6 +32,7 @@ from mr2.operators.MultiBandOp import MultiBandOp
 from mr2.operators.MultiIdentityOp import MultiIdentityOp
 from mr2.operators.NonUniformFastFourierOp import NonUniformFastFourierOp
 from mr2.operators.OptimizerOp import OptimizerOp
+from mr2.operators.PseudoInverseOp import PseudoInverseOp
 from mr2.operators.PatchOp import PatchOp
 from mr2.operators.PCACompressionOp import PCACompressionOp
 from mr2.operators.PhaseOp import PhaseOp
@@ -84,6 +85,7 @@ __all__ = [
     'PhaseOp',
     'ProximableFunctional',
     'ProximableFunctionalSeparableSum',
+    'PseudoInverseOp',
     'RearrangeOp',
     'ScaledProximableFunctional',
     'SensitivityOp',

@@ -6,14 +6,17 @@ import operator
 from collections.abc import Callable, Iterator, Sequence
 from functools import cached_property, reduce
 from types import EllipsisType
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import torch
-from typing_extensions import Self, Unpack
+from typing_extensions import Self, Unpack, overload
 
 from mr2.operators.LinearOperator import LinearOperator, LinearOperatorSum
-from mr2.operators.Operator import Operator
+from mr2.operators.Operator import Operator, OperatorComposition, Tin2
 from mr2.operators.ZeroOp import ZeroOp
+
+if TYPE_CHECKING:
+    from mr2.operators.PseudoInverseOp import PseudoInverseMatrixOp
 
 _SingleIdxType = int | slice | EllipsisType | Sequence[int]
 _IdxType = _SingleIdxType | tuple[_SingleIdxType] | tuple[_SingleIdxType, _SingleIdxType]
@@ -64,6 +67,32 @@ class LinearOperatorMatrix(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torc
             list[list[LinearOperator]], torch.nn.ModuleList(torch.nn.ModuleList(row) for row in operators)
         )
         self._shape = (len(operators), len(operators[0]) if operators else 0)
+
+    def pinv(
+        self, *, tolerance: float = 1e-6, max_iterations: int = 100
+    ) -> PseudoInverseMatrixOp | LinearOperatorMatrix:
+        """Return a coupled tuple pseudoinverse with the LinearOperator.pinv contract.
+
+        Parameters
+        ----------
+        tolerance
+            Relative normal-equation residual tolerance, not a rank cutoff.
+        max_iterations
+            Positive iteration budget for each forward or backward solve.
+        """
+        from mr2.operators.PseudoInverseOp import PseudoInverseMatrixOp, _validate_options
+
+        _validate_options(tolerance, max_iterations)
+        if self.shape[0] == self.shape[1] and all(
+            i == j or isinstance(op, ZeroOp) for i, row in enumerate(self._operators) for j, op in enumerate(row)
+        ):
+            return LinearOperatorMatrix.from_diagonal(
+                *(
+                    self._operators[i][i].pinv(tolerance=tolerance, max_iterations=max_iterations)
+                    for i in range(self.shape[0])
+                )
+            )
+        return PseudoInverseMatrixOp(self, tolerance, max_iterations)
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -270,7 +299,17 @@ class LinearOperatorMatrix(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torc
         operators = [[other @ op for op in row] for row in self._operators]
         return self.__class__(operators)
 
-    def __matmul__(self, other: LinearOperator | Self) -> Self:  # type: ignore[override]
+    @overload
+    def __matmul__(self, other: LinearOperator | Self) -> Self: ...
+
+    @overload
+    def __matmul__(
+        self, other: Operator[Unpack[Tin2], tuple[torch.Tensor, ...]]
+    ) -> Operator[Unpack[Tin2], tuple[torch.Tensor, ...]]: ...
+
+    def __matmul__(
+        self, other: LinearOperator | Self | Operator[Unpack[Tin2], tuple[torch.Tensor, ...]]
+    ) -> Self | Operator[Unpack[Tin2], tuple[torch.Tensor, ...]]:
         """Composition of operators."""
         if isinstance(other, LinearOperator):
             operators = [[op @ other for op in row] for row in self._operators]
@@ -286,6 +325,8 @@ class LinearOperatorMatrix(Operator[Unpack[tuple[torch.Tensor, ...]], tuple[torc
                     new_row.append(LinearOperatorSum(*elements))
                 new_operators.append(new_row)
             return self.__class__(new_operators)
+        if isinstance(other, Operator):
+            return OperatorComposition(self, other)
         return NotImplemented
 
     @property
