@@ -69,3 +69,6 @@ def test_ring_invalid() -> None:
     curved = KTrajectory(kdata.traj.kz, kdata.traj.ky + 1e-3 * kdata.traj.kx**2, kdata.traj.kx)
     with pytest.raises(ValueError, match='straight'):
         Ring(KData(kdata.header, kdata.data, curved))
+    tilted = KTrajectory(kdata.traj.kx, kdata.traj.ky, kdata.traj.kx)
+    with pytest.raises(ValueError, match='same kx-ky plane'):
+        Ring(KData(kdata.header, kdata.data, tilted))
